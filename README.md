@@ -13,6 +13,16 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Build
 HCL project can be built using the following command:<br />
-```
-make
-```
+
+   - Go to HCL source directory
+   ```
+   cd <target-directory>/hcl/src
+   ```
+   - Run cmake. set HCL_SRC_PKG_DIR to the source package directory and HCL_LIB_DIR to the HCL libs directory
+   ```
+   HCL_SRC_PKG_DIR=<target-directory> HCL_LIB_DIR=<hcl-lib-dir> cmake .
+   ```
+   - Build the project
+   ```
+   make
+   ```
