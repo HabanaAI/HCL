@@ -175,11 +175,15 @@ void CollectiveLogger::processCollectiveOp(const CollectiveLogMessage& msg)
                              calls[i].first,
                              calls[i].last);
 
-                    // remove entry from deque
                     // it is expected that the first entry is the one to remove
-                    // TODO: replace with error and disable collective logs
-                    VERIFY(i == 0, "Collective logger lost it's mind");
+                    // if it is not, collective logger is out of sync, disable it
+                    if (i != 0)
+                    {
+                        LOG_ERR(HCL_COORD, "Collective logger error, disable collective logger");
+                        GCFG_HCL_COLLECTIVE_LOG.setValue(false);
+                    }
 
+                    // remove entry from deque
                     calls.pop_front();
                 }
                 // check drift between ranks, issue warning if passing threshold

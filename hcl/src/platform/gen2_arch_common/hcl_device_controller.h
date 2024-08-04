@@ -85,17 +85,37 @@ public:
     void initDeviceForCollectiveRoutine(int archStreamId, hcl::syncInfo* longSo, hcl::syncInfo* longSoNullSubmit);
     void submitWork(int archStreamId, bool submitToHw = true);
 
+    /**
+     * @brief
+     * 1. Arms a monitor to look at the SO in the descriptor
+     * 2. blocks the microArch stream by decrementing its fence counter.
+     * once the SO reaches its value, the monitor will increment the fence and free the stream.
+     */
     void streamAddWait(hcl::ScalStream& scalStream, const SyncObjectDescriptor& descriptor, bool useEqual = false);
     void addInternalWait(hcl::ScalStream& scalStream, uint64_t soValue, unsigned soIdx);
 
     void advanceProg(int archStreamId, bool nopOp);
     void addNop(int archStreamId);
+
+    /**
+     * @brief In most cases scalStream=arbitrator, and we use it to free streamsToInc when we have enough credits
+     * usually this method is used with waitForBarrierArm which blocks the stream
+     * this function does 3 things on the scalStream
+     * 1. if an external wait is needed it arms a monitor and decrements the fence on the arb stream
+     * 2. takes creditsNr from the completion group
+     * 3. increments the fences on all the streams in streamsToInc
+     **/
     void addBarrierArm(hcl::ScalStream&                                               scalStream,
                        bool                                                           external,
                        unsigned                                                       creditsNr,
                        const llvm_vecsmall::SmallVector<unsigned, MAX_STREAM_TO_INC>& streamsToInc,
                        bool                                                           shouldAddWait = true);
-
+    /**
+     * @brief Each stream has two fences
+     * the scheduler will mask the stream if one of its fence counters < 0
+     * This function decriments the fence counter and by doing so, blocks the stream until the barrier arm will
+     * increment the fence counter and release it.
+     **/
     void waitForBarrierArm(hcl::ScalStream& scalStream);
 
     unsigned int handleExtraCredits(int archStreamId, unsigned extraCreditsNeeded);
@@ -110,12 +130,30 @@ public:
 
     inline std::mutex& getStreamLock(int archStreamId) { return m_streamSyncParams[archStreamId].m_streamLock; }
 
+    /**
+     * @brief returns the value of the external long SO
+     **/
     hcl::syncInfo eventRecord(int      archStreamId,
                               bool     isCollectTime    = false,
                               uint64_t timestampHandle  = 0,
                               uint32_t timestampsOffset = 0);
-    void          streamWaitEvent(int archStreamId, hcl::syncInfo commonState);
+
+    /**
+     * @brief A wait event is when we would like to block the archStreamId (user stream)
+     * until we reach a LSO value.
+     * the LSO index and its value are held in syncInfo which is usualy returnd by eventRecord.
+     * works in a lazy manner.
+     **/
+    void streamWaitEvent(int archStreamId, hcl::syncInfo syncInfo);
+
+    /**
+     * @brief Wait on the host for all the work on archStreamId to be completed
+     **/
     void          synchronizeStream(int archStreamId);
+
+    /**
+     * @brief Wait on the host for all the work on archStreamId to be completed
+     **/
     bool          streamQuery(int archStreamId);
 
     void enableNullSubmit(int archStreamId, bool enable);
@@ -135,6 +173,9 @@ protected:
 
     void setupCompCfg(int archStreamId);
 
+    /**
+     * @brief take all the credits from the external CG
+     **/
     void allocAllExternalBarrier(int archStreamId);
 
     inline unsigned getFenceIdx(int archStreamId, unsigned uarchStreamId, unsigned fenceIdx)
@@ -148,6 +189,11 @@ protected:
                m_streamSyncParams[archStreamId].m_schedulers[schedIdx].internalResources.longMonitorBase;
     }
 
+    /**
+     * @brief Apply the pending waits that were requested in previous streamWaitEvent calls.
+     * we apply a wait by arming a monitor and decrementing the fence on uarchStreamId
+     * The monitor waits for the LSO to reach the value supplied by streamWaitEvent
+     **/
     void addWait(hcl::ScalStream& scalStream, unsigned uarchStreamId);
 };
 

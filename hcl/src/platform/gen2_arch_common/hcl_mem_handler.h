@@ -6,16 +6,17 @@
 #include "platform/gen2_arch_common/hcl_address_generator.h"  // for HclAddressGenerator
 #include "platform/gen2_arch_common/types.h"                  // for GEN2ARCH_HLS_BOX_SIZE
 #include "platform/gen2_arch_common/signals/types.h"          // for WaitEvent
+#include "platform/gen2_arch_common/signals/manager.h"        // for SignalsManager
+#include "platform/gen2_arch_common/commands/hcl_commands.h"  // for HclComm...
 #include "platform/gen2_arch_common/collective_states.h"
 
-class HclCommandsGen2Arch;
 class HclGraphSyncGen2Arch;
-class SignalsManager;
 class DeviceBufferManager;
 
 namespace hcl
 {
 class ScalStream;
+class IntermediateBufferContainer;
 }
 
 class HclCollectiveMemHandlerGen2Arch
@@ -63,6 +64,19 @@ public:
                                             uint8_t          apiId);
 
     void signalToSoViaEmptyDmaCommand(uint32_t soAddress, hcl::ScalStream& scalStream, CommonState& commonState);
+
+    virtual void memsetIMBs(hcl::IntermediateBufferContainer* imbContainer,
+                            SignalsManager*                   signalsManager,
+                            SliceState&                       sendSliceState,
+                            SliceState&                       recvSliceState,
+                            unsigned int                      sizeInBytes,
+                            hcl::syncInfo                     longSo,
+                            unsigned                          schedIdx,
+                            hcl::ScalStream&                  garbageCollectionStream,
+                            HCL_StreamId                      m_streamId,
+                            e_devicePoolID                    poolId,
+                            uint8_t                           streamCtxtID,
+                            hcclDataType_t                    dataType) {};
 
     virtual void generateBaseAddressOrRRIdx(SliceState&       sliceState,
                                             unsigned int&     sliceIter,

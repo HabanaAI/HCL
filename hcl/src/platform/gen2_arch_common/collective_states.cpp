@@ -31,11 +31,11 @@ CommonState::CommonState(HclCollectiveParams& other,
                          synDeviceType        deviceType,
                          RemainderCalculator* remainderCalculator)
 : HclCollectiveParams(other),
-  m_rootBox(m_root == HCL_INVALID_RANK ? (unsigned)-1 : m_dynamicComm.getRankToPodMap()[m_root]),
-  m_isMultiPod(m_dynamicComm.isCommunicatorMultiPod()),
+  m_rootBox(m_root == HCL_INVALID_RANK ? (unsigned)-1 : m_dynamicComm.getRankToScaleupGroupMap()[m_root]),
+  m_isMultiScaleupGroup(m_dynamicComm.isCommunicatorMultiScaleupGroup()),
   m_isRoot(m_root == m_dynamicComm.getMyRank()),
   m_isRootPeer(isRootPeerExclusive(m_dynamicComm.getMyRank())),
-  m_isRootBox(m_dynamicComm.getMyPod() == m_rootBox),
+  m_isRootBox(m_dynamicComm.getMyScaleupGroup() == m_rootBox),
   m_isHostNic(isHostNic),
   m_isGdr(isGdr),
   m_workDistributionGroupSize(workDistributionGroupSize),
@@ -59,7 +59,7 @@ CommonState::CommonState(HclCollectiveParams& other,
     m_signalsCalculator->initialize(*this);
 }
 
-uint64_t CommonState::calculateCUID()
+uint64_t CommonState::calculateCUID(bool isFirstBox, bool isLastBox)
 {
     struct cuid_t
     {
@@ -67,46 +67,56 @@ uint64_t CommonState::calculateCUID()
         {
             struct
             {
-                uint64_t collectiveOp : 4;   // 0..3
-                uint64_t currentOp : 4;      // 4..7
-                uint64_t inPlace : 1;        // 8
-                uint64_t isRoot : 1;         // 9
-                uint64_t isRootPeer : 1;     // 10
-                uint64_t isRootBox : 1;      // 11
-                uint64_t isMultiPod : 1;     // 12
-                uint64_t isPeersOnly : 1;    // 13
-                uint64_t isHostNic : 1;      // 14
-                uint64_t isGaudiDirect : 1;  // 15
-                uint64_t isFloat : 1;        // 16
-                uint64_t isBf16 : 1;         // 17
-                uint64_t all2allIter : 4;    // 18..21
-                uint64_t comm : 16;          // 22..37
-                uint64_t boxIter : 10;       // 38..47
-                uint64_t reserved : 16;      // 48..63
+                uint64_t collectiveOp : 4;         // 0..3
+                uint64_t currentOp : 4;            // 4..7
+                uint64_t inPlace : 1;              // 8
+                uint64_t isRoot : 1;               // 9
+                uint64_t isRootPeer : 1;           // 10
+                uint64_t isRootBox : 1;            // 11
+                uint64_t isMultiScaleupGroup : 1;  // 12
+                uint64_t isPeersOnly : 1;          // 13
+                uint64_t isHostNic : 1;            // 14
+                uint64_t isGaudiDirect : 1;        // 15
+                uint64_t isFloat : 1;              // 16
+                uint64_t isBf16 : 1;               // 17
+                uint64_t all2allIter : 4;          // 18..21
+                uint64_t comm : 16;                // 22..37
+                uint64_t boxIterPhase : 3;         // 38..40
+                uint64_t firstBox : 1;             // 41
+                uint64_t lastBox : 1;              // 42
+                uint64_t edgeIteration : 1;        // 43
+                uint64_t firstScaleOut : 1;        // 44
+                uint64_t reserved : 19;            // 45..63
             };
             uint64_t raw;
         };
     };
 
+    static_assert(RR_SCALEOUT_FACTOR <= 8, "Not enough bits to represent boxIterPhase!");
     static_assert(sizeof(cuid_t) == sizeof(uint64_t), "Size of cuid_t structure is not as expected!");
 
     cuid_t ret;
-    ret.collectiveOp  = m_collectiveOp;
-    ret.currentOp     = m_currentOp;
-    ret.inPlace       = m_inPlace;
-    ret.isRoot        = m_isRoot;
-    ret.isRootPeer    = m_isRootPeer;
-    ret.isRootBox     = m_isRootBox;
-    ret.isMultiPod    = m_isMultiPod;
-    ret.isPeersOnly   = (m_isMultiPod && m_dynamicComm.getPodSize() == 1);
-    ret.isHostNic     = m_isHostNic;
-    ret.isGaudiDirect = m_isGdr;
-    ret.isFloat       = (m_dataType == hcclFloat32 || m_dataType == hcclFloat16);
-    ret.isBf16        = (m_dataType == hcclBfloat16);
-    ret.all2allIter   = m_all2allIter;
-    ret.comm          = m_comm;
-    ret.boxIter       = m_boxIter;
-    ret.reserved      = 0;
+    ret.collectiveOp        = m_collectiveOp;
+    ret.currentOp           = m_currentOp;
+    ret.inPlace             = m_inPlace;
+    ret.isRoot              = m_isRoot;
+    ret.isRootPeer          = m_isRootPeer;
+    ret.isRootBox           = m_isRootBox;
+    ret.isMultiScaleupGroup = m_isMultiScaleupGroup;
+    ret.isPeersOnly         = (m_isMultiScaleupGroup && m_dynamicComm.getScaleupGroupSize() == 1);
+    ret.isHostNic           = m_isHostNic;
+    ret.isGaudiDirect       = m_isGdr;
+    ret.isFloat             = (m_dataType == hcclFloat32 || m_dataType == hcclFloat16);
+    ret.isBf16              = (m_dataType == hcclBfloat16);
+    ret.all2allIter         = m_all2allIter;
+    ret.comm                = m_comm;
+    ret.boxIterPhase        = m_boxIter % RR_SCALEOUT_FACTOR;
+    ret.firstBox            = isFirstBox;
+    ret.lastBox             = isLastBox;
+    ret.edgeIteration       = isEdgeIteration();
+    ret.firstScaleOut       = m_boxIter == 1;
+    ret.reserved            = 0;
+
     return ret.raw;
 }
 
@@ -241,9 +251,14 @@ bool CommonState::isEdgeIteration(BoxNumInfo& boxNumInfo) const
     return calcBoxIterRecv(boxNumInfo) + m_reproScaleoutBuffersAmount >= m_boxIterations;
 }
 
+bool CommonState::isEdgeIteration() const
+{
+    return m_boxIter + m_reproScaleoutBuffersAmount >= m_boxIterations;
+}
+
 unsigned CommonState::calcBoxIterRecv(BoxNumInfo& boxNumInfo) const
 {
-    unsigned boxIter = m_boxIterations + m_dynamicComm.getMyPod() - boxNumInfo.m_boxNum;
+    unsigned boxIter = m_boxIterations + m_dynamicComm.getMyScaleupGroup() - boxNumInfo.m_boxNum;
     if (boxIter >= m_boxIterations)
     {
         boxIter -= m_boxIterations;
@@ -292,7 +307,7 @@ uint64_t CommonState::calcRecvAddrSize() const
         case eHCLAllGather:
             return countSize * m_dynamicComm.getCommSize();  // In AG count is sendCount
         case eHCLReduceScatter:
-            return countSize / m_dynamicComm.getCommSize();  // In RS count is sendCount
+            return div(countSize, (uint64_t)m_dynamicComm.getCommSize());  // In RS count is sendCount
         default:
             break;
     }
@@ -339,11 +354,11 @@ void CommonState::initCollectiveOp(const bool singlePeerBroadcastAllowed)
     if (m_collectiveOp == eHCLBroadcast)
     {
         if ((m_count * m_dataTypeSizeInBytes) <= GCFG_HCL_COMPLEX_BCAST_MIN_SIZE.value() ||
-            m_dynamicComm.getPodSize() <= 2)
+            m_dynamicComm.getScaleupGroupSize() <= 2)
         {
             m_collectiveOp = eHCLSimpleBroadcast;
         }
-        else if (singlePeerBroadcastAllowed && (GCFG_HCL_USE_SINGLE_PEER_BROADCAST.value() || !m_isMultiPod))
+        else if (singlePeerBroadcastAllowed && (GCFG_HCL_USE_SINGLE_PEER_BROADCAST.value() || !m_isMultiScaleupGroup))
         {
             m_collectiveOp = eHCLSinglePeerBroadcast;
         }
@@ -356,7 +371,6 @@ void CommonState::initCurrentOp(HCL_CollectiveOp currentOp, unsigned boxIter, un
     m_boxIter     = boxIter;
     m_all2allIter = all2allIter;
 
-    m_cuid = calculateCUID();
     m_signalsCalculator->initialize(*this);
     determineSyncUpBufferWithLtu();
 }
@@ -369,22 +383,22 @@ bool CommonState::isLongtermGPSORequired(const unsigned boxIter)
     {
         case eHCLBroadcast:
             return m_currentOp == eHCLScatter && !isRoot() &&
-                   ((m_dynamicComm.getMyPod() == rootBox() && isSelfBox) ||
-                    (m_dynamicComm.getMyPod() != rootBox() && boxIter == 1));
+                   ((m_dynamicComm.getMyScaleupGroup() == rootBox() && isSelfBox) ||
+                    (m_dynamicComm.getMyScaleupGroup() != rootBox() && boxIter == 1));
             break;
 
         case eHCLSinglePeerBroadcast:
             return m_currentOp == eHCLScatter && !isRootOrRootPeer() &&
-                   ((m_dynamicComm.getMyPod() == rootBox() && isSelfBox) ||
-                    (m_dynamicComm.getMyPod() != rootBox() && boxIter == 1));
+                   ((m_dynamicComm.getMyScaleupGroup() == rootBox() && isSelfBox) ||
+                    (m_dynamicComm.getMyScaleupGroup() != rootBox() && boxIter == 1));
             break;
 
         case eHCLReduce:
-            return m_currentOp == eHCLReduceScatter && isSelfBox && (m_isMultiPod || !m_isRoot);
+            return m_currentOp == eHCLReduceScatter && isSelfBox && (m_isMultiScaleupGroup || !m_isRoot);
             break;
 
         case eHCLReduceScatter:
-            if (m_currentOp == eHCLReduceScatter && m_isMultiPod && isSelfBox)
+            if (m_currentOp == eHCLReduceScatter && m_isMultiScaleupGroup && isSelfBox)
             {
                 return true;
             }
@@ -423,16 +437,15 @@ unsigned CommonState::calcLongtermContinuousTarget(const unsigned boxIter)
             break;
         case eHCLReduce:
         {
-            // uint16_t myPod = m_dynamicComm.getMyPod();
             if (m_isRootBox)
             {
-                if (m_isRoot && m_isMultiPod)
+                if (m_isRoot && m_isMultiScaleupGroup)
                 {
                     continuousTarget = m_boxIterations - 1;  // last RS
                 }
                 else
                 {
-                    continuousTarget = m_isMultiPod ? m_boxIterations : 1;  // first Gather
+                    continuousTarget = m_isMultiScaleupGroup ? m_boxIterations : 1;  // first Gather
                 }
             }
             else
@@ -444,7 +457,7 @@ unsigned CommonState::calcLongtermContinuousTarget(const unsigned boxIter)
             break;
         }
         case eHCLAllReduce:
-            continuousTarget = m_isMultiPod ? m_boxIterations + 1 : 1;
+            continuousTarget = m_isMultiScaleupGroup ? m_boxIterations + 1 : 1;
             break;
         case eHCLAll2All:
             continuousTarget = m_all2allIterations - 1;
@@ -461,7 +474,7 @@ void CommonState::calcMaxSliceCounts()
 {
     uint64_t totalCountPerRank     = 0;
     uint32_t commSize              = m_dynamicComm.getCommSize();
-    uint32_t podSize               = m_dynamicComm.getPodSize();
+    uint32_t ScaleupGroupSize      = m_dynamicComm.getScaleupGroupSize();
     uint32_t numParticipatingRanks = commSize;  // #ranks which divide m_count between them
     uint64_t sliceSize             = m_dynamicComm.getSliceSize();
 
@@ -477,27 +490,27 @@ void CommonState::calcMaxSliceCounts()
 
         case eHCLScatter:
             m_scaleUpStrideCount = div(m_count, (uint64_t)numParticipatingRanks);
-            m_boxStrideCount     = m_optimalBufferCount * podSize;
+            m_boxStrideCount     = m_optimalBufferCount * ScaleupGroupSize;
             totalCountPerRank    = m_scaleUpStrideCount;
             break;
 
         case eHCLGather:
         case eHCLAllGather:
             m_scaleUpStrideCount = m_count;
-            m_boxStrideCount     = m_count * podSize;
+            m_boxStrideCount     = m_count * ScaleupGroupSize;
             totalCountPerRank    = m_count;
             break;
 
         case eHCLBroadcast:
-            numParticipatingRanks = podSize;
+            numParticipatingRanks = ScaleupGroupSize;
             m_scaleUpStrideCount  = m_count;  // gives an upper bond
             m_boxStrideCount      = 0;        // doesn't matter here, since we are working on the same data on all boxes
             totalCountPerRank     = m_remainderCalculator->getDiv(m_count, numParticipatingRanks);
             break;
 
         case eHCLSinglePeerBroadcast:
-            numParticipatingRanks = podSize - 1;
-            if (m_isHostNic && m_isMultiPod)
+            numParticipatingRanks = ScaleupGroupSize - 1;
+            if (m_isHostNic && m_isMultiScaleupGroup)
             {
                 m_optimalBufferCount = div(m_optimalBufferCount, (uint64_t)numParticipatingRanks);
             }
@@ -510,18 +523,18 @@ void CommonState::calcMaxSliceCounts()
         case eHCLAllReduce:
             m_scaleUpStrideCount = m_optimalBufferCount;
             totalCountPerRank    = m_remainderCalculator->getDiv(m_count, numParticipatingRanks);
-            m_boxStrideCount     = totalCountPerRank * podSize;
+            m_boxStrideCount     = totalCountPerRank * ScaleupGroupSize;
             break;
 
         case eHCLAll2All:
             m_scaleUpStrideCount = div(m_count, (uint64_t)numParticipatingRanks);
-            m_boxStrideCount     = m_scaleUpStrideCount * podSize;
+            m_boxStrideCount     = m_scaleUpStrideCount * ScaleupGroupSize;
             totalCountPerRank    = m_scaleUpStrideCount;
             break;
 
         case eHCLReduceScatter:
             m_scaleUpStrideCount = div(m_count, (uint64_t)numParticipatingRanks);
-            m_boxStrideCount     = m_scaleUpStrideCount * podSize;
+            m_boxStrideCount     = m_scaleUpStrideCount * ScaleupGroupSize;
             totalCountPerRank    = m_scaleUpStrideCount;
             break;
 
@@ -554,7 +567,7 @@ void CommonState::calcMaxSliceCounts()
 
     if (m_collectiveOp == eHCLAll2All)
     {
-        m_all2allIterations      = podSize;
+        m_all2allIterations      = ScaleupGroupSize;
         m_all2allIterStrideCount = m_rankScaleUpCount;
     }
 
@@ -570,8 +583,8 @@ void CommonState::calcMaxSliceCounts()
         case eHCLScatter:
             m_rankScaleUpCount   = m_optimalBufferCount;
             m_sliceOffsetCount   = m_optimalBufferCount;
-            m_boxStrideCount     = m_scaleUpStrideCount * podSize;
-            m_boxCount           = m_rankScaleUpCount * podSize;
+            m_boxStrideCount     = m_scaleUpStrideCount * ScaleupGroupSize;
+            m_boxCount           = m_rankScaleUpCount * ScaleupGroupSize;
             m_rankScaleOutCount  = m_boxCount;
             break;
 
@@ -580,12 +593,12 @@ void CommonState::calcMaxSliceCounts()
             m_rankScaleUpCount   = m_optimalBufferCount;
             m_rankScaleOutCount  = m_rankScaleUpCount;
             m_sliceOffsetCount   = m_optimalBufferCount;
-            m_boxCount           = m_optimalBufferCount * podSize;
+            m_boxCount           = m_optimalBufferCount * ScaleupGroupSize;
             break;
 
         case eHCLBroadcast:
             m_rankScaleUpCount   = m_optimalBufferCount;
-            m_boxCount           = m_optimalBufferCount * podSize;
+            m_boxCount           = m_optimalBufferCount * ScaleupGroupSize;
             m_rankScaleOutCount  = m_rankScaleUpCount;
             m_sliceOffsetCount   = m_boxCount;
             break;
@@ -593,7 +606,7 @@ void CommonState::calcMaxSliceCounts()
         case eHCLSinglePeerBroadcast:
             m_rankScaleUpCount   = m_optimalBufferCount;
             m_scaleUpStrideCount = m_optimalBufferCount;
-            m_boxCount           = m_optimalBufferCount * (podSize - 1);
+            m_boxCount           = m_optimalBufferCount * (ScaleupGroupSize - 1);
             m_rankScaleOutCount  = m_boxCount;
             m_sliceOffsetCount   = m_boxCount;
             break;
@@ -603,23 +616,23 @@ void CommonState::calcMaxSliceCounts()
             m_rankScaleUpCount   = m_optimalBufferCount;
             m_rankScaleOutCount  = m_rankScaleUpCount;
             m_scaleUpStrideCount = m_rankScaleUpCount;
-            m_boxCount           = m_optimalBufferCount * podSize;
-            m_boxStrideCount     = totalCountPerRank * podSize;
-            m_sliceOffsetCount   = m_scaleUpStrideCount * podSize;
+            m_boxCount           = m_optimalBufferCount * ScaleupGroupSize;
+            m_boxStrideCount     = totalCountPerRank * ScaleupGroupSize;
+            m_sliceOffsetCount   = m_scaleUpStrideCount * ScaleupGroupSize;
             break;
 
         case eHCLAll2All:
             m_rankScaleUpCount   = m_optimalBufferCount;
             m_sliceOffsetCount   = m_optimalBufferCount;
             m_rankScaleOutCount  = m_rankScaleUpCount;
-            m_boxCount           = m_optimalBufferCount * podSize;
+            m_boxCount           = m_optimalBufferCount * ScaleupGroupSize;
             break;
 
         case eHCLReduceScatter:
             m_rankScaleUpCount   = m_optimalBufferCount;
             m_rankScaleOutCount  = m_rankScaleUpCount;
             m_sliceOffsetCount   = m_optimalBufferCount;
-            m_boxCount           = m_optimalBufferCount * podSize;
+            m_boxCount           = m_optimalBufferCount * ScaleupGroupSize;
             break;
 
         case eHCLNoCollective:
@@ -719,7 +732,7 @@ void CommonState::calcSliceCounts(unsigned sliceIter)
 {
     if (sliceIter == (m_sliceIterations - 1))
     {
-        uint64_t podSize  = m_dynamicComm.getPodSize();
+        uint64_t ScaleupGroupSize  = m_dynamicComm.getScaleupGroupSize();
         uint64_t commSize = m_dynamicComm.getCommSize();
         uint64_t totalCountForLastSlice;
         switch (m_collectiveOp)
@@ -737,24 +750,24 @@ void CommonState::calcSliceCounts(unsigned sliceIter)
                 totalCountForLastSlice = m_count - (m_rankScaleUpCount * (m_sliceIterations - 1));
                 m_rankScaleUpCount     = totalCountForLastSlice;
                 m_rankScaleOutCount    = totalCountForLastSlice;
-                m_boxCount             = totalCountForLastSlice * podSize;
+                m_boxCount             = totalCountForLastSlice * ScaleupGroupSize;
                 break;
 
             case eHCLBroadcast:
                 totalCountForLastSlice = m_count - (m_boxCount * (m_sliceIterations - 1));
-                m_rankScaleUpCount     = m_remainderCalculator->getDiv(totalCountForLastSlice, podSize);
+                m_rankScaleUpCount     = m_remainderCalculator->getDiv(totalCountForLastSlice, ScaleupGroupSize);
                 m_rankScaleOutCount    = m_rankScaleUpCount;
                 m_scaleUpStrideCount   = m_rankScaleUpCount;
                 m_boxCount             = totalCountForLastSlice;
                 m_boxStrideCount       = 0;
                 m_remainderCount =
-                    m_remainderCalculator->getRemainderCount(totalCountForLastSlice, m_rankScaleUpCount, podSize);
+                    m_remainderCalculator->getRemainderCount(totalCountForLastSlice, m_rankScaleUpCount, ScaleupGroupSize);
 
                 break;
 
             case eHCLSinglePeerBroadcast:
                 totalCountForLastSlice = m_count - (m_boxCount * (m_sliceIterations - 1));
-                m_rankScaleUpCount     = m_remainderCalculator->getDiv(totalCountForLastSlice, podSize - 1);
+                m_rankScaleUpCount     = m_remainderCalculator->getDiv(totalCountForLastSlice, ScaleupGroupSize - 1);
                 m_scaleUpStrideCount   = m_rankScaleUpCount;
                 m_boxCount             = totalCountForLastSlice;
                 m_boxStrideCount       = 0;
@@ -764,27 +777,27 @@ void CommonState::calcSliceCounts(unsigned sliceIter)
             case eHCLScatter:
             {
                 totalCountForLastSlice = m_count - (m_rankScaleUpCount * commSize * (m_sliceIterations - 1));
-                m_rankScaleUpCount     = totalCountForLastSlice / commSize;
-                m_boxCount             = m_rankScaleUpCount * podSize;
+                m_rankScaleUpCount     = div(totalCountForLastSlice, commSize);
+                m_boxCount             = m_rankScaleUpCount * ScaleupGroupSize;
                 m_rankScaleOutCount    = m_boxCount;
                 break;
             }
 
             case eHCLAll2All:
-                totalCountForLastSlice = (m_count / commSize) - (m_rankScaleUpCount * (m_sliceIterations - 1));
+                totalCountForLastSlice = div(m_count, commSize) - (m_rankScaleUpCount * (m_sliceIterations - 1));
                 m_rankScaleUpCount     = totalCountForLastSlice;
-                m_boxCount             = m_rankScaleUpCount * podSize;
+                m_boxCount             = m_rankScaleUpCount * ScaleupGroupSize;
                 m_rankScaleOutCount    = m_rankScaleUpCount;
                 if (m_isHostNic && !m_isSlicing)
                 {
-                    m_all2allIterations      = div_round_up(m_rankScaleUpCount * podSize, m_optimalBufferCount);
+                    m_all2allIterations      = div_round_up(m_rankScaleUpCount * ScaleupGroupSize, m_optimalBufferCount);
                     m_all2allIterStrideCount = m_optimalBufferCount;
                 }
                 break;
             case eHCLReduceScatter:
                 totalCountForLastSlice = m_count - (m_boxCount * m_boxIterations * (m_sliceIterations - 1));
-                m_rankScaleUpCount     = totalCountForLastSlice / commSize;
-                m_boxCount             = m_rankScaleUpCount * podSize;
+                m_rankScaleUpCount     = div(totalCountForLastSlice, commSize);
+                m_boxCount             = m_rankScaleUpCount * ScaleupGroupSize;
                 m_rankScaleOutCount    = m_rankScaleUpCount;
                 break;
 
@@ -798,7 +811,7 @@ void CommonState::calcSliceCounts(unsigned sliceIter)
                                                                                   commSize);
                 m_rankScaleOutCount    = m_rankScaleUpCount;
                 m_scaleUpStrideCount   = m_rankScaleUpCount;
-                m_boxCount             = m_rankScaleUpCount * podSize;
+                m_boxCount             = m_rankScaleUpCount * ScaleupGroupSize;
                 break;
             }
             case eHCLCollectiveLastValue:
@@ -808,7 +821,7 @@ void CommonState::calcSliceCounts(unsigned sliceIter)
 
         if (isRemainderAllowedForCollective())
         {
-            m_hasBufferSize = m_boxCount != (m_rankScaleUpCount * podSize);
+            m_hasBufferSize = m_boxCount != (m_rankScaleUpCount * ScaleupGroupSize);
         }
         else
         {
@@ -829,7 +842,7 @@ uint64_t CommonState::getChunkCount()
 
 uint64_t CommonState::getChunkCountToClear()
 {
-    uint64_t all2allCorrection = (m_collectiveOp == eHCLAll2All ? m_dynamicComm.getPodSize() : 1);
+    uint64_t all2allCorrection = (m_collectiveOp == eHCLAll2All ? m_dynamicComm.getScaleupGroupSize() : 1);
     return m_rankScaleUpCount * all2allCorrection;
 }
 
@@ -867,7 +880,7 @@ void CommonState::checkInPlaceOp()
     switch (m_collectiveOp)
     {
         case eHCLReduceScatter:
-            bufferOffset = (dataSize / commSize) * myRank;
+            bufferOffset = div(dataSize, (uint64_t)commSize) * myRank;
             m_inPlace    = (m_recvBufferAddr == m_sendBufferAddr + bufferOffset);
             break;
 
@@ -886,7 +899,7 @@ void CommonState::checkInPlaceOp()
 
         case eHCLReduce:
             // no inplace for bf16 Reduce collective - same graph
-            if (m_dataType == hcclBfloat16 || m_dataType == hcclFloat16 || m_dynamicComm.isCommunicatorMultiPod())
+            if (m_dataType == hcclBfloat16 || m_dataType == hcclFloat16 || m_dynamicComm.isCommunicatorMultiScaleupGroup())
             {
                 m_inPlace = false;
             }
@@ -926,7 +939,7 @@ void CommonState::check16BitReductionOp()
 
 void CommonState::calcReproScaleoutLongterm()
 {
-    if (m_isMultiPod &&
+    if (m_isMultiScaleupGroup &&
         (m_collectiveOp == eHCLReduceScatter || m_collectiveOp == eHCLAllReduce || m_collectiveOp == eHCLReduce))
     {
         m_reproScaleoutLongtermAmount = (m_reproScaleoutBuffersAmount >= m_boxIterations)
@@ -947,12 +960,12 @@ void CommonState::calcReproScaleoutLongterm()
 void CommonState::determineSyncUpBufferWithLtu()
 {
     m_syncUpBufferWithLtu =
-        m_isMultiPod && m_currentOp == eHCLReduceScatter && !isHostNic() && m_dynamicComm.getPodSize() > 1;
+        m_isMultiScaleupGroup && m_currentOp == eHCLReduceScatter && !isHostNic() && m_dynamicComm.getScaleupGroupSize() > 1;
 }
 
 void CommonState::checkHierarchicalOp()
 {
-    if (!m_isMultiPod)
+    if (!m_isMultiScaleupGroup)
     {
         m_boxIterations = 1;
         m_boxStrideCount     = 0;
@@ -965,13 +978,13 @@ void CommonState::checkHierarchicalOp()
         return;
     }
 
-    m_boxIterations = m_dynamicComm.m_commSize / m_dynamicComm.getPodSize();
+    m_boxIterations = div((uint32_t)m_dynamicComm.m_commSize, (uint32_t)m_dynamicComm.getScaleupGroupSize());
 }
 
 bool CommonState::isScaleoutRequired(bool isSend, BoxNumInfo& sendBoxNumInfo)
 {
     // no scaleout on first box iteration
-    if (sendBoxNumInfo.m_boxNum == m_dynamicComm.getMyPod())
+    if (sendBoxNumInfo.m_boxNum == m_dynamicComm.getMyScaleupGroup())
     {
         return false;
     }
@@ -991,7 +1004,7 @@ bool CommonState::isScaleoutRequired(bool isSend, BoxNumInfo& sendBoxNumInfo)
             break;
         case eHCLScatter:
         {
-            unsigned myBox = m_dynamicComm.getMyPod();
+            unsigned myBox = m_dynamicComm.getMyScaleupGroup();
             if (isSend)
             {
                 // send out only to next box (box iteration 1). no send to root box
@@ -1023,7 +1036,7 @@ bool CommonState::isScaleoutRequired(bool isSend, BoxNumInfo& sendBoxNumInfo)
                 return true;
             }
             // only root box recv out
-            if (!isSend && m_dynamicComm.getMyPod() == rootBox())
+            if (!isSend && m_dynamicComm.getMyScaleupGroup() == rootBox())
             {
                 return true;
             }
@@ -1057,7 +1070,7 @@ bool CommonState::isScaleoutRequired(bool isSend, BoxNumInfo& sendBoxNumInfo)
 void CommonState::calcSliceQpSet(const unsigned sliceIter)
 {
     /* Params used to calculate m_qpSet, should be symmetric between ranks */
-    m_qpSet = (m_dynamicComm.getCollectiveCtr() + sliceIter) % m_dynamicComm.getMaxScaleOutQpSetsNum();
+    m_qpSet = mod(m_dynamicComm.getCollectiveCtr() + sliceIter, m_dynamicComm.getMaxScaleOutQpSetsNum());
 }
 
 unsigned CommonState::getBroadcastScatterOpBoxIterations() const
@@ -1096,12 +1109,12 @@ SliceState::SliceState(const CommonState&   commonState,
               m_count,
               m_sliceIterations);
 
-    if (!m_isMultiPod) return;
+    if (!m_isMultiScaleupGroup) return;
 
-    m_isHierarchicalFirst = (m_boxNumInfo.m_boxNum == m_dynamicComm.getMyPod());
+    m_isHierarchicalFirst = (m_boxNumInfo.m_boxNum == m_dynamicComm.getMyScaleupGroup());
     m_isHierarchicalLast =
         ((m_isSend ? getNextBox(m_boxNumInfo.m_boxNum, m_boxIterations)
-                   : getPrevBox(m_boxNumInfo.m_boxNum, m_boxIterations)) == m_dynamicComm.getMyPod());
+                   : getPrevBox(m_boxNumInfo.m_boxNum, m_boxIterations)) == m_dynamicComm.getMyScaleupGroup());
 
     m_execution.m_deviceCount = m_boxStrideCount;
     m_execution.m_cellCount   = m_rankScaleOutCount;
@@ -1117,11 +1130,11 @@ SliceState::SliceState(const CommonState&   commonState,
             const uint64_t maxCountPerIMB = m_optimalBufferCount;
             m_execution.m_cellCount =
                 std::min(maxCountPerIMB,
-                         (m_rankScaleUpCount * m_dynamicComm.getPodSize()) - (maxCountPerIMB * m_all2allIter));
+                         (m_rankScaleUpCount * m_dynamicComm.getScaleupGroupSize()) - (maxCountPerIMB * m_all2allIter));
         }
         else
         {
-            m_execution.m_cellCount *= m_dynamicComm.getPodSize();
+            m_execution.m_cellCount *= m_dynamicComm.getScaleupGroupSize();
         }
     }
 
@@ -1134,7 +1147,7 @@ SliceState::SliceState(const CommonState&   commonState,
         m_execution.m_strideCount = m_scaleUpStrideCount;
     }
 
-    uint64_t offset = m_dynamicComm.getRankInPod() * m_execution.m_strideCount * m_dataTypeSizeInBytes;
+    uint64_t offset = m_dynamicComm.getRankInScaleupGroup() * m_execution.m_strideCount * m_dataTypeSizeInBytes;
 
     if (!m_isHierarchicalFirst)
     {
@@ -1155,15 +1168,15 @@ void SliceState::calcBoxAndScaleOutCounts()
 {
     if (m_sliceIter == (m_sliceIterations - 1))
     {
-        uint64_t podSize  = m_dynamicComm.getPodSize();
+        uint64_t ScaleupGroupSize  = m_dynamicComm.getScaleupGroupSize();
         switch (m_collectiveOp)
         {
             case eHCLReduce:
             case eHCLAllReduce:
             {
-                HCL_Rank myRankInPod = m_dynamicComm.getRankInPod();
-                unsigned boxIndex    = m_dynamicComm.getMyPod();
-                bool     isLastRankInPod = m_dynamicComm.isLastRankInPod();
+                HCL_Rank myRankInScaleupGroup = m_dynamicComm.getRankInScaleupGroup();
+                unsigned boxIndex    = m_dynamicComm.getMyScaleupGroup();
+                bool     isLastRankInScaleupGroup = m_dynamicComm.isLastRankInScaleupGroup();
 
                 if ((m_currentOp == eHCLReduceScatter && m_isSend) || (m_currentOp != eHCLReduceScatter && !m_isSend))
                 {
@@ -1172,7 +1185,7 @@ void SliceState::calcBoxAndScaleOutCounts()
 
                 m_boxCount          = m_remainderCalculator->getBoxCount(m_boxCount,
                                                                          m_boxIterations,
-                                                                         podSize,
+                                                                ScaleupGroupSize,
                                                                          boxIndex,
                                                                          m_rankScaleOutCount,
                                                                          m_remainderCount);
@@ -1180,28 +1193,28 @@ void SliceState::calcBoxAndScaleOutCounts()
                                                                               m_boxIterations,
                                                                               m_boxCount,
                                                                               boxIndex,
-                                                                              myRankInPod,
+                                                                              myRankInScaleupGroup,
                                                                               m_rankScaleUpCount,
                                                                               m_remainderCount,
-                                                                              isLastRankInPod);
+                                                                              isLastRankInScaleupGroup);
 
                 break;
             }
             case eHCLBroadcast:
             {
-                HCL_Rank myRankInPod     = m_dynamicComm.getRankInPod();
-                bool     isLastRankInPod = m_dynamicComm.isLastRankInPod();
+                HCL_Rank myRankInScaleupGroup     = m_dynamicComm.getRankInScaleupGroup();
+                bool     isLastRankInScaleupGroup = m_dynamicComm.isLastRankInScaleupGroup();
 
-                // for broadcast we split data between ranks in pod rather then all ranks in comm,
+                // for broadcast we split data between ranks in ScaleupGroup rather then all ranks in comm,
                 // so every box is treated like last box, hence setting boxIndex = 0 and numBoxes = 1
                 m_rankScaleOutCount = m_remainderCalculator->getScaleOutCount(m_rankScaleOutCount,
                                                                               1,
                                                                               m_boxCount,
                                                                               0,
-                                                                              myRankInPod,
+                                                                              myRankInScaleupGroup,
                                                                               m_rankScaleUpCount,
                                                                               m_remainderCount,
-                                                                              isLastRankInPod);
+                                                                              isLastRankInScaleupGroup);
                 break;
             }
             case eHCLSimpleBroadcast:
@@ -1220,7 +1233,7 @@ void SliceState::calcBoxAndScaleOutCounts()
 
         if (isRemainderAllowedForCollective())
         {
-            m_hasBufferSize = m_boxCount != (m_rankScaleUpCount * podSize);
+            m_hasBufferSize = m_boxCount != (m_rankScaleUpCount * ScaleupGroupSize);
         }
         else
         {
@@ -1234,21 +1247,21 @@ bool SliceState::gatherOpsWaitForRS(bool isScaleup)
 {
     bool     AGWaitForRS;
     bool     GatherWaitForRS;
-    unsigned myPod = m_dynamicComm.getMyPod();
+    unsigned myScaleupGroup = m_dynamicComm.getMyScaleupGroup();
 
     if (isScaleup)
     {
         AGWaitForRS = m_collectiveOp == eHCLAllReduce && m_currentOp == eHCLAllGather &&
-                      (!m_isMultiPod || m_boxNumInfo.m_boxNum == myPod);
+                      (!m_isMultiScaleupGroup || m_boxNumInfo.m_boxNum == myScaleupGroup);
 
-        GatherWaitForRS = m_collectiveOp == eHCLReduce && m_currentOp == eHCLGather && myPod == m_rootBox && !m_isRoot;
+        GatherWaitForRS = m_collectiveOp == eHCLReduce && m_currentOp == eHCLGather && myScaleupGroup == m_rootBox && !m_isRoot;
     }
     else  // scaleout
     {
-        AGWaitForRS = m_collectiveOp == eHCLAllReduce && m_currentOp == eHCLAllGather && m_isMultiPod &&
-                      getPrevBox(m_boxNumInfo.m_boxNum, m_boxIterations) == myPod;
-        GatherWaitForRS = m_collectiveOp == eHCLReduce && m_currentOp == eHCLGather && m_isMultiPod &&
-                          m_boxNumInfo.m_boxNum == m_rootBox && myPod != m_rootBox;
+        AGWaitForRS = m_collectiveOp == eHCLAllReduce && m_currentOp == eHCLAllGather && m_isMultiScaleupGroup &&
+                      getPrevBox(m_boxNumInfo.m_boxNum, m_boxIterations) == myScaleupGroup;
+        GatherWaitForRS = m_collectiveOp == eHCLReduce && m_currentOp == eHCLGather && m_isMultiScaleupGroup &&
+                          m_boxNumInfo.m_boxNum == m_rootBox && myScaleupGroup != m_rootBox;
     }
 
     return AGWaitForRS || GatherWaitForRS;
@@ -1330,11 +1343,11 @@ void NonCollectiveState::updateState(const unsigned       remoteBox,
 
 bool NonCollectiveState::isScaleOutRequired() const
 {
-    return m_isScaleoutRequired;  // TODO: needs to update once moved inside iteration loop and credits SW115278
+    return m_isScaleoutRequired;
 }
 
 void NonCollectiveState::calcSliceQpSet(const unsigned sliceIter)
 {
     /* Params used to calculate m_qpSet, should be symmetric between ranks */
-    m_qpSet = (sliceIter) % m_dynamicComm.getMaxScaleOutQpSetsNum();
+    m_qpSet = mod(sliceIter, m_dynamicComm.getMaxScaleOutQpSetsNum());
 }

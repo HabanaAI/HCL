@@ -3,8 +3,6 @@
 #include <cstddef>                                            // for size_t
 #include <cstdint>                                            // for uint32_t
 #include <array>                                              // for array
-#include <set>                                                // for set
-#include <utility>                                            // for pair
 #include <vector>                                             // for vector
 
 #include "hcl_api_types.h"                                    // for HCL_Comm
@@ -12,7 +10,6 @@
 #include "platform/gen2_arch_common/commands/hcl_commands.h"  // for HclComm...
 #include "platform/gaudi2/send_recv_aggregator.h"             // for
 #include "platform/gen2_arch_common/send_recv_aggregator.h"   // for SendRecvEntry
-#include "platform/gen2_arch_common/device_buffer_manager.h"  // for sibAddressesAndSizes
 #include "hccl_types.h"                                       // for hcclRedOp_t
 #include "platform/gaudi2/nic_passthrough_handler.h"          // for pRecordWithMetadata
 
@@ -91,7 +88,8 @@ public:
                                         bool                 isForScaleout        = false,
                                         uint32_t             numberOfRanks        = 0,
                                         uint32_t             numberOfReproBuffers = 0,
-                                        uint32_t             indexOfReproBuffer   = 0) override;
+                                        uint32_t             indexOfReproBuffer   = 0,
+                                        uint32_t             memsetValue          = 0) override;
 
     virtual void serializeInitSequenceCommands(hcl::ScalStreamBase&                  recvStream,
                                                hcl::ScalStreamBase&                  recvSOStream,
@@ -102,8 +100,7 @@ public:
                                                ContextManager&                       contextManager,
                                                uint32_t                              fwStrideSize,
                                                uint64_t                              fwBaseAddress,
-                                               uint8_t                               apiId,
-                                               unsigned                              edmaEngineWorkDistributionSize);
+                                               uint8_t                               apiId);
 
     virtual void serializeGlobalDmaCommand(hcl::ScalStreamBase&                  scalStream,
                                            uint32_t                              soAddressLSB,
@@ -154,10 +151,15 @@ public:
                                           uint32_t             data,
                                           bool                 blockUntilCompletion = false) override;
 
-    virtual void serializeFenceCommand(hcl::ScalStreamBase& scalStream,
-                                       unsigned             schedIdx,
-                                       uint32_t             fenceIndex,
-                                       uint32_t             target = 1) override;
+    virtual void serializeLbwBurstWriteCommand(hcl::ScalStreamBase&      scalStream,
+                                               unsigned                  schedIdx,
+                                               const LBWBurstDestData_t& destData,
+                                               bool                      blockUntilCompletion = false) override;
+
+    virtual void serializeFenceDecCommand(hcl::ScalStreamBase& scalStream,
+                                          unsigned             schedIdx,
+                                          uint32_t             fenceIndex,
+                                          uint32_t             target = 1) override;
 
     virtual void
     serializeFenceIncCommand(hcl::ScalStreamBase& scalStream, unsigned schedIdx, uint32_t fenceIndex) override;
@@ -189,20 +191,6 @@ public:
                                           bool                   isLastInGroup,
                                           bool                   notifyRndvAck,
                                           bool                   waitForRndvAcks);
-
-    virtual void memsetIMBs(DeviceBufferManager&              imb,
-                            hcl::IntermediateBufferContainer* imbContainer,
-                            SignalsManager*                   signalsManager,
-                            SliceState&                       sendSliceState,
-                            SliceState&                       recvSliceState,
-                            unsigned int                      sizeInBytes,
-                            hcl::syncInfo                     longSo,
-                            unsigned                          schedIdx,
-                            hcl::ScalStream&                  garbageCollectionStream,
-                            HCL_StreamId                      m_streamId,
-                            e_devicePoolID                    poolId,
-                            uint8_t                           streamCtxtID,
-                            hcclDataType_t                    dataType);
 
     virtual void serializePdmaCommand(hcl::ScalStreamBase& scalStream,
                                       unsigned             schedIdx,

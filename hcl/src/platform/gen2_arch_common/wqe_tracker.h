@@ -32,6 +32,7 @@ public:
     WqeTracker& operator=(const WqeTracker&) = delete;
 
     virtual void              incWqe(const HCL_Comm commId, const unsigned rank, const QpType qpType) {}
+    virtual void              resizeDB(const HCL_Comm commId) {}
     virtual WqeWraparoundBits getWqeWraparoundBits(HCL_Comm commId, unsigned rank, QpType qpType)
     {
         return {false, false};

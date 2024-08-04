@@ -11,7 +11,7 @@
 #include "platform/gaudi3/commands/hcl_commands.h"   // for HclCommandsGaudi3
 #include "platform/gen2_arch_common/port_mapping.h"  // for Gen2ArchDevicePortMapping
 #include "gaudi3/gaudi3.h"                           // for NIC_MAX_NUM_OF_MACROS
-#include "platform/gaudi3/port_mapping.h"            // for DeviceNicsMacrosMask, MacroPairDevicesArray
+#include "platform/gaudi3/port_mapping.h"            // for DeviceNicsMacrosMask, NicMacrosDevicesArray
 
 NicPassthroughHandlerGaudi3::NicPassthroughHandlerGaudi3(const bool                     isSend,
                                                          const bool                     isPair0,
@@ -129,21 +129,21 @@ int NicPassthroughHandlerGaudi3::addDeviceBuffer(const DwordsBoxesArray& deviceB
                           deviceId,
                           deviceBuffer[deviceId].size());
 
-            // each device belongs to 2 NIC macro pairs
-            const uint16_t macro0 = std::get<0>(m_portMapping.getMacroPairDevices(deviceId));
-            const uint16_t macro1 = std::get<1>(m_portMapping.getMacroPairDevices(deviceId));
+            // each device belongs to 2 or more NIC macros, in a vector
+            const NicMacrosPerDevice& macros(m_portMapping.getNicMacrosPerDevice(deviceId));
 
             if (deviceBuffer[deviceId].size() > 0)
             {
                 for (const uint32_t val : deviceBuffer[deviceId])
                 {
-                    nicBuffer[macro0].push_back(val);
-                    nicBuffer[macro1].push_back(val);
+                    for (const NicMacroIndexType macro : macros)
+                    {
+                        nicBuffer[macro].push_back(val);
+                    }
                     LOG_HCL_TRACE(HCL,
-                                  "Adding DWORD deviceId={}, macro0={}, macro1={}, val=0x{:x}",
+                                  "Adding DWORD deviceId={}, to macros={}, val=0x{:x}",
                                   deviceId,
-                                  macro0,
-                                  macro1,
+                                  macros.size(),
                                   val);
                 }
                 usedDwords += deviceBuffer[deviceId].size() + HEADER_LEN_DWORDS;  // add full cmd (8 dwords) + 1 header
@@ -178,7 +178,7 @@ int NicPassthroughHandlerGaudi3::fillInNicNops(hcl::ScalStreamBase& scalStream,
                                                const uint16_t       setNopDupMask)
 {
     const uint32_t credits       = 0;                                // consumeDwords * sizeof(uint32_t);
-    const uint16_t dupMaskForNop = setNopDupMask & ((1 << 11) - 1);  // TODO: mask scaleout nic macro ports
+    const uint16_t dupMaskForNop = setNopDupMask & ((1 << 11) - 1);
     LOG_HCL_DEBUG(HCL,
                   "m_isSend={}, m_isSet0={}: Adding a NIC NOP for send/recv for with dupMask {:012b} and {} credits, "
                   "consumeDwords={}",

@@ -328,3 +328,10 @@ hcclResult_t HCCL_API_CALL hcclDfaUpdateState(DfaPhase dfaPhase)
         return (HclGen2::hcclDfaUpdateState(dfaPhase));
     
 }
+
+hcclResult_t HCCL_API_CALL hcclGetVersionString(char* pVersion, const unsigned len)
+{
+    
+        return (HclGen2::hcclGetVersionString(pVersion, len));
+    
+}

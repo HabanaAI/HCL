@@ -15,6 +15,8 @@
 class HclCommandsGen2Arch;
 class HclDeviceGen2Arch;
 
+constexpr uint64_t WAIT_ON_CG_RETRY_COUNT = 1000;
+
 using namespace hcl;
 
 Gen2ArchScalManager::~Gen2ArchScalManager() {}
@@ -183,7 +185,7 @@ void Gen2ArchScalManager::getHBMInfoForExport(uint64_t& vaBase,
 void Gen2ArchScalManager::waitOnCg(Gen2ArchScalWrapper::CgComplex& cgComplex, const uint64_t target)
 {
     scal_completion_group_set_expected_ctr(cgComplex.cgHandle, target);
-    for (size_t i = 0; i < 1000; i++)  // TODO: Decide for how many iterations
+    for (size_t i = 0; i < WAIT_ON_CG_RETRY_COUNT; i++)
     {
         try
         {

@@ -1,7 +1,7 @@
 #include "platform/gaudi3/port_mapping.h"
 
 #include <cstdint>            // for uint8_t
-#include <utility>            // for pair
+#include <utility>            // for get
 #include <type_traits>
 #include <unordered_map>
 #include <ostream>  // for operator<<, ostream
@@ -12,8 +12,10 @@
 #include "platform/gen2_arch_common/port_mapping_config.h"  // for Gen2ArchPortMappingConfig
 #include "hcl_utils.h"  // for VERIFY
 #include "platform/gaudi3/port_mapping_autogen.h"  // for g_gaudi3_card_location_*
+#include "platform/gaudi3/port_mapping_autogen_hls3pcie.h"  // for g_hls3pcie_card_location*
 #include "gaudi3/gaudi3.h"                         // for NIC_MAX_NUM_OF_MACROS
 #include "platform/gaudi3/hal.h"                   // for Gaudi3Hal
+#include "hcl_math_utils.h"                        // for div_round_up
 
 const ServerNicsConnectivityArray g_HLS3NicsConnectivityArray = {g_gaudi3_card_location_0_mapping,
                                                                  g_gaudi3_card_location_1_mapping,
@@ -24,15 +26,23 @@ const ServerNicsConnectivityArray g_HLS3NicsConnectivityArray = {g_gaudi3_card_l
                                                                  g_gaudi3_card_location_6_mapping,
                                                                  g_gaudi3_card_location_7_mapping};
 
+const ServerNicsConnectivityArray g_HLS3PcieNicsConnectivityArray = {g_hls3pcie_card_location_0_mapping,
+                                                                     g_hls3pcie_card_location_1_mapping,
+                                                                     g_hls3pcie_card_location_2_mapping,
+                                                                     g_hls3pcie_card_location_3_mapping,
+                                                                     g_hls3pcie_card_location_4_mapping,
+                                                                     g_hls3pcie_card_location_5_mapping,
+                                                                     g_hls3pcie_card_location_6_mapping,
+                                                                     g_hls3pcie_card_location_7_mapping};
+
 Gaudi3DevicePortMapping::Gaudi3DevicePortMapping(const int                          fd,
                                                  const Gen2ArchPortMappingConfig&   portMappingConfig,
                                                  const hcl::Gaudi3Hal&              hal,
                                                  const ServerNicsConnectivityArray& serverNicsConnectivityArray)
 : Gen2ArchDevicePortMapping(fd), m_hal(hal)
 {
-    init(serverNicsConnectivityArray);
-    assignCustomMapping(fd, portMappingConfig);
-    logPortMappingConfig(m_spotlight_mappings[portMappingConfig.getSpotlightType()]);
+    LOG_HCL_DEBUG(HCL, "Device ctor 1 called, hal.getDefaultBoxSize={}", hal.getDefaultBoxSize());
+    init(serverNicsConnectivityArray, portMappingConfig);
 }
 
 Gaudi3DevicePortMapping::Gaudi3DevicePortMapping(const int             fd,
@@ -41,8 +51,9 @@ Gaudi3DevicePortMapping::Gaudi3DevicePortMapping(const int             fd,
                                                  const ServerNicsConnectivityArray& serverNicsConnectivityArray)
 : Gen2ArchDevicePortMapping(fd), m_hal(hal)
 {
-    LOG_HCL_DEBUG(HCL, "test ctor 1 called");
-    init(serverNicsConnectivityArray);
+    LOG_HCL_DEBUG(HCL, "Test ctor 2 called");
+    Gen2ArchPortMappingConfig dummy_portMappingConfig;
+    init(serverNicsConnectivityArray, dummy_portMappingConfig, false);
 }
 
 Gaudi3DevicePortMapping::Gaudi3DevicePortMapping(const int                          fd,
@@ -51,11 +62,14 @@ Gaudi3DevicePortMapping::Gaudi3DevicePortMapping(const int                      
                                                  const ServerNicsConnectivityArray& serverNicsConnectivityArray)
 : Gen2ArchDevicePortMapping(fd, moduleId), m_hal(hal)
 {
-    LOG_HCL_DEBUG(HCL, "test ctor 2 called");
-    init(serverNicsConnectivityArray);
+    LOG_HCL_DEBUG(HCL, "Test ctor 3 called");
+    Gen2ArchPortMappingConfig dummy_portMappingConfig;
+    init(serverNicsConnectivityArray, dummy_portMappingConfig, false);
 }
 
-void Gaudi3DevicePortMapping::init(const ServerNicsConnectivityArray& serverNicsConnectivityArray)
+void Gaudi3DevicePortMapping::init(const ServerNicsConnectivityArray& serverNicsConnectivityArray,
+                                   const Gen2ArchPortMappingConfig&   portMappingConfig,
+                                   const bool                         setPortsMask)
 {
     LOG_HCL_DEBUG(HCL, "Initializing");
     m_innerRanksPortMask.resize(DEFAULT_COMMUNICATORS_SIZE, 0);
@@ -63,12 +77,39 @@ void Gaudi3DevicePortMapping::init(const ServerNicsConnectivityArray& serverNics
 
     // Keep the order of functions here
     assignDefaultMapping(serverNicsConnectivityArray);
+    assignCustomMapping(portMappingConfig);
+    logPortMappingConfig(m_spotlight_mappings[portMappingConfig.getSpotlightType()]);
+    readMaxScaleOutPorts();
+    if (setPortsMask)
+    {
+        setPortsMasks();
+    }
     verifyPortsConfiguration(DEFAULT_SPOTLIGHT);  // DEFAULT_SPOTLIGHT can be used since it is verification only
     setNumScaleUpPorts();
     setNumScaleOutPorts();
-    initNinMacroPairs();
-    initPairsSetsAndDupMasks();
-    initMacroPairDevices();
+    setMaxSubNics();
+    initNicMacros();
+    initDeviceSetsAndDupMasks();
+    initNicMacrosForAllDevices();
+}
+
+void Gaudi3DevicePortMapping::onCommInit(HclDynamicCommunicator& dynamicComm)
+{
+    const HCL_Comm comm = dynamicComm;
+    // resize if need
+    if (comm >= m_innerRanksPortMask.size())
+    {
+        LOG_HCL_DEBUG(HCL, "Resizing m_innerRanksPortMask for new comm({})", comm);
+        m_innerRanksPortMask.resize(m_innerRanksPortMask.size() + DEFAULT_COMMUNICATORS_SIZE, 0);
+    }
+
+    // calculate masks for new communicator
+    for (const auto& scaleUpRank : dynamicComm.getInnerRanksExclusive())
+    {
+        const uint32_t moduleID = dynamicComm.getRemoteConnectionHeader(scaleUpRank).hwModuleID;
+        m_innerRanksPortMask[comm] |= getRemoteDevicePortMask(moduleID, dynamicComm);
+    }
+    LOG_HCL_DEBUG(HCL, "m_innerRanksPortMask[{}] set to(0x{:x})", comm, m_innerRanksPortMask[comm]);
 }
 
 void Gaudi3DevicePortMapping::assignDefaultMapping()
@@ -124,21 +165,7 @@ Gaudi3DevicePortMapping::getDeviceToRemoteIndexPortMask(HclDynamicCommunicator& 
 const uint32_t Gaudi3DevicePortMapping::getInnerRanksPortMask(HclDynamicCommunicator& dynamicComm)
 {
     HCL_Comm comm = dynamicComm;
-    // TODO: move resize code to CommInitRank
-    if (comm >= m_innerRanksPortMask.size())
-    {
-        LOG_HCL_DEBUG(HCL, "Resizing m_innerRanksPortMask for new comm({})", comm);
-        m_innerRanksPortMask.resize(m_innerRanksPortMask.size() + DEFAULT_COMMUNICATORS_SIZE, 0);
-    }
-
-    if (m_innerRanksPortMask[comm] == 0)
-    {
-        for (const auto& scaleUpRank : dynamicComm.getInnerRanksExclusive())
-        {
-            const uint32_t moduleID = dynamicComm.getRemoteConnectionHeader(scaleUpRank).hwModuleID;
-            m_innerRanksPortMask[comm] |= getRemoteDevicePortMask(moduleID, dynamicComm);
-        }
-    }
+    LOG_HCL_TRACE(HCL, "m_innerRanksPortMask[{}] = (0x{:x})", comm, m_innerRanksPortMask[comm]);
     return m_innerRanksPortMask[comm];
 }
 
@@ -148,14 +175,9 @@ const uint32_t Gaudi3DevicePortMapping::getRankToPortMask(const HCL_Rank rank, H
     return getRemoteDevicePortMask(moduleID, dynamicComm);
 }
 
-unsigned Gaudi3DevicePortMapping::getMaxNumScaleOutPorts() const
-{
-    return m_max_scaleout_ports;
-}
-
 unsigned Gaudi3DevicePortMapping::getDefaultScaleOutPortByIndex(unsigned idx) const
 {
-    return lkd_enabled_scaleout_ports(idx);
+    return m_lkd_enabled_scaleout_ports(idx);
 }
 
 nics_mask_t Gaudi3DevicePortMapping::getRemoteScaleOutPorts(const uint32_t remoteModuleId,
@@ -186,7 +208,7 @@ unsigned Gaudi3DevicePortMapping::getRemoteSubPortIndex(const uint32_t remoteMod
     return std::get<2>(m_spotlight_mappings[spotlightType][remoteModuleId][remotePort]);
 }
 
-void Gaudi3DevicePortMapping::assignCustomMapping(int fd, const Gen2ArchPortMappingConfig& portMappingConfig)
+void Gaudi3DevicePortMapping::assignCustomMapping(const Gen2ArchPortMappingConfig& portMappingConfig)
 {
     if (!portMappingConfig.hasValidMapping()) return;
     // we will override the same spotlight that the user intended to (spotlight type is provided by the user, as part of
@@ -195,9 +217,9 @@ void Gaudi3DevicePortMapping::assignCustomMapping(int fd, const Gen2ArchPortMapp
     LOG_HCL_INFO(HCL, "Will be using custom mapping: {}.", portMappingConfig.getFilePathLoaded());
 }
 
-void Gaudi3DevicePortMapping::initNinMacroPairs()
+void Gaudi3DevicePortMapping::initNicMacros()
 {
-    LOG_HCL_DEBUG(HCL, "Calculating Nic Macro pairs");
+    LOG_HCL_DEBUG(HCL, "Calculating Nic Macros");
 
     // NIC_MAX_NUM_OF_MACROS
     constexpr size_t maxNicMacroPairs = NIC_MAX_NUM_OF_MACROS;
@@ -240,7 +262,8 @@ void Gaudi3DevicePortMapping::initNinMacroPairs()
         {
             if (((unsigned)evenDevice == NOT_CONNECTED_DEVICE_ID) || ((unsigned)oddDevice == NOT_CONNECTED_DEVICE_ID))
             {
-                nicMacroPair.m_nicsConfig = NIC_MACRO_NOT_CONNECTED_NICS;  // no connected nics in this macro
+                nicMacroPair.m_nicsConfig =
+                    NIC_MACRO_NOT_CONNECTED_NICS;  // no connected nics in this macro or  1 scaleout nic
             }
             else
             {
@@ -260,7 +283,7 @@ void Gaudi3DevicePortMapping::initNinMacroPairs()
                 nicMacroPair.m_device0    = evenDevice;
                 nicMacroPair.m_device1    = evenDevice;
             }
-            else  // either even or odd nic are scaleup and the other is scaleout
+            else  // either even or odd nic are scaleup and the other is scaleout or not connected
             {
                 nicMacroPair.m_nicsConfig = NIC_MACRO_SINGLE_SCALEUP_NIC;
                 nicMacroPair.m_device0    = *devicePair.begin();
@@ -295,127 +318,173 @@ std::ostream& operator<<(std::ostream& os, const DevicesSet& devices)
     return os;
 }
 
-void Gaudi3DevicePortMapping::initPairsSetsAndDupMasks()
+void Gaudi3DevicePortMapping::initDeviceSetsAndDupMasks()
 {
-    LOG_HCL_DEBUG(HCL, "Calculating Pairs sets");
-    // Determine which devices belong to pair0 and pair1 according to the port mapping nic macro pairs
-    // We cannot aggregate devices that share the same nic macro pair
+    LOG_HCL_DEBUG(HCL, "Calculating devices sets");
+    // Determine which devices belong to set0 and set1 according to the port mapping nic macro pairs
+    // We cannot aggregate devices that share the same nic macro
     const NicMacroPairs& nicMacroPairs(m_nicMacroPairs);
     DevicesSet           devicesProcessed     = {};
-    NicMacroIndexType    pairIndex            = 0;
-    NicMacroIndexType    nicMacroDupMaskIndex = 0;  // this counts bits for scaleup nic macro's only
+    NicMacroIndexType    macroIndex                = 0;  // This counts all the nic macros of our device
+    NicMacroIndexType    nicMacroDupMaskIndex      = 0;  // This counts bits for scaleup nic macro's only
+    NicMacroIndexType    nonScaleupNicsMacrosCount = 0;  // This counts nic macros of non-scaleup nics
+    NicMacroIndexType    nonConnectedNicsMacrosCount = 0;  // This counts nic macros of not connected nics
 
+    DevicesSet nonSharedDevices = {};  // Mark devices that are never shared with another to support HLS3PCIE
+    m_scaleupNicsMacrosCount    = 0;   // Clear scaleout only nic macros count
     for (const NicMacroPair& nicMacroPair : nicMacroPairs)
     {
         LOG_HCL_TRACE(HCL,
-                      "pairIndex={}, nicMacroDupMaskIndex={}, nicMacroPair.m_nicsConfig={}, nicMacroPair.m_device0={}, "
+                      "macroIndex={}, nicMacroDupMaskIndex={}, nicMacroPair.m_nicsConfig={}, "
+                      "nicMacroPair.m_device0={}, "
                       "nicMacroPair.m_device1={}",
-                      pairIndex,
+                      macroIndex,
                       nicMacroDupMaskIndex,
                       nicMacroPair.m_nicsConfig,
                       nicMacroPair.m_device0,
                       nicMacroPair.m_device1);
+        LOG_HCL_TRACE(HCL,
+                      "m_macroDevicesSet0={}, m_macroDevicesSet1={}, nonSharedDevices={}",
+                      m_macroDevicesSet0,
+                      m_macroDevicesSet1,
+                      nonSharedDevices);
         switch (nicMacroPair.m_nicsConfig)
         {
             case NIC_MACRO_NOT_CONNECTED_NICS:
-                // 1 or 2 disconnected nics - count it in dup mask
+                // 1 or 2 disconnected nics - no scaleup
+                nonScaleupNicsMacrosCount++;
+                nonConnectedNicsMacrosCount++;
                 nicMacroDupMaskIndex++;
                 break;
             case NIC_MACRO_NO_SCALEUP_NICS:
-                // all scaleout nics, skip it in counting
+                // All scaleout nics, skip it in counting
+                nonScaleupNicsMacrosCount++;
                 break;
             case NIC_MACRO_SINGLE_SCALEUP_NIC:
                 // A single device that is sharing it with a scaleout/not connected nic, add it to first set
-                VERIFY(m_macroPairsSet1.count(nicMacroPair.m_device0) == 0);  // This device it cant be in other set1
+                VERIFY(m_macroDevicesSet1.count(nicMacroPair.m_device0) == 0);  // This device it cant be in other set1
                 devicesProcessed.insert(nicMacroPair.m_device0);
-                m_macroPairsSet0.insert(nicMacroPair.m_device0);
+                m_macroDevicesSet0.insert(nicMacroPair.m_device0);
+                nonSharedDevices.erase(nicMacroPair.m_device0);
                 m_nicsMacrosDupMask[nicMacroPair.m_device0] =
                     m_nicsMacrosDupMask[nicMacroPair.m_device0] |
-                    (1 << nicMacroDupMaskIndex);  // Set the macro pair bit for first device
+                    (1 << nicMacroDupMaskIndex);  // Set the NIC macro bit for first device
                 nicMacroDupMaskIndex++;
                 break;
             case NIC_MACRO_TWO_SCALEUP_NICS:  // nic macro with 2 scaleup nics
                 m_nicsMacrosDupMask[nicMacroPair.m_device0] =
                     m_nicsMacrosDupMask[nicMacroPair.m_device0] |
-                    (1 << nicMacroDupMaskIndex);  // Set the macro pair bit for first device
+                    (1 << nicMacroDupMaskIndex);  // Set the NIC macro bit for first device
                 devicesProcessed.insert(nicMacroPair.m_device0);
                 if (nicMacroPair.m_device0 != nicMacroPair.m_device1)
                 {
+                    nonSharedDevices.erase(nicMacroPair.m_device0);
+                    nonSharedDevices.erase(nicMacroPair.m_device1);
                     // 2 different devices, put first in first set and 2nd in 2nd set
-                    VERIFY(m_macroPairsSet1.count(nicMacroPair.m_device0) == 0);  // This device cant be in other set1
-                    VERIFY(m_macroPairsSet0.count(nicMacroPair.m_device1) == 0);  // This device cant be in other set0
+                    VERIFY(m_macroDevicesSet1.count(nicMacroPair.m_device0) ==
+                           0);  // This device cant be in the other set1
+                    VERIFY(m_macroDevicesSet0.count(nicMacroPair.m_device1) ==
+                           0);  // This device cant be in the other set0
                     devicesProcessed.insert(nicMacroPair.m_device1);
-                    m_macroPairsSet0.insert(nicMacroPair.m_device0);  // Device will be put in set0
-                    m_macroPairsSet1.insert(nicMacroPair.m_device1);  // Device will be put in set1
+                    m_macroDevicesSet0.insert(nicMacroPair.m_device0);  // Device will be put in set0
+                    m_macroDevicesSet1.insert(nicMacroPair.m_device1);  // Device will be put in set1
                     m_nicsMacrosDupMask[nicMacroPair.m_device1] =
                         m_nicsMacrosDupMask[nicMacroPair.m_device1] |
-                        (1 << nicMacroDupMaskIndex);  // Set the macro pair bit for 2nd device
+                        (1 << nicMacroDupMaskIndex);  // Set the NIC macro bit for 2nd device
                     nicMacroDupMaskIndex++;
                 }
                 else
                 {
-                    // same device on both nics - skip set setting, it will be added on a shared nic macro with another
-                    // device
-                    // but set macro pair bit
+                    // Same device on both nics - skip set setting, it will be added on a shared nic macro with another
+                    // device, but set NIC macro bit
+                    // Handle case for HLS3PCIE - no shared nic macros, so we need to set them after this loop
+                    if ((m_macroDevicesSet1.count(nicMacroPair.m_device0) == 0) &&
+                        (m_macroDevicesSet1.count(nicMacroPair.m_device0) == 0))  // device was never shared before
+                    {
+                        nonSharedDevices.insert(nicMacroPair.m_device0);
+                    }
                     m_nicsMacrosDupMask[nicMacroPair.m_device0] =
                         m_nicsMacrosDupMask[nicMacroPair.m_device0] |
-                        (1 << nicMacroDupMaskIndex);  // Set the macro pair bit for 2nd device
+                        (1 << nicMacroDupMaskIndex);  // Set the NIC macro bit for 2nd device
                     nicMacroDupMaskIndex++;
                 }
                 break;
         }
-        pairIndex++;
+        macroIndex++;
     }
-    // TODO: verify all devices are in devicesProcessed (except our own)
-    LOG_HCL_TRACE(HCL, "devicesProcessed={}", devicesProcessed);
 
-    VERIFY(pairIndex - 1 == nicMacroDupMaskIndex,
-           "Wrong number of scaleup nic macros nicMacroDupMaskIndex={}, pairIndex={}",
+    // Handle cases where a device is never in a shared macro (HLS3PCIE) - just push device into first set, it should
+    // not be in 2nd set
+    for (const HCL_HwModuleId deviceId : nonSharedDevices)
+    {
+        LOG_HCL_TRACE(HCL, "Adding left over device {} to m_macroDevicesSet0", deviceId);
+        m_macroDevicesSet0.insert(deviceId);              // Device will be put in set0
+        VERIFY(m_macroDevicesSet1.count(deviceId) == 0);  // This device cant be in the other set1
+    }
+
+    LOG_HCL_TRACE(HCL,
+                  "devicesProcessed={}, nonScaleupNicsMacrosCount={}, nonConnectedNicsMacrosCount={}",
+                  devicesProcessed,
+                  nonScaleupNicsMacrosCount,
+                  nonConnectedNicsMacrosCount);
+    VERIFY(macroIndex - nonScaleupNicsMacrosCount + nonConnectedNicsMacrosCount == nicMacroDupMaskIndex,
+           "Wrong number of scaleup nic macros nicMacroDupMaskIndex={}, nonScaleupNicsMacrosCount={}, "
+           "nonConnectedNicsMacrosCount={}, macroIndex={}",
            nicMacroDupMaskIndex,
-           pairIndex);
+           nonScaleupNicsMacrosCount,
+           nonConnectedNicsMacrosCount,
+           macroIndex);
 
-    LOG_HCL_DEBUG(HCL, "m_macroPairsSet0={}, m_macroPairsSet1={}", m_macroPairsSet0, m_macroPairsSet1);
+    m_scaleupNicsMacrosCount = nicMacroDupMaskIndex;
+    LOG_HCL_DEBUG(HCL,
+                  "m_macroDevicesSet0={}, m_macroDevicesSet1={}, m_scaleupNicsMacrosCount={}",
+                  m_macroDevicesSet0,
+                  m_macroDevicesSet1,
+                  m_scaleupNicsMacrosCount);
 
     size_t index = 0;
     for (const uint16_t dupMask : m_nicsMacrosDupMask)
     {
-        LOG_HCL_DEBUG(HCL, "m_nicsMacrosDupMask[{}]={:012b}", index++, dupMask);
+        const unsigned maxDupMaskBits = div_round_up(m_hal.getMaxNumScaleUpPortsPerConnection(), 2);
+        LOG_HCL_DEBUG(HCL, "maxDupMaskBits={}, m_nicsMacrosDupMask[{}]={:012b}", maxDupMaskBits, index++, dupMask);
         const std::bitset<NIC_MAX_NUM_OF_MACROS> dupMaskBitSet(dupMask);
-        VERIFY(dupMaskBitSet.count() == 2 || dupMaskBitSet.count() == 0,
-               "device {} dupMask {:012b} must have 0 or 2 bits set",
+        VERIFY(dupMaskBitSet.count() == maxDupMaskBits || dupMaskBitSet.count() == 0,
+               "device {} dupMask {:012b} must have 0 or {}} bits set",
                index,
-               dupMask);
+               dupMask,
+               maxDupMaskBits);
     }
 }
 
-void Gaudi3DevicePortMapping::initMacroPairDevices()
+void Gaudi3DevicePortMapping::initNicMacrosForAllDevices()
 {
-    for (size_t deviceId = 0; deviceId < m_macroPairDevices.size(); deviceId++)
+    for (size_t deviceId = 0; deviceId < m_nicMacrosDevices.size(); deviceId++)
     {
-        // Each device belongs to 2 NIC macro pairs, find out which
-        // TODO: in C++20, you can get this with single command
+        // Each device belongs to 2 or more NIC macros, find out which
         const uint16_t mask = m_nicsMacrosDupMask[deviceId];
-        std::unordered_set<uint32_t> pairSet;  // store here the 2 nic macro pairs indexes
+        std::unordered_set<uint32_t> macrosIndexesSet;  // store here the nic macro indexes
         if (mask)                // skip self device
         {
             for (NicMacroIndexType macroPairIndex = 0; macroPairIndex < NIC_MAX_NUM_OF_MACROS; macroPairIndex++)
             {
                 if (mask & (1 << macroPairIndex))
                 {
-                    pairSet.insert(macroPairIndex);
+                    macrosIndexesSet.insert(macroPairIndex);
                 }
             }
-            VERIFY(pairSet.size() == 2,
-                   "Cannot find 2 nic macro pairs for deviceId={}, mask={:012b}, found {}",
+            const unsigned numNicMacros = div_round_up(m_hal.getMaxNumScaleUpPortsPerConnection(), 2);
+            LOG_HCL_DEBUG(HCL, "numNicMacros={}", numNicMacros);
+            VERIFY(macrosIndexesSet.size() == numNicMacros,
+                   "Cannot find {} nic macros for deviceId={}, mask={:012b}, found {}",
+                   numNicMacros,
                    deviceId,
                    mask,
-                   pairSet.size());
-            m_macroPairDevices[deviceId] = std::make_pair(*pairSet.begin(), *(++pairSet.begin()));
-            LOG_HCL_TRACE(HCL,
-                          "Adding deviceId={}, macro0={}, macro1={}",
-                          deviceId,
-                          std::get<0>(m_macroPairDevices[deviceId]),
-                          std::get<1>(m_macroPairDevices[deviceId]));
+                   macrosIndexesSet.size());
+            m_nicMacrosDevices[deviceId].clear();
+            std::copy(macrosIndexesSet.begin(),
+                      macrosIndexesSet.end(),
+                      std::back_inserter(m_nicMacrosDevices[deviceId]));
+            LOG_HCL_TRACE(HCL, "Adding deviceId={}, macros={}", deviceId, m_nicMacrosDevices[deviceId].size());
         }
     }
 }

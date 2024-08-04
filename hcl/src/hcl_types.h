@@ -13,7 +13,7 @@
 #include <chrono>
 #include <set>
 
-#include "synapse_types.h"
+#include "synapse_api_types.h"  // for synDeviceId
 #include "common/pci_ids.h"
 #include "hlthunk.h"
 #include "hcl_api_types.h"
@@ -27,6 +27,7 @@
 
 #define NO_DEVICE_ID ((synDeviceId)-1)
 #define HCL_INVALID_COMM (HCL_Comm)(-1)
+#define HNIC_BUF_SIZE (128)
 
 // align to size, size should be power of 2
 // macro aligned to LKD implementation
@@ -34,11 +35,14 @@
 
 const uint32_t DEFAULT_BOX_SIZE        = 8;
 const HCL_Rank INVALID_RANK            = ((HCL_Rank)-1);
-const uint64_t INVALID_POD             = INVALID_RANK;
+const uint64_t INVALID_SCALEUP_GROUP   = INVALID_RANK;
 const int32_t  INVALID_NIC             = (int32_t)-1;
 
-const uint32_t NUM_SCALEUP_PORTS_PER_CONNECTION = 3;
+constexpr uint32_t NUM_SCALEUP_PORTS_PER_CONNECTION = 3;
 const unsigned DEFAULT_COMMUNICATORS_SIZE = 16; // Currently its acting as MAX comms (SW-123392)
+
+// for HLS3PCIE, should be move to hal_hls3pcie but required here because of GaudiNicsQPS data type
+static constexpr unsigned HLS3PCIE_NUM_SCALEUP_PORTS_PER_CONNECTION = 6;
 
 const uint32_t HCL_MAC_BYTE_SIZE = 6; // size of a MAC address in bytes
 
@@ -56,9 +60,13 @@ const uint32_t MAX_SUPPORTED_RANKS = 8192;  // max value of GCFG_HCL_MAX_RANKS
 const int MAX_QPS_PER_CONNECTION = 6;
 const int MAX_QPS_SETS_PER_CONNECTION = 4;
 const int MAX_RANK_INFO_NICS     = 24;
-const int COMPACT_RANK_INFO_NICS = 3;
+constexpr unsigned COMPACT_RANK_INFO_NICS      = 3;
+constexpr unsigned MAX_COMPACT_RANK_INFO_NICS =
+    std::max(NUM_SCALEUP_PORTS_PER_CONNECTION,
+             HLS3PCIE_NUM_SCALEUP_PORTS_PER_CONNECTION);  // support up to 6 scaleup ports
 const int HOST_MICRO_ARCH_STREAMS     = 2;
 const int MAX_HNIC_CONNECTIONS        = HOST_MICRO_ARCH_STREAMS;
+const int MAX_HNIC_CONNECTION_SETS    = 16;  // Limited by qpSetIndex size (4 bits)
 
 const int SINGLE_QP_SET_INDEX = 0;
 const int SINGLE_QP_SET       = 1;
@@ -90,7 +98,7 @@ struct GaudiNicAddressArray
 };
 
 /**
- * @brief gaudi NIC QPs holds QP data for 3 (COMPACT_RANK_INFO_NICS) active nics
+ * @brief gaudi NIC QPs holds QP data for MAX_COMPACT_RANK_INFO_NICS active nics
  *
  * to access by nic use GaudiNicQPs[]
  * to access by index use GaudiNicQPs.qp[]
@@ -101,7 +109,7 @@ struct GaudiNicQPs
     {
         uint32_t qp[MAX_QPS_SETS_PER_CONNECTION][MAX_QPS_PER_CONNECTION];
         uint8_t  nic;
-    } qp[COMPACT_RANK_INFO_NICS];
+    } qp[MAX_COMPACT_RANK_INFO_NICS];
 
     NicQPs& operator[](uint8_t nic);
 };
@@ -111,7 +119,7 @@ struct GaudiNicQPs
  */
 struct HostNicConnOpaque
 {
-    char buff[128]; /* TODO: replace with CTRL_BUF_SIZE Define in libfabric_common.h */
+    char buff[HNIC_BUF_SIZE];
 };
 
 /**
@@ -119,7 +127,7 @@ struct HostNicConnOpaque
  */
 struct HostNicConnectInfo
 {
-    HostNicConnOpaque server[MAX_HNIC_CONNECTIONS];
+    HostNicConnOpaque server[MAX_HNIC_CONNECTION_SETS][MAX_HNIC_CONNECTIONS];
 };
 
 /**
@@ -216,7 +224,7 @@ enum HclConfigType
     HLS1H       = 6,
     HLS2        = 7,
     HLS3        = 8,
-    HLS3PCIE    = 9
+    HL338       = 9
 };
 
 // The following enum is used to define dynamic ports scheme configuration per communicator

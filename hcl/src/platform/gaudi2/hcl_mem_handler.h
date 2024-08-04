@@ -18,4 +18,17 @@ public:
                                             uint64_t&         offset,
                                             uint64_t&         baseAddress,
                                             uint32_t&         rrIndex) override;
+
+    virtual void memsetIMBs(hcl::IntermediateBufferContainer* imbContainer,
+                            SignalsManager*                   signalsManager,
+                            SliceState&                       sendSliceState,
+                            SliceState&                       recvSliceState,
+                            unsigned int                      sizeInBytes,
+                            hcl::syncInfo                     longSo,
+                            unsigned                          schedIdx,
+                            hcl::ScalStream&                  garbageCollectionStream,
+                            HCL_StreamId                      m_streamId,
+                            e_devicePoolID                    poolId,
+                            uint8_t                           streamCtxtID,
+                            hcclDataType_t                    dataType) override;
 };

@@ -6,7 +6,7 @@
 #include "infra/hcl_spsc_fifo.h"
 #include "hccl_internal_defs.h"
 
-const uint32_t                            HOST_STREAM_CAPACITY = 1024 * 1024 /*TODO - TBD*/;
+const uint32_t                            HOST_STREAM_CAPACITY = 1024 * 1024;
 typedef spsc_fifo_t<HOST_STREAM_CAPACITY> HostStreamFifo;
 using spHostStreamFifo = std::shared_ptr<HostStreamFifo>;
 

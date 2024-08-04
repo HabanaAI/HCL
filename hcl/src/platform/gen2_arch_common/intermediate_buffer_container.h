@@ -32,7 +32,7 @@ struct IntermediateBuffersAmount
 struct BufferContainerParams
 {
     uint64_t allBufferBaseAddr = 0;
-    unsigned sliceSize         = 0;  // TODO make const
+    unsigned sliceSize         = 0;
     uint64_t sizeOfAllBuffers  = 0;
     uint64_t sizeOfSIB         = 0;
     uint64_t countOfSIB        = 0;
@@ -55,11 +55,11 @@ public:
     IntermediateBufferContainer& operator=(const IntermediateBufferContainer&) = delete;
 
     uint64_t              getBufferSize() const;
-    DeviceBufferManager&  getSIB(uint32_t streamIndex);                  // TODO make const
-    uint64_t              getAllBufferBaseAddr(unsigned poolSizeIndex);  // TODO make const
-    uint64_t              getFwBaseAddr();         // TODO make const
+    DeviceBufferManager&  getSIB(uint32_t streamIndex);
+    uint64_t              getAllBufferBaseAddr(unsigned poolSizeIndex);
+    uint64_t              getFwBaseAddr();
     unsigned              getSliceSize(unsigned poolSizeIndex) const;
-    unsigned              getFwSliceSize();        // TODO make const
+    unsigned              getFwSliceSize();
     static unsigned       getSIBCount(const std::vector<e_devicePoolID>& pools);
     std::vector<unsigned> getSIBVector();
     /**
@@ -79,9 +79,9 @@ public:
 
 private:
     std::vector<DeviceBufferManager>                      m_sibBuffers;
-    uint32_t                         m_deviceId          = 0;  // TODO make const
+    uint32_t                         m_deviceId          = 0;
     uint64_t                         m_fwBaseAddr        = 0;
-    uint32_t                                              m_numberOfStreams   = 0;  // TODO make const
+    uint32_t                                              m_numberOfStreams   = 0;
     std::array<BufferContainerParams, MAX_NUM_POOL_SIZES> m_bufferContainerParams;
     e_devicePoolID                                        m_firstPool = NO_POOL;
     e_devicePoolID                                        m_lastPool  = NO_POOL;

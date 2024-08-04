@@ -23,11 +23,24 @@
 #include "ofi_plugin.h"                           // for OfiPlugin
 #include "hcl_log_manager.h"                      // for LOG_*
 #include "platform/gaudi2/context_manager.h"
+#include "hcl_types.h"  // for MAX_COMPACT_RANK_INFO_NICS
+#include <netpacket/packet.h>  // for sockaddr_ll
+#include <linux/ethtool.h>     // for ethtool_drvinfo, ETHTOOL_GDRVINFO
+#include <ifaddrs.h>           // for ifaddrs, freeifaddrs, getifa...
+#include <sys/ioctl.h>         // for ioctl
+#include <linux/sockios.h>     // for SIOCETHTOOL
+#include <net/if.h>            // for
 
 class HclEvent;
 
 #define PCI_ID_STR_LEN   13
 #define MAC_ADDR_STR_LEN 17
+
+static inline void convertMacAddress(uint8_t* out, const uint64_t mac)
+{
+    const uint8_t* in = (const uint8_t*)(&mac);
+    std::reverse_copy(in, in + 6, out);
+}
 
 IHclDevice::IHclDevice(HclDeviceConfig& deviceConfig)
 : m_deviceId(deviceConfig.m_deviceId), m_deviceConfig(deviceConfig), m_deviceType(deviceConfig.m_deviceType)
@@ -114,6 +127,117 @@ bool IHclDevice::isCommExist(HCL_Comm comm)
     return m_dynamicComms.isCommExist(comm);
 }
 
+void IHclDevice::getMacAddressInfo()
+{
+    struct hlthunk_nic_get_ports_masks_out mask;
+    int                                    rc = hlthunk_nic_get_ports_masks(getFd(), &mask);
+    VERIFY(rc == 0, "hlthunk_nic_get_ports_masks() failed: {}", rc);
+    LOG_HCL_DEBUG(HCL, "mask.ports_mask={:024b}", mask.ports_mask);
+
+    const uint64_t enabledNicsMask = mask.ports_mask;
+
+    /* All ports are disabled */
+    if (enabledNicsMask == 0)
+    {
+        m_hclNic.mask = 0;
+        return;
+    }
+
+    char myPciId[PCI_ID_STR_LEN];
+    rc = hlthunk_get_pci_bus_id_from_fd(getFd(), myPciId, sizeof(myPciId));
+    VERIFY(rc == 0, "hlthunk_get_pci_bus_id_from_fd() failed: {}", rc);
+
+    struct ifaddrs* ifaddr;
+    VERIFY(getifaddrs(&ifaddr) == 0, "Unable to retrieve network interfaces");
+
+    struct ethtool_drvinfo drvinfo;
+    struct ifreq           ifr;
+    ifr.ifr_data = (char*)&drvinfo;
+    drvinfo.cmd  = ETHTOOL_GDRVINFO;
+
+    uint64_t nicsMacMask = 0;
+    for (auto ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next)
+    {
+        const std::string name = (ifa)->ifa_name;
+        /* Discard interfaces other than AF_PACKET. */
+        if (ifa->ifa_addr == nullptr || ifa->ifa_addr->sa_family != AF_PACKET) continue;
+
+        strcpy(ifr.ifr_name, name.c_str());
+
+        const int sock = socket(PF_INET, SOCK_DGRAM, IPPROTO_IP);
+        if (sock == -1)
+        {
+            freeifaddrs(ifaddr);
+            VERIFY(false, "Failed opening socket for driver info");
+        }
+
+        /* skip interfaces with no ethtool support */
+        if (ioctl(sock, SIOCETHTOOL, &ifr) < 0)
+        {
+            close(sock);
+            continue;
+        }
+
+        close(sock);
+
+        std::string net_if_drv(drvinfo.driver);
+
+        /* skip interfaces of other vendors */
+        std::string habDrv("habanalabs");
+        if (net_if_drv.find(habDrv.c_str()) == std::string::npos) continue;
+
+        /* skip interfaces of other devices */
+        if (strstr(drvinfo.bus_info, myPciId) != drvinfo.bus_info) continue;
+
+        /* read the interface port */
+        const std::string filePath = "/sys/class/net/" + name + "/dev_port";
+        std::ifstream     file(filePath);
+
+        if (!file.is_open())
+        {
+            freeifaddrs(ifaddr);
+            VERIFY(false, "Failed to open file: {}", filePath);
+        }
+
+        std::string devicePort;
+        std::getline(file, devicePort);
+
+        if (file.fail())
+        {
+            freeifaddrs(ifaddr);
+            VERIFY(false, "Failed to read value from file: {}", filePath);
+        }
+
+        file.close();
+        uint64_t devPortNum = stol(devicePort);
+
+        /* Update MAC only for active NICs */
+        const uint64_t nicMask = 1ULL << devPortNum;
+        if (enabledNicsMask && nicMask)
+        {
+            nicsMacMask |= nicMask;
+            m_hclNic.macs[devPortNum] = ((struct sockaddr_ll*)ifa->ifa_addr)->sll_addr;
+        }
+    }
+
+    freeifaddrs(ifaddr);
+
+    uint64_t bcastMac = std::stoull("ffffffffffff", nullptr, 16);
+    for (uint64_t port = 0; port < 64; port++)
+    {
+        const uint64_t nicMask = 1ULL << port;
+        /* Update internal active NICs */
+        if ((enabledNicsMask & nicMask) && !(nicsMacMask & nicMask))
+        {
+            nicsMacMask |= nicMask;
+            /* The MAC address of internal ports is irrelevant, so use broadcast */
+            m_hclNic.macs[port] = &bcastMac;
+        }
+    }
+
+    m_hclNic.mask = nicsMacMask;
+}
+
 void IHclDevice::readMacInfoDriver()
 {
     hlthunk_mac_addr_info kmdMacList;
@@ -137,10 +261,25 @@ void IHclDevice::getMacInfo()
     }
     else
     {
-        readMacInfoDriver();
+        if (GCFG_HCCL_GET_MACS_FROM_DRIVER.value())
+        {
+            readMacInfoDriver();
+        }
+        else
+        {
+            getMacAddressInfo();
+        }
     }
 
     LOG_HCL_DEBUG(HCL, "nics mask = {}", m_hclNic.mask.to_str());
+    for (const auto nic : m_hclNic.mask)
+    {
+        const uint64_t mac_addr          = m_hclNic.macs[nic];
+        uint64_t       mac_addr_reversed = 0;
+        convertMacAddress((uint8_t*)(&mac_addr_reversed), mac_addr);
+
+        LOG_HCL_DEBUG(HCL, "nic[{}]=0x{:x}", nic, mac_addr_reversed);
+    }
 }
 
 bool IHclDevice::readMacInfoFromFile(const char* macAddrInfoFilePath)
@@ -313,17 +452,6 @@ int IHclDevice::getFd() const
 
 bool IHclDevice::isNicUp(uint32_t nic)
 {
-    hlthunk_get_habana_link_state_in  in_port = {nic, 0};
-    hlthunk_get_habana_link_state_out state   = {0};
-    int                               hl_res  = hlthunk_get_habana_link_state(getFd(), &in_port, &state);
-    if (hl_res != 0)
-    {
-        LOG_HCL_DEBUG(HCL, "Failed to query link state - check driver status");
-    }
-    if (hl_res == 0 && state.up == 1)
-    {
-        return true;
-    }
     return false;
 }
 
@@ -403,18 +531,6 @@ void IHclDevice::waitForAllEvents(bool isCsDone) {}
 
 void IHclDevice::waitForAllEvents(uint32_t queueOffset, bool isCsDone) {}
 
-uint32_t IHclDevice::createQp(uint32_t port, uint8_t qpId)
-{
-    uint32_t qpn = 0;
-    int rc = hlthunk_alloc_conn(getFd(), port, &qpn);
-    VERIFY(rc == 0,
-           "Failed to allocate QP, hlthunk_alloc_conn() failed({}), device may be out of QPs, or network "
-           "interfaces are not up",
-           rc);
-
-    return qpn;
-}
-
 uint32_t IHclDevice::allocateConnection(uint32_t port, HCL_Rank rank, HCL_Comm comm, uint8_t qpId, uint8_t qpSet)
 {
     VERIFY(isNicUp(port), "Nic({}) is DOWN, can't allocate connection", port);
@@ -433,56 +549,6 @@ uint32_t IHclDevice::allocateConnection(uint32_t port, HCL_Rank rank, HCL_Comm c
                   qpId);
 
     return qpn;
-}
-
-void IHclDevice::destroyQp(uint32_t port, uint32_t qpn)
-{
-    int rc = hlthunk_destroy_conn(getFd(), port, qpn);
-    VERIFY(rc == 0, "hlthunk_destroy_conn() failed: {}", rc);
-}
-
-void IHclDevice::closeQps(HCL_Comm comm, const UniqueSortedVector& ranks)
-{
-    for (auto& rank : ranks)
-    {
-        // don't call getActiveNics on same rank
-        if (rank == getMyRank(comm))
-        {
-            continue;
-        }
-
-        // don't use getActiveNics so loopback mode also works
-        // access GaudiNicQPs by index and translate to port
-        for (uint8_t index = 0; index < COMPACT_RANK_INFO_NICS; index++)
-        {
-            for (uint8_t qpSet = 0; qpSet < MAX_QPS_SETS_PER_CONNECTION; qpSet++)
-            {
-                for (unsigned i = 0; i < m_hal->getMaxQPsPerNic(); i++)
-                {
-                    const uint32_t qpn = getComm(comm).m_rankInfo.remoteInfo[rank].gaudiNicQPs.qp[index].qp[qpSet][i];
-                    if (qpn == 0) continue;
-
-                    uint8_t port = getComm(comm).m_rankInfo.remoteInfo[rank].gaudiNicQPs.qp[index].nic;
-
-                    LOG_HCL_DEBUG(HCL,
-                                  "destroy QP for rank({}) comm({}) port({}) Qp: {}",
-                                  rank,
-                                  comm,
-                                  port,
-                                  getComm(comm).m_rankInfo.remoteInfo[rank].gaudiNicQPs[port].qp[qpSet][i]);
-
-                    destroyQp(port, getComm(comm).m_rankInfo.remoteInfo[rank].gaudiNicQPs[port].qp[qpSet][i]);
-
-                    getComm(comm).m_rankInfo.remoteInfo[rank].gaudiNicQPs[port].qp[qpSet][i] = 0;
-                }
-            }
-        }
-    }
-}
-
-void IHclDevice::deleteCommConnections(HCL_Comm comm)
-{
-    closeQps(comm, getRanks(comm));
 }
 
 void IHclDevice::registerOpenQpCallback(HclConfigType configType, std::function<hcclResult_t(HCL_Comm)> callback)
@@ -541,94 +607,6 @@ hcclResult_t IHclDevice::updateQps(HCL_Comm comm)
     return hcclSuccess;
 }
 
-static inline void convertMacAddress(uint8_t* out, uint64_t mac)
-{
-    uint8_t* in = (uint8_t*)&mac;
-    std::reverse_copy(in, in + 6, out);
-}
-
-hcclResult_t
-IHclDevice::setupQps(HCL_Comm comm, HCL_Rank rank, uint32_t stream, uint32_t port, uint32_t qpn, uint8_t qpSet)
-{
-    uint16_t peerNic = getPeerNic(rank, comm, port);
-
-    LOG_HCL_TRACE(HCL,
-                  "comm({}), Remote Rank({}), stream({}), port({}), peer nic({}), qpn({}), qpset({})",
-                  comm,
-                  rank,
-                  stream,
-                  port,
-                  peerNic,
-                  qpn,
-                  qpSet);
-
-    GaudiNicAddress remoteNicAddress =
-        getComm(comm).m_remoteDevices[rank]->device.gaudiNicAddresses.nics[peerNic];
-
-    GaudiNicQPs::NicQPs remoteNicQPs =
-        getComm(comm).m_remoteDevices[rank]->remoteInfo.gaudiNicQPs[peerNic];
-
-    struct hlthunk_requester_conn_ctx req_ctx = {};
-
-    uint64_t remoteMac = remoteNicAddress.mac.u64;
-    uint64_t myMac  = getComm(comm).m_rankInfo.device.gaudiNicAddresses.nics[port].mac.u64;
-    auto        findItr   = m_deviceConfig.m_gaudiNet.find(myMac);
-    LOG_HCL_DEBUG(HCL, "Rank({}), myMac=0x{:x},  remoteMac=0x{:x}", rank, myMac, remoteMac);
-    // If we have IP info, and the destination IP is in a different subnet, use gateway MAC address
-    if (findItr != m_deviceConfig.m_gaudiNet.end())
-    {
-        uint32_t srcIp   = getComm(comm).m_rankInfo.device.gaudiNicAddresses.nics[port].ip;
-        uint32_t destIp  = remoteNicAddress.ip;
-        uint32_t netMask = findItr->second.subnetMask;
-        if ((destIp & netMask) != (srcIp & netMask))
-        {
-            remoteMac = findItr->second.gatewayMacAddress;
-            LOG_HCL_DEBUG(HCL,
-                          "Set gateway MAC to reach destination: Dest IP '{}' => GW MAC '0x{:x}'",
-                          ip2str(destIp),
-                          remoteMac);
-        }
-    }
-
-    req_ctx.dst_ip_addr       = ntohl(remoteNicAddress.ip);
-    req_ctx.dst_conn_id       = remoteNicQPs.qp[qpSet][stream];
-    req_ctx.priority          = GCFG_REQUESTER_PRIORITY.value();
-    req_ctx.timer_granularity = 0;
-    req_ctx.swq_granularity   = 0;
-    req_ctx.congestion_wnd    = GCFG_CONGESTION_WINDOW.value();
-    convertMacAddress(req_ctx.dst_mac_addr, remoteMac);
-
-    updateRequesterContext(req_ctx, comm, port, rank, qpn, qpSet);
-
-    struct hlthunk_responder_conn_ctx res_ctx = {};
-
-    res_ctx.dst_ip_addr = ntohl(remoteNicAddress.ip);
-    res_ctx.dst_conn_id = remoteNicQPs.qp[qpSet][stream];
-    res_ctx.priority    = GCFG_RESPONDER_PRIORITY.value();
-    convertMacAddress(res_ctx.dst_mac_addr, remoteMac);
-
-    updateResponderContext(res_ctx, comm, port, rank, qpn, qpSet);
-
-    LOG_HCL_TRACE(HCL, "qp:{}->{} nic:{} ip:{} mac:0x{:x}", qpn, res_ctx.dst_conn_id, port, ip2str(remoteNicAddress.ip), remoteMac);
-
-    int hlthunk_res = hlthunk_set_responder_conn_ctx(getFd(), port, qpn, &res_ctx);
-    if (hlthunk_res != 0)
-    {
-        LOG_HCL_ERR(HCL, "hlthunk failed to set responder connection context ({})", hlthunk_res);
-        return hcclInternalError;
-    }
-
-    struct hlthunk_requester_conn_ctx_out req_ctx_out = {};
-    hlthunk_res = hlthunk_set_requester_conn_ctx(getFd(), port, qpn, &req_ctx, &req_ctx_out);
-    if (hlthunk_res != 0)
-    {
-        LOG_HCL_ERR(HCL, "hlthunk failed to set requester connection context ({})", hlthunk_res);
-        return hcclInternalError;
-    }
-
-    return hcclSuccess;
-}
-
 hcclResult_t IHclDevice::updateRankQps(HCL_Comm comm, HCL_Rank rank)
 {
     LOG_HCL_TRACE(HCL,
@@ -642,7 +620,7 @@ hcclResult_t IHclDevice::updateRankQps(HCL_Comm comm, HCL_Rank rank)
     // access GaudiNicQPs by index and translate to port
     LOG_HCL_INFO(HCL_COORD, "Rank comm({}) rank({}) start", comm, rank);
     uint32_t opened_qps = 0;
-    for (uint8_t index = 0; index < COMPACT_RANK_INFO_NICS; index++)
+    for (uint8_t index = 0; index < getHal()->getMaxNumScaleUpPortsPerConnection(); index++)
     {
         for (uint8_t qpSet = 0; qpSet < MAX_QPS_SETS_PER_CONNECTION; qpSet++)
         {
@@ -653,22 +631,19 @@ hcclResult_t IHclDevice::updateRankQps(HCL_Comm comm, HCL_Rank rank)
                 if (qpn == 0) continue;  // Connection wasn't opened.
                 if (rank == getMyRank(comm) && !(configType == LOOPBACK)) continue;
 
+                const uint16_t nic = getComm(comm).m_rankInfo.remoteInfo[rank].gaudiNicQPs.qp[index].nic;
                 LOG_HCL_DEBUG(HCL_COORD,
-                              "comm({}), rank({}), stream({}), port({}), qpn({}), qpSet({}) calling setupQps",
+                              "comm({}), rank({}), index={}, stream({}), nic({}), qpn({}), qpSet({}) calling setupQps",
                               comm,
                               rank,
+                              index,
                               stream,
-                              getComm(comm).m_rankInfo.remoteInfo[rank].gaudiNicQPs.qp[index].nic,
+                              nic,
                               qpn,
                               qpSet);
 
                 // translate the index to nic
-                hcclResult_t rs = setupQps(comm,
-                                           rank,
-                                           stream,
-                                           getComm(comm).m_rankInfo.remoteInfo[rank].gaudiNicQPs.qp[index].nic,
-                                           qpn,
-                                           qpSet);
+                hcclResult_t rs = setupQps(comm, rank, stream, nic, qpn, qpSet);
                 if (rs != hcclSuccess)
                 {
                     return rs;
@@ -679,24 +654,6 @@ hcclResult_t IHclDevice::updateRankQps(HCL_Comm comm, HCL_Rank rank)
     }
     LOG_HCL_INFO(HCL_COORD, "Rank comm({}) rank({}) done, opened({}) QPs", comm, rank, opened_qps);
     return hcclSuccess;
-}
-
-void IHclDevice::updateRequesterContext(hlthunk_requester_conn_ctx& req_ctx,
-                                        HCL_Comm                    comm,
-                                        uint8_t                     nic,
-                                        HCL_Rank                    remoteRank,
-                                        uint32_t                    qpn,
-                                        uint8_t                     qpSet)
-{
-}
-
-void IHclDevice::updateResponderContext(hlthunk_responder_conn_ctx& res_ctx,
-                                        HCL_Comm                    comm,
-                                        uint8_t                     nic,
-                                        HCL_Rank                    remoteRank,
-                                        uint32_t                    qpn,
-                                        uint8_t                     qpSet)
-{
 }
 
 void IHclDevice::getInnerRanks(const HCL_Comm comm, UniqueSortedVector& innerRanks)
@@ -717,14 +674,14 @@ void IHclDevice::getPeerRanks(const HCL_Comm comm, UniqueSortedVector& syncRanks
     getOuterRanks(comm, syncRanks);
 }
 
-bool IHclDevice::isCommunicatorInPod(HCL_Comm comm)
+bool IHclDevice::isCommunicatorInScaleupGroup(HCL_Comm comm)
 {
-    return getComm(comm).isCommunicatorInPod();
+    return getComm(comm).isCommunicatorInScaleupGroup();
 }
 
-bool IHclDevice::isCommunicatorPodPeers(HCL_Comm comm)
+bool IHclDevice::isCommunicatorScaleupGroupPeers(HCL_Comm comm)
 {
-    return getComm(comm).isCommunicatorPodPeers();
+    return getComm(comm).isCommunicatorScaleupGroupPeers();
 }
 
 bool IHclDevice::isCommunicatorHierarchical(HCL_Comm comm)
@@ -758,9 +715,9 @@ int IHclDevice::getNumActiveComms() const
     return m_dynamicComms.getNumOfActiveComms();
 }
 
-int IHclDevice::getPodSize(HCL_Comm comm)
+int IHclDevice::getScaleupGroupSize(HCL_Comm comm)
 {
-    return getComm(comm).getPodSize();
+    return getComm(comm).getScaleupGroupSize();
 }
 
 nics_mask_t IHclDevice::getNicsStatusMask() const

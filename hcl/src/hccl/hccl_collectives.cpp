@@ -14,7 +14,6 @@
 #include <cstdint>                 // for uint64_t, int64_t
 #include <vector>                  // for vector
 #include "hccl_communicator.h"     // for hccl_communicator
-#include "hccl_helpers.h"          // for to_synapse_data_type
 #include "hccl_internal_defs.h"    // for hcclOpParams, eHCCL...
 #include "hccl_types.h"            // for hcclResult_t, hcclS...
 #include "hccl_device.h"          // for HclApi
@@ -23,8 +22,7 @@
 #include "hcl_types.h"             // for HclConfigType, LOOP...
 #include "hcl_utils.h"             // for LOG_HCL_TRACE
 #include "hcl_log_manager.h"       // for LOG_TRACE
-#include "synapse_api.h"           // for synMemCopyAsync
-#include "synapse_common_types.h"  // for synStatus, synSuccess
+#include "synapse_api_types.h"     // for synStreamHandle
 #include "hcl_dynamic_communicator.h"
 
 hcclResult_t hccl_communicator::allreduce(const void*     sendbuff,

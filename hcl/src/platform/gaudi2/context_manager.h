@@ -11,11 +11,10 @@
 #include "sched_pkts.h"                            // for g2fw
 #include "interfaces/hcl_idevice.h"                // for IHclDevice
 #include "platform/gaudi2/context_manager_priv.h"
+#include "platform/gaudi2/qp_manager.h"
 
 class Gaudi2DevicePortMapping;
 class HclCommandsGen2Arch;
-
-constexpr uint INVALID_QP = 0;
 
 namespace hcl
 {
@@ -33,18 +32,18 @@ enum G2QP_e  // QP index descritptor
 class ContextManager
 {
 public:
-    ContextManager(const std::vector<unsigned>& nicEngines, Gaudi2DevicePortMapping& portMapping, IHclDevice& device);
+    ContextManager(const std::vector<unsigned>&   nicEngines,
+                   Gaudi2DevicePortMapping&       portMapping,
+                   QPManagerScaleUpGaudi2Handle&  qpManagerScaleUp,
+                   QPManagerScaleOutGaudi2Handle& qpManagerScaleOut,
+                   IHclDevice&                    device);
     virtual ~ContextManager() = default;
-    uint32_t getQpi(HCL_Comm comm, uint8_t nic, HCL_Rank remoteRank, uint32_t qpn, uint8_t qpSet);
 
     void createCollectiveContexts(HclCommandsGen2Arch& commands);
-    void registerEarc(HCL_Comm comm, int nic, HCL_Rank remoteRank, const QpsVector& qps, const bool isPeer = true);
-    void allocateScaleOutContext(HCL_Comm comm, uint32_t commSize);
+    void registerEarc(HCL_Comm comm, int nic);
 
     uint16_t
     getRemoteRankQp(unsigned collectiveContextIndex, HCL_Comm comm, HCL_Rank remoteRank, int nic, uint8_t qpSet);
-    uint16_t
-    getRemoteRankQpi(unsigned collectiveContextIndex, HCL_Comm comm, HCL_Rank remoteRank, int nic, uint8_t qpSet);
 
     void serializeUpdateGlobalContext(hcl::ScalStreamBase& scalStream,
                                       uint32_t             soAddressLSB,
@@ -127,6 +126,10 @@ private:
 
     const std::vector<unsigned> m_nicEngines;
 
+    using CachedCollectiveContextScaleOut = CachedCollectiveContext;
+
+    QPManagerScaleUpGaudi2Handle&                m_qpManagerScaleUp;
+    QPManagerScaleOutGaudi2Handle&               m_qpManagerScaleOut;
     std::vector<g2fw::nic_glbl_ctxt_t>           m_globalContexts;                    // one per EARC
     std::vector<g2fw::nic_glbl_ctxt_t>           m_scaleoutGlobalContexts;            // one per EARC
     std::vector<CachedCollectiveContextScaleUp>  m_cachedCollectiveContextsScaleUp;   // one per Collective Context

@@ -31,18 +31,19 @@ void HclGraphSyncGen2Arch::createSetupMonMessages(hcl::ScalStream& scalStream,
                                                   uint64_t         smBase,
                                                   bool             isLong)
 {
+    LBWBurstDestData_t destData;
     unsigned schedIdx = scalStream.getSchedIdx();
 
     // Setup to payload address (of the dccmQ of scheduler)
     uint32_t destination = getAddrMonPayAddrl(smBase, monitorIdx);
-    m_commands.serializeLbwWriteCommand(scalStream, schedIdx, destination, address & 0xffffffff);
+    destData.push_back({destination, (uint32_t)address & 0xffffffff});
 
     destination = getAddrMonPayAddrh(smBase, monitorIdx);
-    m_commands.serializeLbwWriteCommand(scalStream, schedIdx, destination, (address >> 32) & 0xffffffff);
+    destData.push_back({destination, (uint32_t)((address >> 32) & 0xffffffff)});
 
     uint32_t value = createSchedMonExpFence(fenceIdx);
     destination    = getAddrMonPayData(smBase, monitorIdx);
-    m_commands.serializeLbwWriteCommand(scalStream, schedIdx, destination, value);
+    destData.push_back({destination, value});
 
     unsigned soQuarter = monitorIdx % MONITORS_PER_FENCE;
     VERIFY(soQuarter <= 3);
@@ -50,7 +51,9 @@ void HclGraphSyncGen2Arch::createSetupMonMessages(hcl::ScalStream& scalStream,
     value = createMonConfig(isLong, soQuarter);
 
     destination = getAddrMonConfig(smBase, monitorIdx);
-    m_commands.serializeLbwWriteCommand(scalStream, schedIdx, destination, value);
+    destData.push_back({destination, value});
+
+    m_commands.serializeLbwBurstWriteCommand(scalStream, schedIdx, destData);
 }
 
 uint16_t HclGraphSyncGen2Arch::getFifteenBits(uint64_t val, unsigned index)
@@ -70,11 +73,14 @@ void HclGraphSyncGen2Arch::createArmMonMessages(hcl::ScalStream& scalStream,
     const unsigned soIdxNoMask = soIdx >> 3;  // LSB are the mask, so unnecessary for long Sos
     const uint8_t  mask        = ~(1 << (soIdx % 8));
     VERIFY(soIdxNoMask <= 0x3ff);
-    VERIFY(monitorIdx % 4 == (soIdxNoMask >> 8));
+    VERIFY(longMon || monitorIdx % 4 == (soIdxNoMask >> 8),
+           "regular monitors are set up to the (monitorIdx % 4) quarter of the SM");
+    VERIFY(!longMon || (soIdxNoMask >> 8) == 0, "long monitors are set up to the first quarter of the SM");
 
     // Arm from last to first, as message to the first indicates that the Arm is complete.
     const uint32_t monArmSize   = getArmMonSize();
     const uint32_t baseAddrInSm = getOffsetMonArm(monitorIdx);
+    LBWBurstDestData_t destData;
 
     for (int i = (longMon ? 3 : 0); i >= 0; --i)
     {
@@ -84,7 +90,7 @@ void HclGraphSyncGen2Arch::createArmMonMessages(hcl::ScalStream& scalStream,
         if (!longMon || i == 0 ||
             (m_longMonitorStatus.find(addr) == m_longMonitorStatus.end() || m_longMonitorStatus[addr] != value))
         {
-            m_commands.serializeLbwWriteCommand(scalStream, scalStream.getSchedIdx(), addr, value);
+            destData.push_back({addr, value});
             if (longMon)
             {
                 if (!m_nullSubmit)
@@ -94,8 +100,8 @@ void HclGraphSyncGen2Arch::createArmMonMessages(hcl::ScalStream& scalStream,
             }
         }
     }
-
-    m_commands.serializeFenceCommand(scalStream, scalStream.getSchedIdx(), fenceIdx);
+    m_commands.serializeLbwBurstWriteCommand(scalStream, scalStream.getSchedIdx(), destData);
+    m_commands.serializeFenceDecCommand(scalStream, scalStream.getSchedIdx(), fenceIdx);
 }
 
 uint32_t HclGraphSyncGen2Arch::getCurrentCgSoAddr(CgType type)
@@ -254,7 +260,7 @@ void HclGraphSyncGen2Arch::createSyncStreamsMessages(hcl::ScalStream& scalStream
                          smBase,
                          false,
                          fenceIdx,
-                         useEqual);
+                         true);
 }
 
 void HclGraphSyncGen2Arch::createResetSoMessages(
@@ -263,6 +269,7 @@ void HclGraphSyncGen2Arch::createResetSoMessages(
     uint32_t                                                       smIdx,
     const std::array<bool, (unsigned)WaitMethod::WAIT_METHOD_MAX>& methodsToClean)
 {
+    LBWBurstDestData_t destData;
     for (unsigned i = 0; i < methodsToClean.size(); i++)
     {
         if (methodsToClean[i])
@@ -271,11 +278,17 @@ void HclGraphSyncGen2Arch::createResetSoMessages(
             int            sosToClean = (isLongTerm(waitMethod)) ? m_currentLongtermAmount : 1;
             for (int so = 0; so < sosToClean; ++so)
             {
-                const unsigned soIdx = getCurrentGeneralPurposeSo(waitMethod, so);
+                unsigned soIdx = getCurrentGeneralPurposeSo(waitMethod, so);
                 LOG_HCL_DEBUG(HCL, "cleaning up method {} sob index {}", waitMethod, soIdx);
-                createSoSignalMessage(scalStream, schedIdx, soIdx, 0, getSyncManagerBase(smIdx), false);
+                uint32_t destination = getAddrSobObj(getSyncManagerBase(smIdx), soIdx);
+                uint32_t data        = this->getSoConfigValue(0, false);
+                destData.push_back({destination, data});
             }
         }
+    }
+    if (destData.size())
+    {
+        m_commands.serializeLbwBurstWriteCommand(scalStream, schedIdx, destData);
     }
 }
 
@@ -326,9 +339,8 @@ void HclGraphSyncGen2Arch::addWait(hcl::ScalStream&              scalStream,
                                  monIdx,
                                  getSyncManagerBase(dcoreIdx),
                                  true,
-                                 fenceIdx);
-
-            // TODO: Add monitor setup if needed
+                                 fenceIdx,
+                                 false /* waiting for longSo can't use equal to value */);
 
             LOG_TRACE(HCL_CG, SCAL_PROGRESS_HCL_FMT "addWait", streamId, waitSo.first, waitSo.second);
 
@@ -347,7 +359,7 @@ void HclGraphSyncGen2Arch::addInternalWait(hcl::ScalStream& scalStream,
                                            unsigned         soIdx,
                                            unsigned         fenceIdx)
 {
-    createArmMonMessages(scalStream, soValue, soIdx, monIdx, getSyncManagerBase(dcoreIdx), true, fenceIdx);
+    createArmMonMessages(scalStream, soValue, soIdx, monIdx, getSyncManagerBase(dcoreIdx), true, fenceIdx, true);
 }
 
 void HclGraphSyncGen2Arch::addSetupLongMonitors(hcl::ScalStream& scalStream,

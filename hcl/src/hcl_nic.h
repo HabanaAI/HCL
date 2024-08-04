@@ -18,20 +18,3 @@ protected:
     IHclDevice* m_device = nullptr;
     uint32_t    m_nic    = -1;
 };
-
-class HclNic : public IHclNic
-{
-public:
-    HclNic(IHclDevice* device, int nic, uint32_t nQPN, uint32_t memType, uint32_t sendType, uint32_t recvType);
-    virtual ~HclNic() noexcept(false);
-
-    virtual void init() override;
-
-protected:
-    uint32_t m_nQPN     = -1;
-    uint32_t m_memType  = -1;
-    uint32_t m_sendType = -1;
-    uint32_t m_recvType = -1;
-
-    void _wq_arr_set_();
-};

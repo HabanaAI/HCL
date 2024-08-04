@@ -3,21 +3,22 @@
 
 sockaddr_str_t& sockaddr_str_t::set(const sockaddr_storage& address)
 {
-    char        str_addr[INET6_ADDRSTRLEN] = {};
-    const char* ptr                        = nullptr;
-    in_port_t   port                       = 0;
+    char str_addr[INET6_ADDRSTRLEN] = {};
+
+    const char* ptr  = nullptr;
+    in_port_t   port = 0;
 
     if (AF_INET == address.ss_family)
     {
-        struct sockaddr_in* addr = (struct sockaddr_in*)&address;
-        ptr                      = inet_ntop(AF_INET, (&addr->sin_addr), str_addr, sizeof(str_addr));
-        port                     = ntohs(addr->sin_port);
+        sockaddr_in* addr = (sockaddr_in*)&address;
+        ptr  = inet_ntop(AF_INET, (&addr->sin_addr), str_addr, sizeof(str_addr));
+        port = ntohs(addr->sin_port);
     }
     else if (AF_INET6 == address.ss_family)
     {
-        struct sockaddr_in6* addr = (struct sockaddr_in6*)&address;
-        ptr                       = inet_ntop(AF_INET6, (&addr->sin6_addr), str_addr, sizeof(str_addr));
-        port                      = ntohs(addr->sin6_port);
+        sockaddr_in6* addr = (sockaddr_in6*)&address;
+        ptr  = inet_ntop(AF_INET6, (&addr->sin6_addr), str_addr, sizeof(str_addr));
+        port = ntohs(addr->sin6_port);
     }
 
     if (ptr)
@@ -26,54 +27,55 @@ sockaddr_str_t& sockaddr_str_t::set(const sockaddr_storage& address)
     }
     else
     {
-        m_str = "";
-        LOG_HCL_ERR(HCL, "Invalid sockaddr_storage provided");
+        m_str = "invalid ip address";
     }
 
+    return *this;
+}
+
+sockaddr_t::sockaddr_t(const sockaddr_t& addr)
+{
+    m_sockAddr = addr.m_sockAddr;
+}
+
+sockaddr_t& sockaddr_t::operator=(const sockaddr_t& addr)
+{
+    m_sockAddr = addr.m_sockAddr;
     return *this;
 }
 
 sockaddr_t::sockaddr_t(const sockaddr_storage& addr)
 {
-    fromAddress(addr);
+    m_sockAddr = addr;
 }
 
 sockaddr_t& sockaddr_t::operator=(const sockaddr_storage& addr)
 {
-    fromAddress(addr);
+    m_sockAddr = addr;
     return *this;
 }
 
-void sockaddr_t::fromAddress(const sockaddr_storage& address)
-{
-    sockaddr_str_t sas(address);
-
-    if (AF_INET == address.ss_family)
-    {
-        struct sockaddr_in* addr = (struct sockaddr_in*)&address;
-        *sa4_                    = *addr;
-        m_sockAddr.ss_family     = AF_INET;
-    }
-
-    if (AF_INET6 == address.ss_family)
-    {
-        struct sockaddr_in6* addr = (struct sockaddr_in6*)&address;
-        *sa6_                     = *addr;
-        m_sockAddr.ss_family      = AF_INET6;
-    }
-
-    m_ips = sas;
-}
-
-
-sockaddr_t::sockaddr_t(const std::string& ipaddress, uint16_t _port)
+sockaddr_t::sockaddr_t(const std::string& ipaddress, in_port_t _port)
 {
     fromString(ipaddress);
     port(_port);
 }
 
+sockaddr_t& sockaddr_t::operator=(const std::string& ipaddress)
+{
+    fromString(ipaddress);
+    return *this;
+}
+
 void sockaddr_t::fromString(const std::string& ipaddress)
 {
+    if (ipaddress == "")
+    {
+        m_sockAddr = {};
+        m_sockAddr.ss_family = AF_INET;
+        return;
+    }
+
     if (inet_pton(AF_INET, ipaddress.c_str(), &(sa4_->sin_addr)) == 1)
     {
         // IPv4 address
@@ -85,22 +87,27 @@ void sockaddr_t::fromString(const std::string& ipaddress)
         m_sockAddr.ss_family = AF_INET6;
     }
     else
-    {  // invalid address
-        VERIFY(false, "Invalid IP address specified: {}", ipaddress);
+    {
+        VERIFY(false, "invalid ip string: {}", ipaddress);
     }
 }
 
 socklen_t sockaddr_t::size_of() const
 {
-    return IPv4() ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
+    return IPv4() ? sizeof(sockaddr_in) : sizeof(sockaddr_in6);
 }
 
-uint16_t sockaddr_t::port() const
+in_port_t sockaddr_t::port() const
 {
     return IPv4() ? ntohs(sa4_->sin_port) : ntohs(sa6_->sin6_port);
 }
 
-void sockaddr_t::port(uint16_t _port)
+void sockaddr_t::port(in_port_t _port)
 {
     IPv4() ? sa4_->sin_port = htons(_port) : sa6_->sin6_port = htons(_port);
+}
+
+std::string sockaddr_t::str() const
+{
+    return sockaddr_str_t(m_sockAddr);
 }

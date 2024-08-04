@@ -15,8 +15,6 @@ void CompletionGroup::waitOnValue(uint64_t targetValue)
         return;
     }
 
-    // TODO: add try/catch
-
     m_scalWrapper.waitOnCg(m_cg, targetValue);
     m_lastFinidshedTargetValue = targetValue;
 }

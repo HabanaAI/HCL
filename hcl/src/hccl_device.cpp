@@ -77,6 +77,14 @@ void hccl_device_t::aggregators_t::init()
     }
 }
 
+void hccl_device_t::initComm(const HCL_Comm commId)
+{
+    for (HclCollectiveRoutinesGen2Arch* collective : collectives_)
+    {
+        collective->onCommInit(commId);
+    }
+}
+
 void hccl_device_t::destroy()
 {
     if (hccl_device().initialized)
@@ -145,9 +153,8 @@ hcclResult_t hccl_gaudi2_t::init_device(uint8_t apiId)
 
 hcclResult_t hccl_gaudi3_t::init_device(uint8_t apiId)
 {
-    // TODO: uncomment when SW-180552 and SW-180553 is done
     // export HBM for GDR if required
-    // device_->exportHBMMR();
+    device_->exportHBMMR();
 
     FOR_I(device_->getHal()->getMaxStreams())
     {
@@ -233,7 +240,7 @@ static hcclResult_t selfRankMemcpy(const HclCollectiveParams& params)
                                 rank,
                                 params.m_dynamicComm,
                                 params.m_dynamicComm.m_remoteDevices[rank]->header.hwModuleID,
-                                params.m_dynamicComm.isRankInsidePod(rank)};
+                                params.m_dynamicComm.isRankInsideScaleupGroup(rank)};
 
 
 

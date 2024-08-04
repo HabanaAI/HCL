@@ -32,6 +32,7 @@ hcclResult_t hcclSynchronizeStream(synStreamHandle streamHandle);
 hcclResult_t hcclSynchronizeAllStreams();
 hcclResult_t hcclDFA(DfaStatus& dfaStatus, void (*dfaLogFunc)(int, const char*));
 hcclResult_t hcclDfaUpdateState(DfaPhase dfaPhase);
+hcclResult_t hcclGetVersionString(char* pVersion, const unsigned len);
 
 /* Returns the HCCL_VERSION_CODE of the HCCL library.
  * This integer is coded with the MAJOR, MINOR and PATCH level of the HCCL library.

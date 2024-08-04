@@ -107,3 +107,8 @@ enum class WaitEvent
 
     WAIT_EVENT_MAX = (RR_RS_SO_RECV_WAIT_FOR_PREV_RECV_BASE + RR_SCALEOUT_FACTOR),
 };
+
+inline bool isReusableEvent(WaitEvent waitEvent)
+{
+    return waitEvent >= WaitEvent::RR_RS_SO_RECV_WAIT_FOR_PREV_RECV_BASE;
+}

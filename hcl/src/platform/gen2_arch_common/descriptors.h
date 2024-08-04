@@ -38,9 +38,9 @@ protected:
     HclCollectiveRoutinesGen2Arch& m_collectiveRoutines;
     ScaleoutProvider&              m_scaleoutProvider;
     hcl::ScalStream&               m_currentStream;
-    int                            m_archStreamIdx;   // TODO make const
-    unsigned                       m_uarchStreamIdx;  // TODO make const
-    unsigned                       m_schedIdx;        // TODO make const
+    int                            m_archStreamIdx;
+    unsigned                       m_uarchStreamIdx;
+    unsigned                       m_schedIdx;
 };
 
 class BarrierArbitratorDescriptor : public Descriptor

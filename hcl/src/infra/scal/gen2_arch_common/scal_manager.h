@@ -124,7 +124,7 @@ public:
      */
     void getHBMInfoForExport(uint64_t& vaBase, uint64_t& hbmPoolStart, uint64_t& allocatedPoolSize) const;
 
-    const std::vector<unsigned> getNicsScaleUpEngines();  // TODO: This function seems irrelevant for G3, maybe move it
+    const std::vector<unsigned> getNicsScaleUpEngines();
 
     unsigned getNumberOfEdmaEngines(unsigned groupNum);
 

@@ -25,7 +25,6 @@
 #include "ofi_communicator.h"                     // for host_communicator_h...
 #include "interfaces/hcl_unique_sorted_vector.h"  // for UniqueSortedVector
 #include "synapse_api_types.h"                    // for synStreamHandle
-#include "synapse_common_types.h"                 // for synDataType, synDmaDir
 #include "hcl_dynamic_communicator.h"
 
 class ofi_component_t;
@@ -176,6 +175,4 @@ private:
     bool                    m_scaleout_available;
 
     HclDynamicCommunicator* m_comm = nullptr;
-
-    synEventHandle m_pdmaEventHandle;
 };

@@ -1,6 +1,6 @@
 #include "mr_mapping.h"
-#include <unistd.h>                      // for close
-#include <cstring>                       // for strerror
+#include <unistd.h>  // for close
+#include <cstring>   // for strerror
 #include "hccl_device.h"
 #include "hcl_utils.h"                   // for LOG_HCL_DEBUG, LOG_HCL_ERR
 #include "interfaces/hcl_idevice.h"      // for IHclDevice
@@ -8,7 +8,7 @@
 #include "libfabric/hl_ofi_component.h"  // for ofi_component_t
 #include "hcl_log_manager.h"             // for LOG*
 #include "rdma/fi_domain.h"              // for FI_HMEM_SYNAPSEAI
-#include "hlthunk.h"                     // for hlthunk_get_hw_ip_info
+#include "hlthunk.h"                     // for hlthunk_device_mapped_memory_export_dmabuf_fd
 
 #define ALIGN_SIZE 134217728  // 128MB
 
@@ -202,7 +202,8 @@ int MRMapping::mapDevMem(uint64_t addr, uint64_t size, uint64_t offset, uint32_t
             LOG_HCL_DEBUG(HCL_OFI, "HCL_GetDeviceFD returned 0 for device FD");
         }
 
-        int hlthunk_fd = hlthunk_device_mapped_memory_export_dmabuf_fd(hccl_device()->getFd(), addr, size, offset, flags);
+        int hlthunk_fd =
+            hlthunk_device_mapped_memory_export_dmabuf_fd(hccl_device()->getFd(), addr, size, offset, flags);
 
         if (hlthunk_fd < 0)
         {
@@ -270,7 +271,8 @@ int MRMapping::mapDevMem(uint64_t addr, uint64_t size, uint64_t offset, uint32_t
     return 0;
 }
 
-hcclResult_t MRMapping::mapHostMem(uint64_t addr, uint64_t size, ofi_component_t* ofiComponent, struct fid_mr*& mr_handle)
+hcclResult_t
+MRMapping::mapHostMem(uint64_t addr, uint64_t size, ofi_component_t* ofiComponent, struct fid_mr*& mr_handle)
 {
     int res = ofiComponent->register_mr((void*)addr, size, FI_HMEM_SYSTEM, 0, &mr_handle);
     if (res)
@@ -285,15 +287,43 @@ hcclResult_t MRMapping::mapHostMem(uint64_t addr, uint64_t size, ofi_component_t
 
 hcclResult_t MRMapping::mapFlushBufMem(ofi_component_t* ofiComponent)
 {
-    int res = ofiComponent->register_mr((void*)&m_flushBuf, sizeof(int), FI_HMEM_SYSTEM, 0, &m_flushMRHandle);
-    if (res)
+    int ret = hcclUninitialized;
+
+    ret = ofiComponent->register_mr((void*)&m_flushBuf, sizeof(int), FI_HMEM_SYSTEM, 0, &m_flushMRLocalHandle, true);
+    if (ret)
     {
-        LOG_HCL_ERR(HCL_OFI, "Flush buffer MR registration failed");
-        return hcclLibfabricError;
+        LOG_HCL_ERR(HCL_OFI, "Flush local buffer MR registration failed");
+        ret = hcclLibfabricError;
+        goto error;
     }
-    buffer_mapping_entry entry = {(uint64_t)&m_flushBuf, sizeof(m_flushBuf), 0, m_flushMRHandle};
-    update_buffer_mapping(entry);
+
+    ret = ofiComponent->register_mr((void*)getDramBaseAddr(),
+                                    sizeof(int),
+                                    FI_HMEM_SYNAPSEAI,
+                                    hccl_device()->getFd(),
+                                    &m_flushMRRemoteHandle,
+                                    true);
+    if (ret)
+    {
+        LOG_HCL_ERR(HCL_OFI, "Flush remote buffer MR registration failed");
+        ret = hcclLibfabricError;
+        goto error;
+    }
+
     return hcclSuccess;
+
+error:
+    if (m_flushMRLocalHandle)
+    {
+        ofi_component_t::deregister_mr(m_flushMRLocalHandle);
+        m_flushMRLocalHandle = nullptr;
+    }
+    if (m_flushMRRemoteHandle)
+    {
+        ofi_component_t::deregister_mr(m_flushMRRemoteHandle);
+        m_flushMRRemoteHandle = nullptr;
+    }
+    return static_cast<hcclResult_t>(ret);
 }
 
 int MRMapping::closeFD()
@@ -323,6 +353,18 @@ int MRMapping::closeFD()
 int MRMapping::deregisterMR()
 {
     int status;
+
+    if (m_flushMRLocalHandle)
+    {
+        VERIFY(0 == ofi_component_t::deregister_mr(m_flushMRLocalHandle));
+        m_flushMRLocalHandle = nullptr;
+    }
+    if (m_flushMRRemoteHandle)
+    {
+        VERIFY(0 == ofi_component_t::deregister_mr(m_flushMRRemoteHandle));
+        m_flushMRRemoteHandle = nullptr;
+    }
+
     for (auto& mapping_entry : buffer_mapping_vec)
     {
         if (mapping_entry.mr_handle)
@@ -377,9 +419,14 @@ void* MRMapping::getFlushBuf()
     return (void*)&m_flushBuf;
 }
 
-struct fid_mr* MRMapping::getFlushMRHandle()
+struct fid_mr* MRMapping::getFlushMRLocalHandle()
 {
-    return m_flushMRHandle;
+    return m_flushMRLocalHandle;
+}
+
+struct fid_mr* MRMapping::getFlushMRRemoteHandle()
+{
+    return m_flushMRRemoteHandle;
 }
 
 MRMapping::MRMapping() {}

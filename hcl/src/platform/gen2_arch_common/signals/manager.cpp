@@ -5,6 +5,7 @@
 #include "infra/scal/gen2_arch_common/scal_names.h"
 #include "hcl_global_conf.h"  // for GCFG_*
 #include "hccl_device.h"
+#include "hcl_math_utils.h"
 #include <algorithm>
 
 SignalsManager::SignalDescription::SignalDescription()
@@ -120,6 +121,7 @@ SignalsManager::SignalsManager(HclGraphSyncGen2Arch& graphSync,
   m_commonState(nullptr)
 {
     m_completionTracker.resize(m_cgSize);
+    m_cuidTracker.resize(m_cgSize);
 }
 
 SignalsManager::Graph::Graph()
@@ -144,71 +146,57 @@ bool SignalsManager::isCachingRequired(CommonState& commonState)
            commonState.m_collectiveOp != eHCLSimpleBroadcast;
 }
 
-void SignalsManager::initialize(CommonState* commonState)
+void SignalsManager::initialize(CommonState* commonState, uint64_t cuid)
 {
-    uint64_t cuid    = commonState->getCUID();
     Graph*   old     = m_graph;
     bool     created = updateGraph(cuid, commonState);
+
     m_commonState = commonState;
-    m_prevCollective = m_commonState->m_collectiveOp;
 
     if (created || !m_usingCache)
     {
         // number of boxes defines the numbers of used events and phases
-        uint32_t nBoxes      = m_commonState->m_dynamicComm.getCommSize() / m_commonState->m_dynamicComm.getPodSize();
-        uint64_t nPhases     = nBoxes / m_commonState->m_reproScaleoutBuffersAmount;
+        uint32_t nBoxes      = div((uint32_t)m_commonState->m_dynamicComm.getCommSize(),
+                                   (uint32_t)m_commonState->m_dynamicComm.getScaleupGroupSize());
+        uint64_t nPhases     = div(nBoxes, m_commonState->m_reproScaleoutBuffersAmount);
 
         m_graph->m_maxPhases = std::max(MIN_PHASES, nPhases);
         LOG_HCL_DEBUG(HCL, "for ({}) boxes setup, and m_max_Phases is ({})", nBoxes, m_graph->m_maxPhases);
     }
+    else
+    {
+        m_graph->m_firstCollective =
+            m_prevIteration < (int)commonState->m_boxIter ? old->m_firstCollective : !m_usingCache;
+    }
+
+    m_prevIteration = m_commonState->m_boxIter;
 
     if (likely(old) && m_usingCache) handleLongtermOnGraphSwitch(created, old);
-}
-
-bool SignalsManager::isCacheAvailable(CommonState* commonState)
-{
-    return (m_prevCollective != commonState->m_collectiveOp && m_cache.size() < MAX_CACHED_GRAPHS) ||
-           (m_usingCache && m_prevCollective == commonState->m_collectiveOp);
 }
 
 bool SignalsManager::updateGraph(uint64_t cuid, CommonState* commonState)
 {
     bool isCreated = false;
-    if (isCachingRequired(*commonState))
+    m_usingCache = isCachingRequired(*commonState);
+    if (m_usingCache)
     {
         if (unlikely(m_cache.count(cuid) == 0))
         {
-            if (isCacheAvailable(commonState))
-            {
-                m_cache[cuid];  // allocate a new graph, without invoking a copy constructor.
-                uint64_t cache_size = m_cache.size();
-                LOG_HCL_DEBUG(HCL,
-                              "Can't find cached Graph for cuid 0x{:x}. Allocating new one. cache size {} elements",
-                              cuid,
-                              cache_size);
-                m_usingCache = true;
-                isCreated    = true;
-            }
-            else
-            {
-                m_usingCache = false;
-            }
+            m_cache[cuid];  // allocate a new graph, without invoking a copy constructor.
+            uint64_t cache_size = m_cache.size();
+            LOG_HCL_DEBUG(HCL,
+                          "Can't find cached Graph for cuid 0x{:x}. Allocating new one. cache size {} elements",
+                          cuid,
+                          cache_size);
+            isCreated = true;
         }
-        else
-        {
-            m_usingCache = true;
-        }
-    }
-    else
-    {
-        m_usingCache = false;
     }
 
     m_graph = m_usingCache ? &m_cache.at(cuid) : &m_nonCachedGraph;
 
     LOG_HCL_DEBUG(HCL,
                   "Using a cached graph for cuid 0x{:x} is {} (graph addr = 0x{:x}). Current cache size: {}",
-                  commonState->getCUID(),
+                  cuid,
                   m_usingCache ? "allowed" : "not allowed",
                   (uint64_t)m_graph,
                   m_cache.size());
@@ -218,7 +206,7 @@ bool SignalsManager::updateGraph(uint64_t cuid, CommonState* commonState)
 
 void SignalsManager::handleLongtermOnGraphSwitch(bool created, Graph* oldGraph)
 {
-    if (unlikely(created) && oldGraph->m_hasLongterm)
+    if (unlikely(created))
     {
         for (int i = (int)WaitMethod::GPSO_LONGTERM_8; i >= 0; i--)
         {
@@ -240,7 +228,6 @@ void SignalsManager::handleLongtermOnGraphSwitch(bool created, Graph* oldGraph)
                 }
                 else
                 {
-                    m_graph->m_hasLongterm = true;
                     LOG_HCL_DEBUG(HCL,
                                   "performing data copy for event {} on method {} phase {}",
                                   desc->event,
@@ -259,42 +246,57 @@ void SignalsManager::handleLongtermOnGraphSwitch(bool created, Graph* oldGraph)
             }
         }
     }
-    else if (likely(!created) && oldGraph->m_hasLongterm)
+    else
     {
-        for (int i = (int)WaitMethod::GPSO_LONGTERM_8; i >= 0; i--)
+        if (unlikely(m_graph->m_firstCollective)) updateEventsOnLongterm(oldGraph);
+        for (size_t j = 0; j < m_graph->m_events.size(); j++)
         {
-            for (WaitPhaseEntry& entry : oldGraph->m_methods[i])
+            if (isLongTerm(oldGraph->m_events[j].method))
             {
-                SignalWaitEvent* desc = entry.waitEvent;
-                if (!desc) break;
-                if (!desc->wasFenced().isFenced)
+                if (!oldGraph->m_events[j].wasFenced().isFenced)
                 {
-                    m_graph->m_events[(unsigned)desc->event].numExecutedFences =
-                        oldGraph->m_events[(unsigned)desc->event].numExecutedFences;
-                    m_graph->m_events[(unsigned)desc->event].currentPhase =
-                        oldGraph->m_events[(unsigned)desc->event].currentPhase;
-                    LOG_HCL_DEBUG(HCL,
-                                  "on switch graph on longterm event {} setting number of executed fences to {}",
-                                  desc->event,
-                                  desc->numExecutedFences);
+                    m_graph->m_events[j].numExecutedFences = oldGraph->m_events[j].numExecutedFences;
+                    m_graph->m_events[j].currentPhase      = oldGraph->m_events[j].currentPhase;
                 }
-                else
-                {
-                    m_graph->m_events[(unsigned)desc->event].numExecutedFences = 0;
-                }
+            }
+            else if (m_graph->m_events[j].event != WaitEvent::WAIT_EVENT_MAX &&
+                     oldGraph->m_events[j].event == WaitEvent::WAIT_EVENT_MAX)
+            {
+                if (isReusableEvent((WaitEvent)j)) m_graph->m_events[j].currentPhase = 0;
+                m_graph->m_events[j].numExecutedFences = 0;
+            }
+            else if (!isLongTerm(oldGraph->m_events[j].method))
+            {
+                m_graph->m_events[j].numExecutedFences = 0;
+            }
+            for (SignalDescription& desc : m_graph->m_events[j].signals)
+            {
+                if ((WaitEvent)j != WaitEvent::GENERAL_INTERNAL_COMPLETION_EVENT) desc.consumed = false;
             }
         }
     }
-    else if (likely(!created) && !oldGraph->m_hasLongterm && m_graph->m_hasLongterm)
+}
+
+void SignalsManager::updateEventsOnLongterm(Graph* oldGraph)
+{
+    for (int i = (int)WaitMethod::GPSO_LONGTERM_8; i >= 0; i--)
     {
-        for (int i = (int)WaitMethod::GPSO_LONGTERM_8; i >= 0; i--)
+        int phase = 0;
+        for (WaitPhaseEntry& entry : oldGraph->m_methods[i])
         {
-            for (WaitPhaseEntry& entry : m_graph->m_methods[i])
+            SignalWaitEvent* desc = entry.waitEvent;
+            if (!desc) break;
+            if (m_graph->m_events[(unsigned)desc->event].event == WaitEvent::WAIT_EVENT_MAX)
             {
-                SignalWaitEvent* desc = entry.waitEvent;
-                if (!desc) continue;
-                m_graph->m_events[(unsigned)desc->event].numExecutedFences = 0;
+                m_graph->m_events[(unsigned)desc->event] = oldGraph->m_events[(unsigned)desc->event];
             }
+            m_graph->m_events[(unsigned)desc->event].numExpectedFences =
+                oldGraph->m_events[(unsigned)desc->event].numExpectedFences;
+            if (isReusableEvent(desc->event)) m_graph->m_events[(unsigned)desc->event].signals.clear();
+            m_graph->m_methods[i][phase].waitEvent              = &m_graph->m_events[(unsigned)desc->event];
+            m_graph->m_methods[i][phase].signalsPerPhase        = oldGraph->m_methods[i][phase].signalsPerPhase;
+            m_graph->m_events[(unsigned)desc->event].numSignals = oldGraph->m_events[(unsigned)desc->event].numSignals;
+            phase++;
         }
     }
 }
@@ -308,10 +310,7 @@ void SignalsManager::finalize(bool entireCollective)
 
     // Ensure all SignalEvents were consumed during the collective (otherwise, we registered a resource but it was not
     // used by the creation functions, thus it's missing/not needed).
-
-    // Ensure all SignalEvents were consumed during the collective (otherwise, we registered a resource but it was not
-    // used by the creation functions, thus it's missing/not needed).
-    if (unlikely(m_graph->m_firstUse))
+    if (unlikely(m_graph->m_firstCollective))
     {
         for (size_t i = 0; i < m_graph->m_events.size(); i++)
         {
@@ -337,24 +336,7 @@ void SignalsManager::finalize(bool entireCollective)
         }
     }
 
-    if (!m_usingCache)
-    {
-        resetUncachedGraph();
-    }
-    else
-    {
-        for (size_t i = 0; i < m_graph->m_events.size(); i++)
-        {
-            if (!isLongTerm(m_graph->m_events[i].method))
-            {
-                m_graph->m_events[i].numExecutedFences = 0;
-            }
-            for (SignalDescription& desc : m_graph->m_events[i].signals)
-            {
-                desc.consumed = false;
-            }
-        }
-    }
+    if (!m_usingCache) resetGraph();
 
     m_graph->m_firstUse = !m_usingCache;
 
@@ -375,38 +357,38 @@ void SignalsManager::finalize(WaitEvent waitEvent)
     }
 }
 
-void SignalsManager::resetUncachedGraph()
+void SignalsManager::resetGraph()
 {
     m_graph->m_requestedEventsBitmap = 0;
 
-    for (size_t i = 0; i < m_nonCachedGraph.m_signals.size(); i++)
+    for (size_t i = 0; i < m_graph->m_signals.size(); i++)
     {
-        m_nonCachedGraph.m_signals[i].clear();
+        m_graph->m_signals[i].clear();
     }
 
-    for (size_t i = 0; i < m_nonCachedGraph.m_methods.size(); i++)
+    for (size_t i = 0; i < m_graph->m_methods.size(); i++)
     {
-        WaitPhase        lastPhaseForMethod = getLastPhase((WaitMethod)i, m_nonCachedGraph);
-        SignalWaitEvent* lastPhase          = m_nonCachedGraph.m_methods[i][(unsigned)lastPhaseForMethod].waitEvent;
+        WaitPhase        lastPhaseForMethod = getLastPhase((WaitMethod)i, *m_graph);
+        SignalWaitEvent* lastPhase          = m_graph->m_methods[i][(unsigned)lastPhaseForMethod].waitEvent;
 
         if (!isLongTerm((WaitMethod)i) || (lastPhase != nullptr && lastPhase->wasCompleted()))
         {
-            std::array<WaitPhaseEntry, WAIT_PHASE_MAX>& phases = m_nonCachedGraph.m_methods[i];
+            std::array<WaitPhaseEntry, WAIT_PHASE_MAX>& phases = m_graph->m_methods[i];
             WaitPhaseEntry                              empty  = {nullptr, 0};
-            std::fill_n(phases.begin(), m_nonCachedGraph.m_maxPhases, empty);
+            std::fill_n(phases.begin(), m_graph->m_maxPhases, empty);
         }
     }
 
     static const SignalWaitEvent _empty;
-    for (size_t i = 0; i < m_nonCachedGraph.m_events.size(); i++)
+    for (size_t i = 0; i < m_graph->m_events.size(); i++)
     {
-        if (!isLongTerm(m_nonCachedGraph.m_events[i].method) || m_nonCachedGraph.m_events[i].wasCompleted())
+        if (!isLongTerm(m_graph->m_events[i].method) || m_graph->m_events[i].wasCompleted())
         {
-            m_nonCachedGraph.m_events[i] = _empty;
+            m_graph->m_events[i] = _empty;
         }
         else
         {
-            m_nonCachedGraph.m_events[i].signals.clear();
+            m_graph->m_events[i].signals.clear();
         }
     }
 }
@@ -430,7 +412,8 @@ void SignalsManager::enqueueWait(WaitEvent                                      
                                  unsigned                                           numExpectedFences,
                                  unsigned                                           longtermIdx)
 {
-    if (likely(!m_graph->m_firstUse))
+    if (likely((!m_graph->m_firstUse && !isReusableEvent(waitEvent)) ||
+               (isReusableEvent(waitEvent) && !m_graph->m_firstCollective)))
     {
         // This graph has already been created, so we can just... not re-create it as it already exists in m_cache.
         return;
@@ -484,15 +467,11 @@ void SignalsManager::enqueueWait(WaitEvent                                      
         llvm_vecsmall::SmallVector<SignalDescription*, 8>& queue = m_graph->m_signals[(unsigned)signalDesc.event];
 
         signalDesc.signalWaitDesc = &desc;
-
         desc.signals.push_back(signalDesc);
         queue.push_back(&desc.signals.back());
         m_graph->m_requestedEventsBitmap |= 1 << ((unsigned int)desc.signals.back().event);
-
-        m_graph->m_methods[(unsigned)effectiveMethod][waitPhase].waitEvent = &desc;
     }
-
-    m_graph->m_hasLongterm |= isLongTerm(waitMethod);
+    m_graph->m_methods[(unsigned)effectiveMethod][waitPhase].waitEvent = &desc;
 }
 
 bool SignalsManager::isEventRegistered(SignalEvent signalEvent)
@@ -502,7 +481,7 @@ bool SignalsManager::isEventRegistered(SignalEvent signalEvent)
 
 void SignalsManager::allocateResources()
 {
-    if (likely(!m_graph->m_firstUse))
+    if (likely(!m_graph->m_firstCollective))
     {
         return;
     }
@@ -567,7 +546,7 @@ void SignalsManager::allocateResources()
     }
 }
 
-void SignalsManager::updateCompletionTracker(uint64_t targetValue)
+void SignalsManager::updateCompletionTracker(uint64_t targetValue, uint64_t cuid)
 {
     static const uint32_t             mask  = m_cgSize - 1;
     static const SyncObjectDescriptor empty = {{0, 0, 0}, 0};
@@ -587,8 +566,8 @@ void SignalsManager::updateCompletionTracker(uint64_t targetValue)
                 m_utils->getSOBInfo(getSoAddress(desc->method, desc->longtermIdx)),
                 desc->numSignals};
         }
-
     }
+    m_cuidTracker[targetValue & mask] = cuid;
 }
 
 void SignalsManager::printGraph()
@@ -627,11 +606,6 @@ bool SignalsManager::hasWaitEvent(WaitEvent waitEvent) const
 {
     return waitEvent != WaitEvent::WAIT_EVENT_MAX && (m_graph->m_events[(unsigned)waitEvent].signals.size() != 0 ||
                                                       isLongTerm(m_graph->m_events[(unsigned)waitEvent].method));
-}
-
-bool SignalsManager::isReusableEvent(WaitEvent waitEvent) const
-{
-    return waitEvent >= WaitEvent::RR_RS_SO_RECV_WAIT_FOR_PREV_RECV_BASE;
 }
 
 bool SignalsManager::isNextReusable(WaitMethod method, int phase, Graph* graph) const
@@ -782,9 +756,11 @@ void SignalsManager::DFA(uint64_t deviceTargetValue)
     {
         return;
     }
-    LOG_HCL_CONTEXT_CRITICAL(HCL, "ArchStream {} is stuck on Long So value {} (0x{:x})", m_archStream, deviceTargetValue, deviceTargetValue);
+    auto&    arr  = m_completionTracker[(deviceTargetValue + 1) & (m_cgSize - 1)];
+    uint64_t cuid = m_cuidTracker[(deviceTargetValue + 1) & (m_cgSize - 1)];
+    LOG_HCL_CONTEXT_CRITICAL(HCL, "ArchStream {} is stuck on Long So value {} (0x{:x}), CUID 0x{:x}",
+                             m_archStream, deviceTargetValue, deviceTargetValue, cuid);
 
-    auto& arr = m_completionTracker[(deviceTargetValue + 1) & (m_cgSize - 1)];
     for (unsigned i = 0; i < arr.size(); i++)
     {
         SyncObjectDescriptor& desc = arr[i];
@@ -825,7 +801,8 @@ void SignalsManager::DFA(uint64_t deviceTargetValue)
             case WaitMethod::GPSO_LONGTERM_7:
             case WaitMethod::GPSO_LONGTERM_8:
                 LOG_HCL_CRITICAL(HCL,
-                                 "expecting resource {} ({}) to reach value {}. current value: {} (missing {} signals)",
+                                 "expecting resource {} ({}) to reach value {}. current value: {}"
+                                 " (missing {} signals)",
                                  waitMethod,
                                  m_utils->printSOBInfo(desc.sob),
                                  desc.value,

@@ -193,7 +193,12 @@ int detect_tcp_ifs(std::vector<detected_tcp_if>& detected_tcp_ifs)
 
     if (detected_tcp_ifs.size() == 0)
     {
-        VERIFY(false, "No network interfaces found");
+        std::string desired("");
+        if (!desired_tcp_if.empty())
+        {
+            desired = "in HCCL_SOCKET_IFNAME(" + desired_tcp_if + ")";
+        }
+        VERIFY(false, "No network interfaces found {}", desired);
     }
 
     freeifaddrs(net_ifs);

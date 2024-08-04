@@ -23,13 +23,13 @@ ActiveStreamManagerGen2Arch::ActiveStreamManagerGen2Arch(SliceState&            
     HCL_CollectiveOp currentOp = sendSliceState.m_currentOp;
     bool             isActive  = false;
 
-    bool isHierarchicalSelfBox =
-        (sendBoxNumInfo.m_boxNum == sendSliceState.m_dynamicComm.getMyPod() && sendSliceState.m_isMultiPod);
+    bool isHierarchicalSelfBox = (sendBoxNumInfo.m_boxNum == sendSliceState.m_dynamicComm.getMyScaleupGroup() &&
+                                  sendSliceState.m_isMultiScaleupGroup);
     bool reductionRS           = (currentOp == eHCLReduceScatter) && (!isHierarchicalSelfBox);
     bool reductionReduce       = false;
     bool isLastBox             = (getNextBox(sendBoxNumInfo.m_boxNum, sendSliceState.m_boxIterations) ==
-                      sendSliceState.m_dynamicComm.getMyPod());
-    bool isFirstBox            = sendBoxNumInfo.m_boxNum == sendSliceState.m_dynamicComm.getMyPod();
+                      sendSliceState.m_dynamicComm.getMyScaleupGroup());
+    bool isFirstBox            = sendBoxNumInfo.m_boxNum == sendSliceState.m_dynamicComm.getMyScaleupGroup();
 
     m_dmaStreams.resize(static_cast<size_t>(hcl::DMAStreams::max));
     std::fill(m_dmaStreams.begin(), m_dmaStreams.end(), nullptr);
@@ -41,14 +41,14 @@ ActiveStreamManagerGen2Arch::ActiveStreamManagerGen2Arch(SliceState&            
     fillDmaStream(hcl::DMAStreams::garbageCollection, archStreamIdx, schedIdx);
 
     // reduction
-    isActive = ((sendSliceState.m_16BitReduction || (!sendSliceState.m_inPlace && !sendSliceState.m_isMultiPod)) &&
-                reductionRS && sendSliceState.m_dynamicComm.getPodSize() != 1) ||
-               reductionReduce || (currentOp == eHCLReduceScatter && sendSliceState.m_dynamicComm.getPodSize() != 1);
+    isActive = ((sendSliceState.m_16BitReduction || (!sendSliceState.m_inPlace && !sendSliceState.m_isMultiScaleupGroup)) &&
+                reductionRS && sendSliceState.m_dynamicComm.getScaleupGroupSize() != 1) ||
+               reductionReduce || (currentOp == eHCLReduceScatter && sendSliceState.m_dynamicComm.getScaleupGroupSize() != 1);
     bool isReductionStreamActive = isActive;
     if (isActive) fillDmaStream(hcl::DMAStreams::reduction, archStreamIdx, schedIdx);
 
     // scaleoutReduction
-    isActive = sendSliceState.m_isMultiPod && isLastBox && currentOp == eHCLReduceScatter;
+    isActive = sendSliceState.m_isMultiScaleupGroup && isLastBox && currentOp == eHCLReduceScatter;
     if (isActive) fillDmaStream(hcl::DMAStreams::scaleoutReduction, archStreamIdx, schedIdx);
 
     // signaling
@@ -57,16 +57,14 @@ ActiveStreamManagerGen2Arch::ActiveStreamManagerGen2Arch(SliceState&            
     {
         bool incLtu     = sendSliceState.m_syncUpBufferWithLtu;
         bool isPdmaHnic = scaleoutProvider->isHostNic() && !scaleoutProvider->isGaudiDirect();
-        isActive        = sendSliceState.m_isMultiPod &&
-                   ((((isFirstBox && !GCFG_HCL_USE_EDMA_COMMAND_V3.value()) || (!isFirstBox && incLtu)) &&
-                     isReductionStreamActive) ||
-                    (!isFirstBox && isPdmaHnic));
+        isActive        = sendSliceState.m_isMultiScaleupGroup &&
+                   (((!isFirstBox && incLtu) && isReductionStreamActive) || (!isFirstBox && isPdmaHnic));
     }
     else if (currentOp == eHCLScatter)
     {
-        bool isRootBox  = sendSliceState.m_dynamicComm.getMyPod() == sendSliceState.rootBox();
+        bool isRootBox  = sendSliceState.m_dynamicComm.getMyScaleupGroup() == sendSliceState.rootBox();
         bool isPdmaHnic = scaleoutProvider->isHostNic() && !scaleoutProvider->isGaudiDirect();
-        isActive        = sendSliceState.m_isMultiPod && (!isFirstBox && isPdmaHnic && !isRootBox);
+        isActive        = sendSliceState.m_isMultiScaleupGroup && (!isFirstBox && isPdmaHnic && !isRootBox);
     }
 
     VERIFY(isActive || !(sendSliceState.m_syncUpBufferWithLtu && !isFirstBox) ||
@@ -80,7 +78,8 @@ ActiveStreamManagerGen2Arch::ActiveStreamManagerGen2Arch(SliceState&            
     if (isActive) fillDmaStream(hcl::DMAStreams::signaling, archStreamIdx, schedIdx);
 
     // gdr
-    isActive = scaleoutProvider->isGaudiDirect() && sendSliceState.m_isMultiPod && currentOp == eHCLReduceScatter &&
+    isActive = scaleoutProvider->isGaudiDirect() && sendSliceState.m_isMultiScaleupGroup &&
+               currentOp == eHCLReduceScatter &&
                !isFirstBox;
     if (isActive) fillDmaStream(hcl::DMAStreams::gdr, archStreamIdx, schedIdx);
 }

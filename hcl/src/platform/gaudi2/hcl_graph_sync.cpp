@@ -18,7 +18,6 @@ uint64_t HclGraphSyncGaudi2::getSyncManagerBase(unsigned id)
 {
     switch (id)
     {
-        // TODO: verify
         case 0:
             return mmDCORE0_SYNC_MNGR_OBJS_BASE;
         case 1:
@@ -73,7 +72,7 @@ uint32_t HclGraphSyncGaudi2::createMonConfig(bool isLong, unsigned soQuarter)
     gaudi2::sob_objs::reg_mon_config monConfig;
     monConfig._raw     = 0;
     monConfig.long_sob = isLong ? 1 : 0;
-    monConfig.msb_sid  = soQuarter;  // TODO: Yaniv check
+    monConfig.msb_sid  = soQuarter;
     if (isLong)
     {
         monConfig.wr_num = 1;  // perform 2 writes - 2nd write is a dummy one as w/a for SM bug in H6 (SW-67146)
@@ -136,18 +135,21 @@ void HclGraphSyncGaudi2::createSetupMonMessages(hcl::ScalStream& scalStream,
     unsigned schedIdx = scalStream.getSchedIdx();
     if (isLong)
     {
+        LBWBurstDestData_t destData;
         // 2nd dummy message to DCORE0_SYNC_MNGR_OBJS SOB_OBJ_8184
         uint64_t address2 = offsetof(gaudi2::block_sob_objs, sob_obj[8184]) + smBase;
         // Setup to payload address (of dummy SOB)
 
         uint32_t destination = varoffsetof(gaudi2::block_sob_objs, mon_pay_addrl[monitorIdx + 1]) + smBase;
-        m_commands.serializeLbwWriteCommand(scalStream, schedIdx, destination, address2 & 0xffffffff);
+        destData.push_back({destination, (uint32_t)address2 & 0xffffffff});
 
         destination = varoffsetof(gaudi2::block_sob_objs, mon_pay_addrh[monitorIdx + 1]) + smBase;
-        m_commands.serializeLbwWriteCommand(scalStream, schedIdx, destination, (address2 >> 32) & 0xffffffff);
+        destData.push_back({destination, (uint32_t)((address2 >> 32) & 0xffffffff)});
 
         // Create a dummy data that would be written to SOB_OBJ_8184
         destination = varoffsetof(gaudi2::block_sob_objs, mon_pay_data[monitorIdx + 1]) + smBase;
-        m_commands.serializeLbwWriteCommand(scalStream, schedIdx, destination, 0);
+        destData.push_back({destination, 0});
+
+        m_commands.serializeLbwBurstWriteCommand(scalStream, schedIdx, destData);
     }
 }

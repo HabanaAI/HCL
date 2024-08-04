@@ -78,7 +78,7 @@ enum class DfaErrorCode : uint64_t
     criticalHwError            = 1ULL << 24,
     criticalFirmwareError      = 1ULL << 25,
     signal                     = 1ULL << 26,
-
+    usrRequest                 = 1ULL << 27, // from synapse API
     tpcBrespErr                = 1ULL << 28,
     waitForMultiCsTimedOut     = 1ULL << 29,
     deviceReset                = 1ULL << 30,

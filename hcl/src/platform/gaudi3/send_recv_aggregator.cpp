@@ -86,12 +86,13 @@ void SendRecvAggregatorGaudi3::flush(hcl::ScalStreamBase& scalStream,
         {
             if (deviceId == m_selfModuleId) continue;
 
-            VERIFY(m_portMapping.getPairSet(true).count(deviceId) || m_portMapping.getPairSet(false).count(deviceId),
+            VERIFY(m_portMapping.getDevicesSet(true).count(deviceId) ||
+                       m_portMapping.getDevicesSet(false).count(deviceId),
                    "Device {} not in any nic macro set!",
                    deviceId);
 
             // a device can only belong to first or second set, not both
-            const bool             isSet0 = (m_portMapping.getPairSet(true).count(deviceId) == 1);
+            const bool             isSet0 = (m_portMapping.getDevicesSet(true).count(deviceId) == 1);
             const AggregatedEntry& entry  = arr[deviceId];
             if (entry.data.isValid)
             {
@@ -150,7 +151,7 @@ void SendRecvAggregatorGaudi3::flush(hcl::ScalStreamBase& scalStream,
         set1PortEnableMask = 0;
     }
 
-    constexpr uint16_t bitmask        = (1 << NIC_MAX_NUM_OF_MACROS) - 1;
+    const uint16_t     bitmask        = (1 << m_portMapping.getScaleupNicsMacrosCount()) - 1;
     uint16_t           set0NopDupMask = set0DupMask ^ bitmask;
     uint16_t           set1NopDupMask = set1DupMask ^ bitmask;
 

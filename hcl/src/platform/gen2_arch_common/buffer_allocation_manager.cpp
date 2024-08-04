@@ -112,7 +112,7 @@ void BufferAllocationManager::registerStaticBuffersAllocations(CommonState& comm
 
             if (boxIter == 0)
             {
-                if (commonState.m_isMultiPod)
+                if (commonState.m_isMultiScaleupGroup)
                 {
                     unsigned numIterations = numBoxes - 1;
 
@@ -133,9 +133,9 @@ void BufferAllocationManager::registerStaticBuffersAllocations(CommonState& comm
                 numRepetitions = numBoxes - 1;
             }
 
-            if (commonState.m_dynamicComm.getPodSize() > 1)
+            if (commonState.m_dynamicComm.getScaleupGroupSize() > 1)
             {
-                if (!commonState.m_isMultiPod && commonState.isComplexImplementation() && !commonState.isRoot())
+                if (!commonState.m_isMultiScaleupGroup && commonState.isComplexImplementation() && !commonState.isRoot())
                 {
                     addAllocation(SCALEUP_RR_AND_ALL2ALL_POOL, 1);
                 }
@@ -146,7 +146,7 @@ void BufferAllocationManager::registerStaticBuffersAllocations(CommonState& comm
             }
             if (commonState.m_collectiveOp == eHCLReduce && !commonState.isRoot() && commonState.m_16BitReduction)
             {
-                if (commonState.m_isMultiPod && boxIter == (numBoxes - 1))
+                if (commonState.m_isMultiScaleupGroup && boxIter == (numBoxes - 1))
                 {
                     addAllocation(REDUCE_RR_POOL, 1);
                     numRepetitions = 1;
@@ -161,7 +161,7 @@ void BufferAllocationManager::registerStaticBuffersAllocations(CommonState& comm
         }
         case eHCLGather:
         {
-            if (boxIter > 0 && commonState.m_dynamicComm.getMyPod() == commonState.rootBox() && !commonState.isRoot())
+            if (boxIter > 0 && commonState.m_dynamicComm.getMyScaleupGroup() == commonState.rootBox() && !commonState.isRoot())
             {
                 addAllocation(REDUCE_RR_POOL, 0);
                 setRepetitions(1);
@@ -170,7 +170,7 @@ void BufferAllocationManager::registerStaticBuffersAllocations(CommonState& comm
         }
         case eHCLAll2All:
         {
-            if (boxIter > 0 && commonState.m_dynamicComm.getPodSize() > 1 && commonState.m_all2allIter == 0)
+            if (boxIter > 0 && commonState.m_dynamicComm.getScaleupGroupSize() > 1 && commonState.m_all2allIter == 0)
             {
                 addAllocation(SCALEUP_RR_AND_ALL2ALL_POOL, commonState.m_all2allIterations - 1);
                 setRepetitions(1);

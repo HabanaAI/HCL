@@ -26,3 +26,4 @@ HCL project can be built using the following command:<br />
    ```
    make
    ```
+   Note that HCL lib will be created under /usr/lib/habanalabs

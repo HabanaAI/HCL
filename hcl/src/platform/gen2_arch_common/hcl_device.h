@@ -23,9 +23,8 @@ class HclDeviceControllerGen2Arch;
 class HclConfig;
 class HclDeviceConfig;
 class IEventQueueHandler;
-struct hlthunk_requester_conn_ctx;
-struct hlthunk_responder_conn_ctx;
 class DeviceBufferManager;
+class QPManager;
 
 namespace hcl
 {
@@ -44,7 +43,8 @@ public:
     virtual nics_mask_t  getAllPorts(int deviceId, unsigned spotlightType = DEFAULT_SPOTLIGHT) = 0;
     virtual hcclResult_t onNewCommStart(HCL_Comm comm, uint32_t commSize, HclConfig& config) override;
     virtual hcclResult_t destroyComm(HCL_Comm comm, bool force = false) override;
-
+    virtual void         deleteCommConnections(HCL_Comm comm)                             = 0;
+    virtual void         closeScaleoutQPs(HCL_Comm comm, const UniqueSortedVector& ranks) = 0;
     virtual hcclResult_t destroy(bool force = false) override;
 
     virtual bool                             isDramAddressValid(uint64_t addr) const override;
@@ -99,21 +99,8 @@ public:
     virtual uint64_t getDRAMSize() override;
     virtual uint64_t getDRAMBaseAddr() override;
 
+    virtual void     setGaudiDirect() override;
 protected:
-    virtual void updateRequesterContext(hlthunk_requester_conn_ctx& req_ctx,
-                                        HCL_Comm                    comm,
-                                        uint8_t                     nic,
-                                        HCL_Rank                    remoteRank,
-                                        uint32_t                    qpn,
-                                        uint8_t                     qpSet) override;
-
-    virtual void updateResponderContext(hlthunk_responder_conn_ctx& res_ctx,
-                                        HCL_Comm                    comm,
-                                        uint8_t                     nic,
-                                        HCL_Rank                    remoteRank,
-                                        uint32_t                    qpn,
-                                        uint8_t                     qpSet) override;
-
     virtual void registerQps(HCL_Comm comm, HCL_Rank remoteRank, const QpsVector& qps, int nic = INVALID_NIC) = 0;
 
     virtual uint32_t getQpi(HCL_Comm comm, uint8_t nic, HCL_Rank remoteRank, uint32_t qpn, uint8_t qpSet) = 0;

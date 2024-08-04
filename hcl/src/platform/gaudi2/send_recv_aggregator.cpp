@@ -38,9 +38,9 @@ void SendRecvAggregator::addSendRecvArray(const SendRecvArray&              arr,
                                           const RequiredCollectiveContext&& requiredContext)
 {
     AggregatedEntryArray aggregatedArray {};
-    for (int deviceId = 0; deviceId < HLS2_BOX_SIZE; deviceId++)
+    for (unsigned deviceId = 0; deviceId < HLS2_BOX_SIZE; deviceId++)
     {
-        if (deviceId == selfModuleId) continue;
+        if (deviceId == (unsigned) selfModuleId) continue;
 
         const SendRecvEntry& entry                    = arr[deviceId];
         aggregatedArray[deviceId]                     = AggregatedEntry {entry, /*isLast=*/false};
@@ -57,7 +57,7 @@ void SendRecvAggregator::addSendRecvArray(const SendRecvArray&              arr,
 
     std::array<UniqueCollectiveContext, HLS2_BOX_SIZE> uniqueContexts =
         ContextManager::createUniqueContexts(m_requiredContext);
-    for (int deviceIndex = 0; deviceIndex < HLS2_BOX_SIZE; deviceIndex++)
+    for (unsigned deviceIndex = 0; deviceIndex < HLS2_BOX_SIZE; deviceIndex++)
     {
         if (!uniqueContexts[deviceIndex].connection_enabled && arr[deviceIndex].isValid)
         {
@@ -73,7 +73,7 @@ void SendRecvAggregator::addSendRecvArray(const SendRecvArray&              arr,
 void SendRecvAggregator::configureLastEntriesPerDevice()
 {
     std::array<AggregatedEntry, HLS2_BOX_SIZE>& arr = *m_arrays.rbegin();
-    for (int deviceId = 0; deviceId < HLS2_BOX_SIZE; deviceId++)
+    for (unsigned deviceId = 0; deviceId < HLS2_BOX_SIZE; deviceId++)
     {
         if (arr[deviceId].data.isValid)
         {
@@ -82,11 +82,6 @@ void SendRecvAggregator::configureLastEntriesPerDevice()
         }
     }
 }
-
-// bool SendRecvAggregator::willFlush()
-// {
-//     return m_arrays.size() > 0;
-// }
 
 void SendRecvAggregator::flush(hcl::ScalStreamBase& scalStream,
                                ContextManager&      contextManager,

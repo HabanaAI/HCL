@@ -22,18 +22,28 @@ static std::string getPCIAddress(const hwloc_obj_t device)
                        device->attr->pcidev.bus, device->attr->pcidev.dev, device->attr->pcidev.func);
 }
 
-static hwloc_obj_t getOpenfabricOSDevice(const hwloc_obj_t device)
+static hwloc_obj_t getOSDevice(const hwloc_obj_t device, const hwloc_obj_osdev_type_t type)
 {
     hwloc_obj_t osDevice = device->io_first_child;
     while (osDevice)
     {
-        if (HWLOC_OBJ_OSDEV_OPENFABRICS == osDevice->attr->osdev.type)
+        if (type == osDevice->attr->osdev.type)
         {
             return osDevice;
         }
         osDevice = osDevice->next_sibling;
     }
-    throw hcl::VerifyException("Failed to find OpenFabrics OS device for PCI device");
+    throw hcl::VerifyException("Failed to find OS device for PCI device");
+}
+
+static hwloc_obj_t getOpenfabricOSDevice(const hwloc_obj_t device)
+{
+    return getOSDevice(device, HWLOC_OBJ_OSDEV_OPENFABRICS);
+}
+
+static hwloc_obj_t getNetworkOSDevice(const hwloc_obj_t device)
+{
+    return getOSDevice(device, HWLOC_OBJ_OSDEV_NETWORK);
 }
 
 static std::string getOpenfabricName(const hwloc_obj_t device)
@@ -409,6 +419,31 @@ std::tuple<size_t, std::string> getBestProvider(const std::vector<struct fi_info
                           return getOpenfabricName(hnic) == provider->nic->device_attr->name;
                       }));
     return {index, matchType};
+}
+
+std::unordered_map<const struct fi_info*, std::string>
+getProviderInterface(const std::vector<struct fi_info*>& providers)
+{
+    VERIFY(!providers.empty(), "Providers list is empty");
+
+    HwlocTopology topology;
+    const auto [oams, hnics] = findPciDevices(*topology);
+    UNUSED(oams);
+
+    std::unordered_map<const struct fi_info*, std::string> provider_interfaces;
+    for (const struct fi_info* const provider : providers)
+    {
+        for (const hwloc_obj_t& hnic : hnics)
+        {
+            if (getOpenfabricName(hnic) == provider->nic->device_attr->name)
+            {
+                provider_interfaces[provider] = getNetworkOSDevice(hnic)->name;
+                break;
+            }
+        }
+    }
+
+    return provider_interfaces;
 }
 
 }  // namespace hl_topo

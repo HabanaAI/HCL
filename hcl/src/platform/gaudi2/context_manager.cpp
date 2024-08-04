@@ -82,6 +82,14 @@ UniqueCollectiveContext::UniqueCollectiveContext()
     connection_enabled = false;
 }
 
+static inline g2fw::nic_coll_ctxt_dword_t createEmptyRemoteDescriptor()
+{
+    g2fw::nic_coll_ctxt_dword_t descriptor;
+    descriptor.dword_value = 0;
+
+    return descriptor;
+}
+
 RequiredCollectiveContext::RequiredCollectiveContext()
 {
     m_remoteDescriptor    = createEmptyRemoteDescriptor();
@@ -153,15 +161,7 @@ CachedCollectiveContextScaleUp::CachedCollectiveContextScaleUp(uint8_t          
                                                                const Gaudi2DevicePortMapping& portMapping,
                                                                HclCommandsGen2Arch&           commands)
 : CachedCollectiveContext(collectiveContextIndex, nicEngines, portMapping, commands),
-  m_activeScaleUpQPsTracker(collectiveContextIndex)
-{
-}
-
-CachedCollectiveContextScaleOut::CachedCollectiveContextScaleOut(uint8_t                        collectiveContextIndex,
-                                                                 const std::vector<unsigned>&   nicEngines,
-                                                                 const Gaudi2DevicePortMapping& portMapping,
-                                                                 HclCommandsGen2Arch&           commands)
-: CachedCollectiveContext(collectiveContextIndex, nicEngines, portMapping, commands)
+  m_activeCommunicatorDescriptor(collectiveContextIndex)
 {
 }
 
@@ -246,37 +246,18 @@ void CachedCollectiveContext::flushNicPassthroughHandler(hcl::ScalStreamBase& sc
                                   incSOBinNOP);
 }
 
-ContextManager::ContextManager(const std::vector<unsigned>& nicEngines,
-                               Gaudi2DevicePortMapping&     portMapping,
-                               IHclDevice&                  device)
-: m_portMapping(portMapping), m_nicEngines(nicEngines), m_device(device)
+ContextManager::ContextManager(const std::vector<unsigned>&   nicEngines,
+                               Gaudi2DevicePortMapping&       portMapping,
+                               QPManagerScaleUpGaudi2Handle&  qpManagerScaleUp,
+                               QPManagerScaleOutGaudi2Handle& qpManagerScaleOut,
+                               IHclDevice&                    device)
+: m_portMapping(portMapping),
+  m_nicEngines(nicEngines),
+  m_qpManagerScaleUp(qpManagerScaleUp),
+  m_qpManagerScaleOut(qpManagerScaleOut),
+  m_device(device)
 {
     std::fill(m_activeNics.begin(), m_activeNics.end(), false);
-}
-
-uint32_t ContextManager::getQpi(HCL_Comm comm, uint8_t nic, HCL_Rank remoteRank, uint32_t qpn, uint8_t qpSet)
-{
-    if (m_portMapping.isScaleoutPort(nic))
-    {
-        for (uint8_t i = 0; i < m_cachedCollectiveContextsScaleOut.size(); i++)
-        {
-            if (getRemoteRankQp(i, comm, remoteRank, nic, qpSet) == qpn)
-            {
-                return getRemoteRankQpi(i, comm, remoteRank, nic, qpSet);
-            }
-        }
-    }
-    else
-    {
-        for (CachedCollectiveContextScaleUp& collectiveContext : m_cachedCollectiveContextsScaleUp)
-        {
-            if (collectiveContext.m_activeScaleUpQPsTracker.getQP(comm, nic) == qpn)
-            {
-                return collectiveContext.m_activeScaleUpQPsTracker.getQPi(comm, nic);
-            }
-        }
-    }
-    VERIFY(false, "Cannot find match for qp {}", qpn);
 }
 
 void ContextManager::serializeUpdateGlobalContext(hcl::ScalStreamBase& scalStream,
@@ -362,6 +343,27 @@ void ContextManager::updateDWord(ContextValues& contextValues, eDWords dw, uint3
     contextValues.second++;
 }
 
+inline G2QP_e idx2qpi(unsigned ctxIndex)
+{
+    //  translates collective context index to QP index
+    //    (ctxIndex % 2) == 1,                                  // Even-numbered are RS, Odd-numbered are AG
+    //    ctxIndex < (s_hal.getCollectiveContextsCount() / 2),  // 0-7 are Recv contexts, 8-15 are Send contexts
+
+    bool RECV = ctxIndex < (s_hal.getCollectiveContextsCount() / 2);
+    bool SEND = !RECV;
+    bool AG   = (ctxIndex % 2) == 1;
+    bool RS   = !AG;
+
+    if (RS && RECV) return QPE_RS_RECV;
+    if (AG && RECV) return QPE_AG_RECV;
+    if (RS && SEND) return QPE_RS_SEND;
+    if (AG && SEND) return QPE_AG_SEND;
+
+    VERIFY(false, "unreachable code");
+
+    return (G2QP_e)0;
+}
+
 void ContextManager::serializeUpdateCollectiveContextScaleUp(hcl::ScalStreamBase&             scalStream,
                                                              unsigned                         selfModuleId,
                                                              bool                             isSend,
@@ -382,7 +384,8 @@ void ContextManager::serializeUpdateCollectiveContextScaleUp(hcl::ScalStreamBase
 
     // Mapping between {commDescIndex, QP} and a list of NICs needing this QP.
     std::map<std::pair<unsigned, uint32_t>, std::vector<uint8_t>> commDescWithQPs = {};
-    if (cachedCollectiveContext.m_activeScaleUpQPsTracker.requiresLruUpdate(comm) || dwordsForUpdate.DW_REMOTE_RANK)
+    if (cachedCollectiveContext.m_activeCommunicatorDescriptor.requiresLruUpdate(comm) ||
+        dwordsForUpdate.DW_REMOTE_RANK)
     {
         // If 'requiresLruUpdate()' returned true, it means that the LRU cache is full and thus we care to 'useQP' each
         // time (otherwise, the LRU is not full, and we don't want to pay the overhead of updating the LRU each and
@@ -394,7 +397,9 @@ void ContextManager::serializeUpdateCollectiveContextScaleUp(hcl::ScalStreamBase
         {
             if (m_activeNics[nic] == false) continue;
 
-            std::pair<unsigned, uint32_t> result = cachedCollectiveContext.m_activeScaleUpQPsTracker.useQP(comm, nic);
+            std::pair<unsigned, uint32_t> result = cachedCollectiveContext.m_activeCommunicatorDescriptor.useQP(
+                comm,
+                m_qpManagerScaleUp->getQP(comm, nic, idx2qpi(collectiveContextIndex)));
             commDescWithQPs[result].push_back(nic);  // make active, get QPs
         }
 
@@ -402,7 +407,7 @@ void ContextManager::serializeUpdateCollectiveContextScaleUp(hcl::ScalStreamBase
         if (dwordsForUpdate.DW_COMM_QP && commDescWithQPs.size() == 1)
         {
             updateDWord(contextValues, DW_COMM_QP, singleResult.second);
-            cachedCollectiveContext.m_activeScaleUpQPsTracker.markCommDownload(comm);
+            cachedCollectiveContext.m_activeCommunicatorDescriptor.markCommDownload(comm);
         }
         commDescIndex = singleResult.first;
 
@@ -414,7 +419,7 @@ void ContextManager::serializeUpdateCollectiveContextScaleUp(hcl::ScalStreamBase
                 if (m_activeNics[nic] == false) continue;
 
                 g2fw::nic_coll_ctxt_dword_t& currentRemoteDescriptor =
-                    cachedCollectiveContext.m_activeScaleUpQPsTracker.getRemoteDescriptor(comm, nic);
+                    cachedCollectiveContext.m_activeCommunicatorDescriptor.getRemoteDescriptor(comm, nic);
                 currentRemoteDescriptor = requiredContext.m_remoteDescriptor;
             }
 
@@ -424,7 +429,7 @@ void ContextManager::serializeUpdateCollectiveContextScaleUp(hcl::ScalStreamBase
     else
     {
         // LRU is not full - just get the comm desc index, don't update the LRU.
-        commDescIndex = cachedCollectiveContext.m_activeScaleUpQPsTracker.getCommDescIndex(comm);
+        commDescIndex = cachedCollectiveContext.m_activeCommunicatorDescriptor.getCommDescIndex(comm);
     }
 
     SchedArcCommandsGaudi2::serializeUpdateCollectiveContextCommand(scalStream,
@@ -533,40 +538,7 @@ void ContextManager::createCollectiveContexts(HclCommandsGen2Arch& commands)
     }
 }
 
-inline G2QP_e idx2qpi(unsigned ctxIndex)
-{
-    //  translates collective context index to QP index
-    //    (ctxIndex % 2) == 1,                                  // Even-numbered are RS, Odd-numbered are AG
-    //    ctxIndex < (s_hal.getCollectiveContextsCount() / 2),  // 0-7 are Recv contexts, 8-15 are Send contexts
-
-    bool RECV = ctxIndex < (s_hal.getCollectiveContextsCount() / 2);
-    bool SEND = !RECV;
-    bool AG   = (ctxIndex % 2) == 1;
-    bool RS   = !AG;
-
-    if (RS && RECV) return QPE_RS_RECV;
-    if (AG && RECV) return QPE_AG_RECV;
-    if (RS && SEND) return QPE_RS_SEND;
-    if (AG && SEND) return QPE_AG_SEND;
-
-    VERIFY(false, "unreachable code");
-
-    return (G2QP_e)0;
-}
-
-void ContextManager::allocateScaleOutContext(HCL_Comm comm, uint32_t commSize)
-{
-    for (uint8_t i = 0; i < s_hal.getCollectiveContextsCount(); i++)
-    {
-        m_cachedCollectiveContextsScaleOut[i].m_activeScaleOutQPsTracker.allocatCommQPs(comm, commSize);
-    }
-}
-
-void ContextManager::registerEarc(HCL_Comm         comm,
-                                  int              nic,
-                                  HCL_Rank         remoteRank,
-                                  const QpsVector& qps,
-                                  const bool       isPeer)  // 8 (subnic0), 22 (subnic1), 23 (subnic2) for scaleout
+void ContextManager::registerEarc(HCL_Comm comm, int nic)  // 8 (subnic0), 22 (subnic1), 23 (subnic2) for scaleout
 {
     g2fw::nic_glbl_ctxt_t& globalContext = m_globalContexts.at(nic);
     globalContext.is_valid               = 1;
@@ -575,23 +547,9 @@ void ContextManager::registerEarc(HCL_Comm         comm,
     {
         m_activeNics[nic] = true;
 
-        for (uint8_t i = 0; i < s_hal.getCollectiveContextsCount(); i++)
+        for (auto& collectiveContextScaleUp : m_cachedCollectiveContextsScaleUp)
         {
-            m_cachedCollectiveContextsScaleUp[i].m_activeScaleUpQPsTracker.registerQPs(comm, nic, idx2qpi(i), qps);
-        }
-    }
-    else if (remoteRank != HCL_INVALID_RANK)  // scale out
-    {
-        // step is 1 for peer, 2 for non-peer
-        uint8_t step = (isPeer || !GCFG_HCL_REDUCE_NON_PEER_QPS.value()) ? 1 : 2;
-        for (uint8_t i = 0; i < s_hal.getCollectiveContextsCount(); i += step)
-        {
-            m_cachedCollectiveContextsScaleOut[i].m_activeScaleOutQPsTracker.registerQPs(
-                m_device.getComm(comm),
-                m_portMapping.getSubPortIndex(nic),
-                remoteRank,
-                idx2qpi(i),
-                qps);
+            collectiveContextScaleUp.m_activeCommunicatorDescriptor.registerComm(comm);
         }
     }
 }
@@ -602,18 +560,7 @@ uint16_t ContextManager::getRemoteRankQp(unsigned collectiveContextIndex,
                                          int      nic,
                                          uint8_t  qpSet)
 {
-    return m_cachedCollectiveContextsScaleOut[collectiveContextIndex]
-        .m_activeScaleOutQPsTracker.getRankQpn(comm, remoteRank, m_portMapping.getSubPortIndex(nic), qpSet);
-}
-
-uint16_t ContextManager::getRemoteRankQpi(unsigned collectiveContextIndex,
-                                          HCL_Comm comm,
-                                          HCL_Rank remoteRank,
-                                          int      nic,
-                                          uint8_t  qpSet)
-{
-    return m_cachedCollectiveContextsScaleOut[collectiveContextIndex]
-        .m_activeScaleOutQPsTracker.getRankQpi(comm, remoteRank, m_portMapping.getSubPortIndex(nic), qpSet);
+    return m_qpManagerScaleOut->getQP(comm, nic, idx2qpi(collectiveContextIndex), qpSet, remoteRank);
 }
 
 g2fw::nic_coll_ctxt_dword_t
@@ -717,12 +664,12 @@ edwords_t ContextManager::getDwordsForUpdate(bool                             is
         {
             if (m_activeNics[nic] == false) continue;
 
-            if (!cachedCollectiveContextScaleUp->m_activeScaleUpQPsTracker.isActive(comm, nic))
+            if (!cachedCollectiveContextScaleUp->m_activeCommunicatorDescriptor.isActive(comm, nic))
             {
                 dwordsForUpdate.DW_COMM_QP = true;
             }
             g2fw::nic_coll_ctxt_dword_t& currentRemoteDescriptor =
-                cachedCollectiveContextScaleUp->m_activeScaleUpQPsTracker.getRemoteDescriptor(comm, nic);
+                cachedCollectiveContextScaleUp->m_activeCommunicatorDescriptor.getRemoteDescriptor(comm, nic);
 
             if (requiredContext.m_remoteDescriptor.dword_value != currentRemoteDescriptor.dword_value)
             {
@@ -773,21 +720,23 @@ void ContextManager::updateCollectiveContextScaleUp(hcl::ScalStreamBase&        
     {
         CachedCollectiveContextScaleUp& cachedCollectiveContext =
             m_cachedCollectiveContextsScaleUp[collectiveContextIndex];
-        if (m_cachedCollectiveContextsScaleUp[collectiveContextIndex].m_activeScaleUpQPsTracker.requiresLruUpdate(comm))
+        if (m_cachedCollectiveContextsScaleUp[collectiveContextIndex].m_activeCommunicatorDescriptor.requiresLruUpdate(
+                comm))
         {
             for (uint8_t nic = 0; nic < MAX_NICS_GEN2ARCH; nic++)
             {
                 if (m_activeNics[nic] == false) continue;
 
-                std::pair<unsigned, uint32_t> result =
-                    cachedCollectiveContext.m_activeScaleUpQPsTracker.useQP(comm, nic);
+                std::pair<unsigned, uint32_t> result = cachedCollectiveContext.m_activeCommunicatorDescriptor.useQP(
+                    comm,
+                    m_qpManagerScaleUp->getQP(comm, nic, idx2qpi(collectiveContextIndex)));
                 commDescIndex = result.first;
-                cachedCollectiveContext.m_activeScaleUpQPsTracker.markCommDownload(comm);
+                cachedCollectiveContext.m_activeCommunicatorDescriptor.markCommDownload(comm);
             }
         }
         else
         {
-            commDescIndex = cachedCollectiveContext.m_activeScaleUpQPsTracker.getCommDescIndex(comm);
+            commDescIndex = cachedCollectiveContext.m_activeCommunicatorDescriptor.getCommDescIndex(comm);
         }
     }
 

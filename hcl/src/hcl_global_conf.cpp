@@ -1,7 +1,7 @@
 #include "hcl_global_conf.h"
 
 #include "hcl_types.h"             // for BACK_2_BACK, UNKNOWN, DEFAULT_BOX...
-#include "synapse_common_types.h"  // for synDeviceGaudi2
+#include "synapse_common_types.h"  // for synDeviceType
 
 using hl_gcfg::DfltInt64;
 using hl_gcfg::DfltUint64;
@@ -53,7 +53,7 @@ GlobalConfSize GCFG_HCL_GDR_SLICE_SIZE(
 GlobalConfSize GCFG_FW_IMB_SIZE(
         "FW_IMB_SIZE",
         "FW static intermediate buffer size for Gen2Arch only (G2 on SRAM, G3 on HBM)",
-        DfltSize(hl_gcfg::SizeParam("320KB")) << deviceValue(synDeviceGaudi3, hl_gcfg::SizeParam("1280KB")),
+        DfltSize(hl_gcfg::SizeParam("512KB")) << deviceValue(synDeviceGaudi3, hl_gcfg::SizeParam("1280KB")),
         MakePrivate);
 
 GlobalConfUint64 GCFG_HCL_DEBUG_STATS_LEVEL(
@@ -89,7 +89,7 @@ GlobalConfInt64 GCFG_RESPONDER_PRIORITY(
 GlobalConfInt64 GCFG_CONGESTION_WINDOW(
     "CONGESTION_WINDOW",
     "Size of QP context congestion window",
-    DfltInt64(24) << deviceValue(synDeviceGaudi,  0),
+    DfltInt64(24) << deviceValue(synDeviceGaudi,  0) << deviceValue(synDeviceGaudi3,  32),
     MakePrivate);
 
 GlobalConfUint64 GCFG_CONGESTION_CONTROL_ENABLE(
@@ -97,12 +97,6 @@ GlobalConfUint64 GCFG_CONGESTION_CONTROL_ENABLE(
     "Enable congestion control for BBR/SWIFT",
     DfltUint64(0),
     MakePrivate);
-
-GlobalConfString GCFG_HCL_EMBEDDED_CONF(
-    "EMBEDDED_JSON",
-    "Override HCL configuration file provided to HCL_Init",
-    std::string(),
-    MakePublic);
 
 GlobalConfString GCFG_HCL_MAC_INFO_FILE(
     "HCL_MAC_INFO_FILE",
@@ -136,7 +130,7 @@ static const std::map<std::string, std::string> boxTypeStrToId = {{"BACK_2_BACK"
                                                            {"HLS1-H", std::to_string(HLS1H)},
                                                            {"HLS2", std::to_string(HLS2)},
                                                            {"HLS3", std::to_string(HLS3)},
-                                                           {"HLS3PCIE", std::to_string(HLS3PCIE)},
+                                                           {"HL338", std::to_string(HL338)},
                                                            {"SWITCH", std::to_string(BACK_2_BACK)},
                                                            {"UNKNOWN", std::to_string(UNKNOWN)}};
 
@@ -146,7 +140,7 @@ std::vector<GlobalConfObserver*> boxObservers = {&boxTypeObserver};
 
 GlobalConfString GCFG_BOX_TYPE(
     "BOX_TYPE",
-    "Select box type: UNKNOWN, BACK_2_BACK, LOOPBACK, RING, HLS1, OCP1, HLS1-H, HLS2, HLS3, HLS3PCIE",
+    "Select box type: UNKNOWN, BACK_2_BACK, LOOPBACK, RING, HLS1, OCP1, HLS1-H, HLS2, HLS3, HL338",
     std::string("UNKNOWN"),
     MakePublic,
     boxObservers);
@@ -196,7 +190,7 @@ GlobalConfBool GCFG_HCCL_OVER_OFI(
 GlobalConfBool GCFG_HCCL_GAUDI_DIRECT(
         "HCCL_GAUDI_DIRECT",
         {"HCCL_PEER_DIRECT"},
-        "When true, use gaudi-direct for cross-pod communication",
+        "When true, use gaudi-direct for cross-ScaleupGroup communication",
         false,
         MakePublic);
 
@@ -204,6 +198,12 @@ GlobalConfBool GCFG_HCL_FABRIC_FLUSH(
         "HCL_FABRIC_FLUSH",
         "When true, perform flush via fi_read",
         true,
+        MakePrivate);
+
+GlobalConfBool GCFG_HCL_HNIC_IPV6(
+        "HCL_HNIC_IPV6",
+        "When true, enforce IPv6 communication",
+        false,
         MakePrivate);
 
 GlobalConfBool GCFG_HCCL_ASYNC_EXCHANGE(
@@ -289,14 +289,8 @@ GlobalConfSize GCFG_MTU_SIZE(
 GlobalConfSize GCFG_HCL_SRAM_SIZE_RESERVED_FOR_HCL(
     "HCL_SRAM_SIZE",
     "The size of SRAM reserved for HCL reduction use",
-    DfltSize(hl_gcfg::SizeParam("320KB")) << deviceValue(synDeviceGaudi3, hl_gcfg::SizeParam("0")),
+    DfltSize(hl_gcfg::SizeParam("512KB")) << deviceValue(synDeviceGaudi3, hl_gcfg::SizeParam("0")),
     MakePrivate);
-
-GlobalConfBool GCFG_HCL_USE_IBVERBS(
-        "HCL_USE_IBVERBS",
-        "try to load and use IBVerbs interface",
-        true,
-        MakePublic);
 
 GlobalConfString GCFG_HCL_RDMA_DEFAULT_PATH(
         "HCL_RDMA_DEFAULT_PATH",
@@ -307,12 +301,6 @@ GlobalConfString GCFG_HCL_RDMA_DEFAULT_PATH(
 GlobalConfBool GCFG_HCL_IBV_GID_SYSFS(
         "HCL_IBV_GID_SYSFS",
         "use sysfs for GID data (instead of verbs API)",
-        true,
-        MakePrivate);
-
-GlobalConfBool GCFG_HCL_USE_EDMA_COMMAND_V3(
-        "HCL_USE_EDMA_COMMAND_V3",
-        "use edma commands V3 in Gen2Arch",
         true,
         MakePrivate);
 
@@ -356,6 +344,12 @@ GlobalConfUint64 GCFG_SCALE_OUT_PORTS_MASK(
         DfltUint64(DEFAULT_SCALEOUT_PORTS_MASK) << deviceValue(synDeviceGaudi3,  0xFFFFFF),
         MakePublic);
 
+GlobalConfUint64 GCFG_LOGICAL_SCALE_OUT_PORTS_MASK(
+        "LOGICAL_SCALE_OUT_PORTS_MASK",
+        "Logical Port mask to enable / disable scaleout ports (e.g. 0x7FFFFF)",
+        DfltUint64(0xFFFFFF),
+        MakePublic);
+
 GlobalConfString GCFG_HCL_PORT_MAPPING_CONFIG(
     "HCL_PORT_MAPPING_CONFIG",
     "Path to a JSON port mapping config file",
@@ -397,16 +391,28 @@ GlobalConfUint64 GCFG_MAX_QP_PER_EXTERNAL_NIC(
     DfltUint64(8192) << deviceValue(synDeviceGaudi3, 20480),
     MakePrivate);
 
-GlobalConfUint64 GCFG_HCL_SCALE_OUT_QP_SETS(
-    "HCL_SCALE_OUT_QP_SETS",
-    "Number of Scale-out QP sets per connection with rank",
+GlobalConfUint64 GCFG_HCL_GNIC_SCALE_OUT_QP_SETS(
+    "HCL_GNIC_SCALE_OUT_QP_SETS",
+    "Number of GNIC Scale-out QP sets per connection with rank",
     DfltUint64(4) << deviceValue(synDeviceGaudi, 1),
     MakePrivate);
 
-GlobalConfUint64 GCFG_HCL_QP_SETS_COMM_SIZE_THRESHOLD(
-    "HCL_QP_SETS_COMM_SIZE_THRESHOLD",
-    "Size of World Communicator from which, each connection gets only single QP set",
+GlobalConfUint64 GCFG_HCL_HNIC_SCALE_OUT_QP_SETS(
+    "HCL_HNIC_SCALE_OUT_QP_SETS",
+    "Number of HNIC Scale-out QP sets per connection with rank",
+    DfltUint64(1),
+    MakePrivate);
+
+GlobalConfUint64 GCFG_HCL_GNIC_QP_SETS_COMM_SIZE_THRESHOLD(
+    "HCL_GNIC_QP_SETS_COMM_SIZE_THRESHOLD",
+    "Size of World Communicator from which, each GNIC connection gets only single QP set",
     DfltUint64(2000) << deviceValue(synDeviceGaudi, 1),
+    MakePrivate);
+
+GlobalConfUint64 GCFG_HCL_HNIC_QP_SETS_COMM_SIZE_THRESHOLD(
+    "HCL_HNIC_QP_SETS_COMM_SIZE_THRESHOLD",
+    "Size of World Communicator from which, each HNIC connection gets only single QP set",
+    DfltUint64(2000),
     MakePrivate);
 
 GlobalConfBool GCFG_HCL_ENABLE_G3_SR_AGG(
@@ -421,12 +427,6 @@ GlobalConfBool GCFG_ENABLE_HNIC_MICRO_STREAMS(
     true,
     MakePrivate);
 
-GlobalConfBool GCFG_HCL_HNIC_RDM(
-    "HCL_HNIC_RDM",
-    "When true, hnic will use FI_EP_RDM (instead of the default FI_EP_MSG)",
-    true,
-    MakePublic);
-
 GlobalConfInt64 GCFG_OFI_CQ_BURST_PROC(
         "OFI_CQ_BURST_PROC",
         "Maximum number of OFI CQ processing each iteration",
@@ -438,3 +438,9 @@ GlobalConfBool GCFG_HCL_REDUCE_NON_PEER_QPS(
     "Do not use INVALID_QP value when open QPs for non-peers",
     true,
     MakePrivate);
+
+GlobalConfBool GCFG_HCCL_GET_MACS_FROM_DRIVER(
+        "HCCL_GET_MACS_FROM_DRIVER",
+        "When false, unless the user passed MAC Addr Info file, hcl will retrieve the MAC addresses",
+        false,
+        MakePrivate);

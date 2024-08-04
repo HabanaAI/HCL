@@ -38,12 +38,12 @@ void HclCollectiveRoutinesGen2Arch::determineCompletionSO(SliceState& sliceState
     }
     else
     {
-        int podSize = sliceState.m_dynamicComm.getPodSize();
+        int ScaleupGroupSize = sliceState.m_dynamicComm.getScaleupGroupSize();
 
         bool scaleOutFirstOp = ((sliceState.m_currentOp == eHCLAllGather || sliceState.m_currentOp == eHCLScatter ||
                                  (sliceState.m_currentOp == eHCLGather && !isFirstBox) ||
                                  sliceState.m_currentOp == eHCLSimpleBroadcast) &&
-                                podSize != 1);
+                                ScaleupGroupSize != 1);
 
         if (m_scaleoutProvider->isGaudiDirect() && sliceState.m_currentOp == eHCLReduceScatter)
         {
@@ -187,7 +187,7 @@ void HclCollectiveRoutinesGen2Arch::provideScaleoutResources(SliceState& sliceSt
 
                 if (sliceState.m_currentOp == eHCLScatter)
                 {
-                    unsigned     nextBox = getNextBox(sliceState.m_dynamicComm.getMyPod(), sliceState.m_boxIterations);
+                    unsigned     nextBox = getNextBox(sliceState.m_dynamicComm.getMyScaleupGroup(), sliceState.m_boxIterations);
                     unsigned int numFences = (nextBox == sliceState.rootBox()) ? 1 : 2;
 
                     m_signalsManager->enqueueWait(WaitEvent::COMPLEX_BCAST_SO_SEND_AND_AG_SU_WAIT_FOR_SO_RECV,
@@ -304,7 +304,7 @@ void HclCollectiveRoutinesGen2Arch::getDeviceToRemoteIndex(CommonState& commonSt
                     }
                     else if (rank == commonState.m_root)
                     {
-                        deviceToRemoteIndex[moduleID] = commonState.m_dynamicComm.getRankInPod();
+                        deviceToRemoteIndex[moduleID] = commonState.m_dynamicComm.getRankInScaleupGroup();
                     }
 
                     if (!isSend && !isMyRank && rank == commonState.m_root)
@@ -325,7 +325,7 @@ void HclCollectiveRoutinesGen2Arch::getDeviceToRemoteIndex(CommonState& commonSt
                     {
                         if (!isSend && commonState.isRootPeerInclusive(rank))
                         {
-                            deviceToRemoteIndex[moduleID] = commonState.m_dynamicComm.getRankInPod();
+                            deviceToRemoteIndex[moduleID] = commonState.m_dynamicComm.getRankInScaleupGroup();
                             if (!isMyRank)
                             {
                                 incWqeTracker = true;
@@ -372,7 +372,7 @@ void HclCollectiveRoutinesGen2Arch::getDeviceToRemoteIndex(CommonState& commonSt
                 }
                 else if (rank == commonState.m_root)
                 {
-                    deviceToRemoteIndex[moduleID] = commonState.m_dynamicComm.getRankInPod();
+                    deviceToRemoteIndex[moduleID] = commonState.m_dynamicComm.getRankInScaleupGroup();
                 }
                 break;
             case eHCLAllReduce:
@@ -396,7 +396,7 @@ void HclCollectiveRoutinesGen2Arch::getDeviceToRemoteIndex(CommonState& commonSt
         if (incWqeTracker && !GCFG_HCL_NULL_SUBMIT.value())
         {
             m_wqeTracker->incWqe(commonState.m_dynamicComm,
-                                 mod(rank, commonState.m_dynamicComm.getPodSize()),
+                                 mod(rank, commonState.m_dynamicComm.getScaleupGroupSize()),
                                  isAllGatherQp ? QpType::ScaleUpAllGather : QpType::ScaleUpReduceScatter);
         }
     }
@@ -439,7 +439,6 @@ unsigned int HclCollectiveRoutinesGen2Arch::calcRequiredCreditAmount(CommonState
 
     if (m_scaleoutProvider->isGaudiDirect() && boxIter > 0 && commonState.m_currentOp == eHCLReduceScatter)
     {
-        // TODO: once longterm gpso is implemented for Reduce, this should change.
         unsigned continuousTargets = 0;
         if (commonState.m_collectiveOp != eHCLReduce)
         {

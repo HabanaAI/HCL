@@ -207,7 +207,7 @@ public:
 
     inline void free(uint64_t sizeInDwords)
     {
-        VERIFY(likely(sizeInDwords < CAPACITY));
+        VERIFY(likely(sizeInDwords <= CAPACITY), "sizeInDwords: {} > CAP: {}", sizeInDwords, CAPACITY);
 
         // free() 'sizeInDwords' elements, i.e. signify that we're done with consuming this information.
         m_ci += sizeInDwords;

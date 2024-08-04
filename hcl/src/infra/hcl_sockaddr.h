@@ -9,49 +9,47 @@
 class sockaddr_str_t
 {
 public:
-    sockaddr_str_t() = default;
     sockaddr_str_t(const sockaddr_storage& address) { set(address); }
-
     sockaddr_str_t& operator=(const sockaddr_storage& address) { return set(address); }
+
+    operator const std::string& () const { return m_str; }
+private:
     sockaddr_str_t& set(const sockaddr_storage& address);
 
-    operator const std::string&() const { return m_str; }
-
-private:
     std::string m_str;
 };
 
 class sockaddr_t
 {
 public:
-    sockaddr_t() = default;
+    sockaddr_t(const sockaddr_t& addr);
     sockaddr_t(const sockaddr_storage& addr);
-    sockaddr_t(const std::string& ipaddress, uint16_t _port = 0);
+    sockaddr_t(const std::string& ipaddress = "", uint16_t _port = 0);
+
+    sockaddr_t& operator=(const sockaddr_t& addr);
     sockaddr_t& operator=(const sockaddr_storage& addr);
+    sockaddr_t& operator=(const std::string& ipaddress);
 
-    operator const struct sockaddr *() const { return sa_; }
-    operator const sockaddr_storage&() const { return m_sockAddr; }
+    operator const sockaddr* () const { return sa_; }
+    operator sockaddr* () {  return sa_; }
+    operator const sockaddr_storage& () const { return m_sockAddr; }
     operator sa_family_t() const { return m_sockAddr.ss_family; }
+    operator socklen_t() const { return size_of(); }
 
-    const std::string& str() { return m_ips.set(m_sockAddr); }
-
-    operator const std::string&() { return str(); }
-
-    uint16_t  port() const;
+    std::string str() const;
+    operator std::string() const { return str(); }
+    in_port_t port() const;
     socklen_t size_of() const;
 
 private:
-    struct sockaddr_storage m_sockAddr = {};
+    sockaddr_storage m_sockAddr = {};
 
-    struct sockaddr*     sa_  = (struct sockaddr*)&m_sockAddr;
-    struct sockaddr_in*  sa4_ = (struct sockaddr_in*)&m_sockAddr;
-    struct sockaddr_in6* sa6_ = (struct sockaddr_in6*)&m_sockAddr;
-
-    sockaddr_str_t m_ips;
+    sockaddr*     sa_  = (sockaddr*)&m_sockAddr;
+    sockaddr_in*  sa4_ = (sockaddr_in*)&m_sockAddr;
+    sockaddr_in6* sa6_ = (sockaddr_in6*)&m_sockAddr;
 
     bool IPv4() const { return m_sockAddr.ss_family == AF_INET; }
-    void port(uint16_t _port);
+    void port(in_port_t _port);
 
     void fromString(const std::string& ipaddress);
-    void fromAddress(const sockaddr_storage& address);
 };

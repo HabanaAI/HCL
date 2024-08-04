@@ -219,11 +219,7 @@ bool HcclCoordinatorClient::syncBetweenRanks()
 hcclResult_t HcclCoordinatorClient::sendToRank(int peer, void* data, uint32_t size)
 {
     LOG_HCL_TRACE(HCL, "peer={}, data={:p}, size={}", peer, data, size);
-    msg_header_t hdr {DATA_BETWEEN_RANKS,
-                      m_sendSequence[peer],
-                      size,
-                      m_rank,
-                      peer};  // TODO msg_header_t: size, source_peer, dest_peer should be made unsigned
+    msg_header_t hdr {DATA_BETWEEN_RANKS, m_sendSequence[peer], size, m_rank, peer};
     m_sendSequence[peer]++;
 
     RETURN_ON_ERROR(sendToCoordinator(m_mainSocket, &hdr, sizeof(hdr)), "Send hdr to coordinator failed.");

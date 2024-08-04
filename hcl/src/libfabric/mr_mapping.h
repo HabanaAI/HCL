@@ -107,6 +107,12 @@ public:
      */
     hcclResult_t mapHostMem(uint64_t addr, uint64_t size, ofi_component_t* ofiComponent, struct fid_mr*& mr_handle);
 
+    /**
+     * @brief Map flush related memory regions.
+     * @note Flush registrations are not saved in the mapping because they are done using a different domain.
+     * @param ofiComponent ofi_component_t
+     * @return 0 if successful
+     */
     hcclResult_t mapFlushBufMem(ofi_component_t* ofiComponent);
 
     /**
@@ -151,13 +157,15 @@ public:
      */
     void* getFlushBuf();
 
-    struct fid_mr* getFlushMRHandle();
+    struct fid_mr* getFlushMRLocalHandle();
+    struct fid_mr* getFlushMRRemoteHandle();
 
 private:
     uint64_t       m_dram_base = 0;
     uint64_t       m_dram_size = 0;
     int            m_flushBuf;
-    struct fid_mr* m_flushMRHandle = NULL;
+    struct fid_mr* m_flushMRLocalHandle  = NULL;
+    struct fid_mr* m_flushMRRemoteHandle = NULL;
     MRMapping();
     ~MRMapping();
 };

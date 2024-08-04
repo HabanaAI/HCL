@@ -118,7 +118,7 @@ int socketConnect(sockaddr_t& ip_addr, std::string if_name)
     while (connectionTrials > 0)
     {
         connectResult = connect(socket_fd, ip_addr, ip_addr.size_of());
-        if (connectResult == 0) break;  // Todo: try and catch ETIMEOUT
+        if (connectResult == 0) break;
         connectionTrials--;
         LOG_DEBUG(HCL,"Connect to server ended with timeout. ip {}. Trying again.", ip_addr.str());
         sleep(1);
@@ -208,11 +208,11 @@ bool recvAllFromSocket(const int socket_fd, const void* buff, const size_t size)
     VERIFY(socket_fd > 0, "Invalid socket_fd={}", socket_fd);
     VERIFY(buff != nullptr, "Invalid buffer");
     VERIFY(size > 0, "Invalid size=0");
-    // Todo: handle failures
+
     size_t bytes_recv = socketOp(HCCL_SOCKET_RECV, socket_fd, buff, size);
     if (bytes_recv != size)
     {
-        LOG_ERR(HCL,"recvAllFromSocket: Socket receive failed.");
+        LOG_ERR(HCL,"recvAllFromSocket: Socket receive failed, expected({}), received({}).", size, bytes_recv);
         return false;
     }
 
@@ -224,7 +224,6 @@ bool sendAllToSocket(const int socket_fd, const void* buff, const size_t size)
     VERIFY(socket_fd > 0, "Invalid socket_fd={}", socket_fd);
     VERIFY(buff != nullptr, "Invalid buffer");
     VERIFY(size > 0, "Invalid size=0");
-    // Todo: handle failures
 
     size_t bytes_sent = socketOp(HCCL_SOCKET_SEND, socket_fd, buff, size);
     if (bytes_sent != size)

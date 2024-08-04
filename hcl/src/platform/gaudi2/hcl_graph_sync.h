@@ -35,7 +35,7 @@ private:
                                   const uint8_t  mask,
                                   const unsigned soIdxNoMask,
                                   int            i,
-                                  bool           useEqual = false) override;
+                                  bool           useEqual) override;
     virtual uint32_t createSchedMonExpFence(unsigned fenceIdx) override;
     virtual void     createSetupMonMessages(hcl::ScalStream& scalStream,
                                             uint64_t         address,

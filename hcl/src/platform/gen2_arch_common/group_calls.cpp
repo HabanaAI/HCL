@@ -33,7 +33,6 @@ unsigned GroupCalls::getRemoteRanksCount()
     unsigned ret = 0;
     for (auto& remoteRanks : m_groupCalls)
     {
-        // TODO: add valid check
         ret += remoteRanks.second.size();
     }
 
@@ -189,6 +188,5 @@ const SendRecvVector& GroupCalls::buildIterationsLayout(const bool     isSend,
     }
     VERIFY(orderedMap.size() == 0, "iterations map should be empty, orderedMap.size={}", orderedMap.size());
 
-    // TODO: VERIFY m_orderedList size against getRemoteRanksCount() ??
     return m_orderedList;
 }

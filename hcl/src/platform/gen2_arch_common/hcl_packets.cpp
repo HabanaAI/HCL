@@ -9,25 +9,28 @@ void HostSchedCommandsGen2Arch::serializeHostSendScaleOutCommand(spHostStreamFif
                                                                  uint64_t               size,
                                                                  HCL_Comm               comm,
                                                                  OfiCompCallbackParams& compParams,
-                                                                 const uint64_t         srCount)
+                                                                 const uint64_t         srCount,
+                                                                 uint16_t               qpSetIndex)
 {
     LOG_DEBUG(HCL_SUBMIT,
               "HostSchedCommandsGen2Arch::serializeHostSendScaleOutCommand: isSend={}, address=0x{:x}, rank={}, "
-              "size={}, comm={}, srCount={}",
+              "size={}, comm={}, srCount={}, qpSetIndex={}",
               isSend,
               address,
               rank,
               size,
               comm,
-              srCount);
+              srCount,
+              qpSetIndex);
     static size_t                    dwords = sizeof(host_sched_cmd_scale_out_nic_op) >> 2;
     host_sched_cmd_scale_out_nic_op* command =
         reinterpret_cast<host_sched_cmd_scale_out_nic_op*>(hostStream->getNextPtr(dwords));
-    command->opcode  = isSend ? HOST_SCHED_CMD_SEND : HOST_SCHED_CMD_RECV;
-    command->address = address;
-    command->rank    = rank;
-    command->size    = size;
-    command->comm    = comm;
+    command->opcode     = isSend ? HOST_SCHED_CMD_SEND : HOST_SCHED_CMD_RECV;
+    command->qpSetIndex = qpSetIndex;
+    command->address    = address;
+    command->rank       = rank;
+    command->size       = size;
+    command->comm       = comm;
     command->compParams = compParams;
     command->srCount    = srCount;
 
@@ -42,22 +45,25 @@ void HostSchedCommandsGen2Arch::serializeHostScaleOutCommandWithFence(spHostStre
                                                                       HCL_Comm               comm,
                                                                       unsigned               fenceIdx,
                                                                       OfiCompCallbackParams& compParams,
-                                                                      const uint64_t         srCount)
+                                                                      const uint64_t         srCount,
+                                                                      uint16_t               qpSetIndex)
 {
     LOG_DEBUG(HCL_SUBMIT,
               "HostSchedCommandsGen2Arch::serializeHostScaleOutCommandWithFence: isSend={}, address=0x{:x}, rank={}, "
-              "size={}, comm={}, fenceIdx={}, srCount={}",
+              "size={}, comm={}, fenceIdx={}, srCount={}, qpSetIndex={}",
               isSend,
               address,
               rank,
               size,
               comm,
               fenceIdx,
-              srCount);
+              srCount,
+              qpSetIndex);
     static size_t                               dwords = sizeof(host_sched_cmd_scale_out_with_fence_nic_op) >> 2;
     host_sched_cmd_scale_out_with_fence_nic_op* command =
         reinterpret_cast<host_sched_cmd_scale_out_with_fence_nic_op*>(hostStream->getNextPtr(dwords));
     command->opcode       = isSend ? HOST_SCHED_CMD_SEND_WITH_FENCE : HOST_SCHED_CMD_RECV_WITH_FENCE;
+    command->qpSetIndex   = qpSetIndex;
     command->address      = address;
     command->rank         = rank;
     command->size         = size;

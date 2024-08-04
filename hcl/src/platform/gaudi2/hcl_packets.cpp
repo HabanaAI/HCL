@@ -59,7 +59,7 @@ void SchedArcCommandsGaudi2::serializeAllocBarrierCommand(hcl::ScalStreamBase& s
 
     LOG_TRACE(
         HCL_SUBMIT,
-        "Packets | serializeAllocBarrierCommand sched:{}, opcode:{}, comp_group_index:{}, required_sobs:{}, "
+        "Packets | serializeAllocBarrierCommand schedIdx:{}, opcode:{}, comp_group_index:{}, required_sobs:{}, "
         "on stream:{}",
         schedIdx,
         command->opcode,
@@ -68,10 +68,10 @@ void SchedArcCommandsGaudi2::serializeAllocBarrierCommand(hcl::ScalStreamBase& s
         *(scalStream.getStreamName()));
 }
 
-void SchedArcCommandsGaudi2::serializeFenceCommand(hcl::ScalStreamBase& scalStream,
-                                                   unsigned             schedIdx,
-                                                   uint32_t             fenceIndex,
-                                                   uint32_t             target)
+void SchedArcCommandsGaudi2::serializeFenceDecCommand(hcl::ScalStreamBase& scalStream,
+                                                      unsigned             schedIdx,
+                                                      uint32_t             fenceIndex,
+                                                      uint32_t             target)
 {
     g2fw::sched_arc_cmd_fence_wait_t* command = reinterpret_cast<g2fw::sched_arc_cmd_fence_wait_t*>(
         scalStream.getNextPtr(sizeof(g2fw::sched_arc_cmd_fence_wait_t)));
@@ -87,14 +87,13 @@ void SchedArcCommandsGaudi2::serializeFenceCommand(hcl::ScalStreamBase& scalStre
     command->fence_id = fenceIndex;
     command->target   = target;
 
-    LOG_TRACE(
-        HCL_SUBMIT,
-        "Packets | serializeFenceCommand sched:{}, opcode:{}, target:{}, fence_id:{} on stream:{}",
-        schedIdx,
-        command->opcode,
-        (uint32_t)command->target,
-        (uint32_t)command->fence_id,
-        *(scalStream.getStreamName()));
+    LOG_TRACE(HCL_SUBMIT,
+              "Packets | serializeFenceDecCommand sched:{}, opcode:{}, target:{}, fence_id:{} on stream:{}",
+              schedIdx,
+              command->opcode,
+              (uint32_t)command->target,
+              (uint32_t)command->fence_id,
+              *(scalStream.getStreamName()));
 }
 
 void SchedArcCommandsGaudi2::serializeFenceIncCommand(hcl::ScalStreamBase& scalStream,
@@ -116,7 +115,7 @@ void SchedArcCommandsGaudi2::serializeFenceIncCommand(hcl::ScalStreamBase& scalS
     command->fence_index = fenceIndex;
     LOG_TRACE(
         HCL_SUBMIT,
-        "Packets | serializeFenceIncCommand sched:{}, opcode:{} ,fence_id:{} on stream:{}",
+        "Packets | serializeFenceIncCommand schedIdx:{}, opcode:{} ,fence_id:{} on stream:{}",
         schedIdx,
         command->opcode,
         (uint32_t)command->fence_index,
@@ -157,314 +156,90 @@ void SchedArcCommandsGaudi2::serializeLbwWriteCommand(hcl::ScalStreamBase& scalS
         *(scalStream.getStreamName()));
 }
 
-void SchedArcCommandsGaudi2::serializeDmaCommandV2(hcl::ScalStreamBase& scalStream,
-                                                   unsigned             schedIdx,
-                                                   uint32_t             dmaType,
-                                                   uint32_t             soAddressLSB,
-                                                   uint32_t             soAddressLSB2,
-                                                   uint32_t             size,
-                                                   uint64_t             destAddress,
-                                                   uint64_t             srcAddress,
-                                                   hcclRedOp_t          reduceOp,
-                                                   bool                 isReduction,
-                                                   bool                 reductionSignalToCg,
-                                                   hcclDataType_t       dataType,
-                                                   uint32_t             poolId,
-                                                   bool                 isReproReduction,
-                                                   bool                 useSibo,
-                                                   uint32_t             numberOfRanks,
-                                                   uint32_t             numberOfReproBuffers,
-                                                   uint32_t             indexOfReproBuffer,
-                                                   bool                 is16BitMemcpy,
-                                                   bool                 isGDRMemcpy)
+void SchedArcCommandsGaudi2::serializeLbwBurstWriteCommand(hcl::ScalStreamBase&      scalStream,
+                                                           unsigned                  schedIdx,
+                                                           const LBWBurstDestData_t& destData,
+                                                           bool                      blockUntilCompletion)
 {
-    static bool shuffleIndex = false;
-    size_t      sizeInBytes  = sizeof(g2fw::sched_arc_cmd_nic_edma_ops_t);
-
-    if (dmaType == g2fw::NIC_EDMA_CMD_CAST_DOWN_CLEAR)
-    {
-        sizeInBytes += sizeof(g2fw::arc_cmd_nic_edma_ops_cdc_t);
-    }
-    else
-    {
-        sizeInBytes += sizeof(g2fw::arc_cmd_nic_edma_ops_v3_t);
-    }
-
-    g2fw::sched_arc_cmd_nic_edma_ops_t* command =
-        reinterpret_cast<g2fw::sched_arc_cmd_nic_edma_ops_t*>(scalStream.getNextPtr(sizeInBytes));
-    memset(command, 0, sizeInBytes);
+    VERIFY((destData.size() != 0), "vector size [{}] for {}", destData.size(), __func__);
+    size_t size = sizeof(g2fw::sched_arc_cmd_lbw_burst_write_t) + (sizeof(LBWBurstAddressData) * destData.size());
+    g2fw::sched_arc_cmd_lbw_burst_write_t* command =
+        reinterpret_cast<g2fw::sched_arc_cmd_lbw_burst_write_t*>(scalStream.getNextPtr(size));
+    memset(command, 0, size);
 
     static const unsigned opcodes[(unsigned)hcl::SchedulersIndex::count] = {
-        g2fw::SCHED_GC_REDUCTION_ARC_CMD_NIC_EDMA_OPS,
-        g2fw::SCHED_SCALEUP_SEND_ARC_CMD_NIC_EDMA_OPS,
-    };
+        g2fw::SCHED_GC_REDUCTION_ARC_CMD_LBW_BURST_WRITE,
+        g2fw::SCHED_SCALEUP_SEND_ARC_CMD_LBW_BURST_WRITE,
+        g2fw::SCHED_SCALEUP_RECV_ARC_CMD_LBW_BURST_WRITE,
+        g2fw::SCHED_SCALEOUT_SEND_ARC_CMD_LBW_BURST_WRITE,
+        g2fw::SCHED_SCALEOUT_RECV_ARC_CMD_LBW_BURST_WRITE};
+    SET_FIELD(command->opcode, opcodes[schedIdx]);
+    SET_FIELD(command->block_next, blockUntilCompletion);
+    SET_FIELD(command->num_lbw_write, destData.size());
 
-    static unsigned groupEngineInOrder[(unsigned)hcl::SchedulersIndex::count][g2fw::NIC_EDMA_COUNT] = {
-        {
-            0,
-            0,
-            0,
-            0,
-            ScalNetworkGarbageCollectorAndReductionGroups::SCAL_EDMA_NETWORK_GC_REDUCTION_GROUP0, /* memcppy */ // 4
-            ScalNetworkGarbageCollectorAndReductionGroups::
-                SCAL_EDMA_NETWORK_GC_REDUCTION_GROUP1, /* cast_down_and_memset
-                                                        */
-            ScalNetworkGarbageCollectorAndReductionGroups::SCAL_EDMA_NETWORK_GC_REDUCTION_GROUP0, /*cast_up_batch*/
-            0,
-            0,
-            ScalNetworkGarbageCollectorAndReductionGroups::SCAL_EDMA_NETWORK_GC_REDUCTION_GROUP0, /* memcopy V3*/
-            ScalNetworkGarbageCollectorAndReductionGroups::SCAL_EDMA_NETWORK_GC_REDUCTION_GROUP0 /*cast_up_batchV3*/
-        },                                                                                        // dma scheduler
-        {
-            0,
-            0,
-            ScalNetworkScaleUpSendGroups::SCAL_EDMA_NETWORK_SCALE_UP_SEND_GROUP0, /* cast up */
-            ScalNetworkScaleUpSendGroups::SCAL_EDMA_NETWORK_SCALE_UP_SEND_GROUP0, /* memcppy */
-            ScalNetworkScaleUpSendGroups::SCAL_EDMA_NETWORK_SCALE_UP_SEND_GROUP0, /* NIC_EDMA_CMD_MEMCPY_V2 */
-            0,
-            ScalNetworkScaleUpSendGroups::SCAL_EDMA_NETWORK_SCALE_UP_SEND_GROUP0, /* cast-up */
-            0,
-            0,
-            ScalNetworkScaleUpSendGroups::SCAL_EDMA_NETWORK_SCALE_UP_SEND_GROUP0, /* NIC_EDMA_CMD_MEMCPY_V3 */
-            ScalNetworkScaleUpSendGroups::SCAL_EDMA_NETWORK_SCALE_UP_SEND_GROUP0, /* cast-upV3 */
-        },                                                                        // scaleup send scheduler
-        {
-            0,
-            0,
-            ScalNetworkScaleUpReceiveGroups::SCAL_EDMA_NETWORK_SCALE_UP_RECV_GROUP0, /* cast up */
-            ScalNetworkScaleUpReceiveGroups::SCAL_EDMA_NETWORK_SCALE_UP_RECV_GROUP0, /* memcppy */
-            ScalNetworkScaleUpReceiveGroups::SCAL_EDMA_NETWORK_SCALE_UP_RECV_GROUP1  /* cast_down_and_memset */
-        },                                                                           // scaleup recv scheduler
-        {0, 0, 0, 0},
-        {0, 0, 0, 0}};
+    LOG_TRACE(HCL_SUBMIT, "Packets | serializeLbwBurstWriteCommand on stream:{}", *(scalStream.getStreamName()));
 
-    auto groupEngine = std::ref(groupEngineInOrder);
-
-    command->opcode = opcodes[schedIdx];
-    if (dmaType == g2fw::NIC_EDMA_CMD_CAST_DOWN_CLEAR)
+    for (unsigned i = 0; i < destData.size(); i++)
     {
-        command->cmd_size = sizeof(g2fw::arc_cmd_nic_edma_ops_cdc_t) + sizeof(uint32_t);
-    }
-    else
-    {
-        command->cmd_size = sizeof(g2fw::arc_cmd_nic_edma_ops_v3_t) + sizeof(uint32_t);
-    }
-
-    command->engine_group_type = groupEngine[schedIdx][dmaType];
-
-    VERIFY(command->engine_group_type != 0, "unsupported dmaType [{}] for {}", dmaType, __func__);
-
-    if (dmaType == static_cast<uint32_t>(g2fw::NIC_EDMA_CMD_CAST_DOWN_CLEAR))
-    {
-        struct g2fw::arc_cmd_nic_edma_ops_cdc_t* edma_ops =
-            (struct g2fw::arc_cmd_nic_edma_ops_cdc_t*)&command->edma_cdc;
-
-        shuffleIndex = !shuffleIndex;
-
-        edma_ops->reduction_op          = isReproReduction ? REDUCTION_OP_ADDITION : getReductionOp(reduceOp);
-        edma_ops->shuffle_index         = shuffleIndex;
-        edma_ops->use_sibo_index_as_src = useSibo ? 0b1 : 0;
-        edma_ops->sibo_index            = indexOfReproBuffer;
-        edma_ops->rank_offset_in_sibo   = 0;
-        edma_ops->rank_count            = useSibo ? numberOfRanks : 0;
-
-        edma_ops->sob_address   = soAddressLSB & 0x7ffffff;
-        edma_ops->sob_address2  = soAddressLSB2 & 0x7ffffff;
-        edma_ops->opcode        = g2fw::NIC_EDMA_CMD_CAST_DOWN_CLEAR;
-        edma_ops->fp16          = dataType == hcclFloat16;
-        edma_ops->transfer_size = size;
-        edma_ops->pool_id       = poolId;
-        edma_ops->dst_addr_lo   = destAddress & 0xffffffff;
-        edma_ops->dst_addr_hi   = destAddress >> 32;
-        edma_ops->src_addr_lo   = srcAddress & 0xffffffff;
-        edma_ops->src_addr_hi   = (srcAddress >> 32) & 0xffffff;
-        edma_ops->reduction_ind = 0;
-
-        edma_ops->reduction_dtype = REDUCTION_FP32;
-
-        if (edma_ops->reduction_op == hcclMax)
-        {
-            edma_ops->memset_op = eMaxMemsetOp;
-        }
-        else if (edma_ops->reduction_op == hcclMin)
-        {
-            edma_ops->memset_op = eMinMemsetOp;
-        }
-        else
-        {
-            edma_ops->memset_op = eSumMemsetOp;
-        }
-
-        LOG_TRACE(
-            HCL_SUBMIT,
-            "Packets | Serializing sched_arc_cmd_nic_edma_ops_t command with arc_cmd_nic_edma_ops_cdc_t. "
-            "sched: {}, Command[0-3]: 0x{:x}, 0x{:x}, 0x{:x}, sched: command address: 0x{:x}, sched_opcode: {}, "
-            "cmd_size:{} "
-            "engine_group_type:{}, "
-            "engine: shuffle_index:{}, opcode:{}, use_sibo_index_as_src:{}, sibo_index:{}, rank_offset_in_sibo:{}, "
-            "rank_count:{}, sob_address:0x{:x}, fp16:{}, transfer_size:{}, pool_id:{}, "
-            "srcAddr:0x{:x}, dstAddr:0x{:x}, dst_addr_lo:0x{:x}, dst_addr_hi:0x{:x}, src_addr_lo:0x{:x}, "
-            "src_addr_hi:0x{:x}, "
-            "reduction_ind:{}, reduction_dtype:{}, reduction_op:{} on stream:{}",
-            schedIdx,
-            *((uint32_t*)(command)),
-            *((uint32_t*)(command) + 1),
-            *((uint32_t*)(command) + 2),
-            (uint64_t)command,
-            command->opcode,
-            command->cmd_size,
-            command->engine_group_type,
-            (uint32_t)edma_ops->shuffle_index,
-            (uint32_t)edma_ops->opcode,
-            (uint32_t)edma_ops->use_sibo_index_as_src,
-            (uint32_t)edma_ops->sibo_index,
-            (uint32_t)edma_ops->rank_offset_in_sibo,
-            (uint32_t)edma_ops->rank_count,
-            (uint64_t)edma_ops->sob_address,
-            (uint32_t)edma_ops->fp16,
-            (uint32_t)edma_ops->transfer_size,
-            (uint32_t)edma_ops->pool_id,
-            (uint64_t)srcAddress,
-            (uint64_t)destAddress,
-            (uint64_t)edma_ops->dst_addr_lo,
-            (uint64_t)edma_ops->dst_addr_hi,
-            (uint64_t)edma_ops->src_addr_lo,
-            (uint64_t)edma_ops->src_addr_hi,
-            (uint32_t)edma_ops->reduction_ind,
-            (uint32_t)edma_ops->reduction_dtype,
-            (uint32_t)edma_ops->reduction_op,
-            *(scalStream.getStreamName()));
-    }
-    else
-    {
-        struct g2fw::arc_cmd_nic_edma_ops_v3_t* edma_ops =
-            (struct g2fw::arc_cmd_nic_edma_ops_v3_t*)&command->edma_ops_v3;
-        bool isCastUp = (dmaType == static_cast<uint32_t>(g2fw::NIC_EDMA_CMD_CAST_UP_BATCH_V3));
-
-        shuffleIndex = !shuffleIndex;
-
-        edma_ops->reduction_op =
-            (isCastUp && isReproReduction && !isGDRMemcpy) ? REDUCTION_OP_ADDITION : getReductionOp(reduceOp);
-        edma_ops->shuffle_index         = shuffleIndex;
-        edma_ops->use_sibo_index_as_src = useSibo ? 0b1 : 0;
-        edma_ops->sibo_index              = indexOfReproBuffer * numberOfReproBuffers;
-
-        if (useSibo)
-        {
-            edma_ops->rank_count          = numberOfRanks - 1;
-            edma_ops->rank_offset_in_sibo = 1;  // Always 1, as there's another memcpy to copy index 0
-        }
-        else
-        {
-            edma_ops->rank_count          = 0;
-            edma_ops->rank_offset_in_sibo = 0;
-        }
-
-        edma_ops->sob_address     = soAddressLSB & 0x7ffffff;
-        edma_ops->opcode          = dmaType;
-        edma_ops->fp16            = dataType == hcclFloat16;
-        edma_ops->transfer_size   = size;
-        edma_ops->pool_id         = poolId;
-        edma_ops->dst_addr_lo     = destAddress & 0xffffffff;
-        edma_ops->dst_addr_hi     = destAddress >> 32;
-        edma_ops->src_addr_lo     = srcAddress & 0xffffffff;
-        edma_ops->src_addr_hi     = (srcAddress >> 32) & 0xffffff;
-        edma_ops->reduction_ind   = ((useSibo && isReduction) || isCastUp || isGDRMemcpy ||
-                                   ((g2fw::edma_eng_arc_cmd_t)dmaType == g2fw::NIC_EDMA_CMD_MEMCPY_V3 && isReduction &&
-                                    !reductionSignalToCg && !isReproReduction))
-                                        ? 1
-                                        : 0;
-
-        edma_ops->reduction_dtype = getReductionDataType(isCastUp, dataType);
-        /*
-            1. FP32 (no cast-up) -> opcode=NIC_EDMA_CMD_MEMCPY_V3, use_sibo_index_as_src=1, reduction_dtype =
-           REDUCTION_FP32, reduction_ind=1
-            2. BF16 (cast-up) -> opcode=NIC_EDMA_CMD_CAST_UP_BATCH_V3, use_sibo_index_as_src=1,
-           reduction_dtype=REDUCTION_UPSCALING_BF16
-            3. FP16 (cast-up) -> opcode=NIC_EDMA_CMD_CAST_UP_BATCH_V3, use_sibo_index_as_src=1,
-           reduction_dtype=REDUCTION_UPSCALING_FP16
-
-        */
-        LOG_TRACE(
-            HCL_SUBMIT,
-            "Packets | Serializing sched_arc_cmd_nic_edma_ops_t command with arc_cmd_nic_edma_ops_v3_t. "
-            "sched: {}, Command[0-3]: 0x{:x}, 0x{:x}, 0x{:x}, sched: command address: 0x{:x}, sched_opcode: {}, "
-            "cmd_size:{} "
-            "engine_group_type:{}, "
-            "engine: shuffle_index:{}, opcode:{}, use_sibo_index_as_src:{}, sibo_index:{}, rank_offset_in_sibo:{}, "
-            "rank_count:{}, sob_address:0x{:x}, fp16:{}, transfer_size:{}, pool_id:{}, "
-            "srcAddr:0x{:x}, dstAddr:0x{:x}, dst_addr_lo:0x{:x}, dst_addr_hi:0x{:x}, src_addr_lo:0x{:x}, "
-            "src_addr_hi:0x{:x}, "
-            "reduction_ind:{}, reduction_dtype:{}, reduction_op:{} on stream:{}",
-            schedIdx,
-            *((uint32_t*)(command)),
-            *((uint32_t*)(command) + 1),
-            *((uint32_t*)(command) + 2),
-            (uint64_t)command,
-            command->opcode,
-            command->cmd_size,
-            command->engine_group_type,
-            (uint32_t)edma_ops->shuffle_index,
-            (uint32_t)edma_ops->opcode,
-            (uint32_t)edma_ops->use_sibo_index_as_src,
-            (uint32_t)edma_ops->sibo_index,
-            (uint32_t)edma_ops->rank_offset_in_sibo,
-            (uint32_t)edma_ops->rank_count,
-            (uint64_t)edma_ops->sob_address,
-            (uint32_t)edma_ops->fp16,
-            (uint32_t)edma_ops->transfer_size,
-            (uint32_t)edma_ops->pool_id,
-            (uint64_t)srcAddress,
-            (uint64_t)destAddress,
-            (uint64_t)edma_ops->dst_addr_lo,
-            (uint64_t)edma_ops->dst_addr_hi,
-            (uint64_t)edma_ops->src_addr_lo,
-            (uint64_t)edma_ops->src_addr_hi,
-            (uint32_t)edma_ops->reduction_ind,
-            (uint32_t)edma_ops->reduction_dtype,
-            (uint32_t)edma_ops->reduction_op,
-             *(scalStream.getStreamName()));
+        SET_FIELD(command->addr_data[i].addr, destData[i].address);
+        SET_FIELD(command->addr_data[i].data, destData[i].data);
+        LOG_TRACE(HCL_SUBMIT,
+                  "Packets | BurstElement schedIdx:{}, opcode:{} , block_next:{}, burst_size:{}, "
+                  "burst_index:{}, "
+                  "dst_addr:0x{:x}, src_data:0x{:x}, wait_for_completion:{}",
+                  schedIdx,
+                  command->opcode,
+                  (uint32_t)command->block_next,
+                  (uint32_t)command->num_lbw_write,
+                  (uint32_t)i,
+                  (uint64_t)command->addr_data[i].addr,
+                  (uint64_t)command->addr_data[i].data,
+                  (uint32_t)command->wait_for_completion);
     }
 }
 
-void SchedArcCommandsGaudi2::serializeDmaCommandV3(hcl::ScalStreamBase& scalStream,
-                                                   unsigned             schedIdx,
-                                                   uint32_t             dmaType,
-                                                   uint32_t             soAddressLSB,
-                                                   uint32_t             size,
-                                                   uint64_t             destAddress,
-                                                   uint64_t             srcAddress,
-                                                   hcclRedOp_t          reduceOp,
-                                                   uint8_t              streamCtxtID,
-                                                   hcclDataType_t       dataType,
-                                                   uint32_t             poolId,
-                                                   bool                 isForScaleout,
-                                                   bool                 useCasting,
-                                                   uint32_t             numberOfRanks,
-                                                   uint32_t             numberOfReproBuffers,
-                                                   uint32_t             indexOfReproBuffer,
-                                                   bool                 is16BitMemcpy,
-                                                   uint32_t             secondSoAddress,
-                                                   bool                 isBFloat,
-						   bool                 useReductionInd)
+void SchedArcCommandsGaudi2::serializeDmaCommand(hcl::ScalStreamBase& scalStream,
+                                                 unsigned             schedIdx,
+                                                 uint32_t             dmaType,
+                                                 uint32_t             soAddressLSB,
+                                                 uint32_t             size,
+                                                 uint64_t             destAddress,
+                                                 uint64_t             srcAddress,
+                                                 hcclRedOp_t          reduceOp,
+                                                 uint8_t              streamCtxtID,
+                                                 hcclDataType_t       dataType,
+                                                 uint32_t             poolId,
+                                                 bool                 isForScaleout,
+                                                 bool                 useCasting,
+                                                 uint32_t             numberOfRanks,
+                                                 uint32_t             numberOfReproBuffers,
+                                                 uint32_t             indexOfReproBuffer,
+                                                 bool                 is16BitMemcpy,
+                                                 uint32_t             secondSoAddress,
+                                                 bool                 isBFloat,
+                                                 bool                 useReductionInd,
+                                                 uint32_t             memsetValue)
 {
     size_t sizeInBytes = sizeof(g2fw::sched_arc_cmd_nic_edma_ops_t);
-
-    if (dmaType == g2fw::NIC_EDMA_CMD_SIBO_OPS_V3)
+    switch (dmaType)
     {
-        sizeInBytes += sizeof(g2fw::arc_cmd_nic_edma_sibo_ops_v3_t);
-    }
-    else if (dmaType == g2fw::NIC_EDMA_CMD_LIN_OPS_V3)
-    {
-        sizeInBytes += sizeof(g2fw::arc_cmd_nic_edma_lin_ops_v3_t);
-    }
-    else if (dmaType == g2fw::NIC_EDMA_CMD_SIBO_MEMSET_V3)
-    {
-        sizeInBytes += sizeof(g2fw::arc_cmd_nic_edma_sibo_memset_v3_t);
-    }
-    else  // (dmaType == g2fw::NIC_EDMA_CMD_LIN_MEMSET_V3)
-    {
-        sizeInBytes += sizeof(g2fw::arc_cmd_nic_edma_lin_memset_v3_t);
+        case g2fw::NIC_EDMA_CMD_SIBO_OPS_V3:
+            sizeInBytes += sizeof(g2fw::arc_cmd_nic_edma_sibo_ops_v3_t);
+            break;
+        case g2fw::NIC_EDMA_CMD_LIN_OPS_V3:
+            sizeInBytes += sizeof(g2fw::arc_cmd_nic_edma_lin_ops_v3_t);
+            break;
+        case g2fw::NIC_EDMA_CMD_SIBO_MEMSET_V3:
+            sizeInBytes += sizeof(g2fw::arc_cmd_nic_edma_sibo_memset_v3_t);
+            break;
+        case g2fw::NIC_EDMA_CMD_LIN_MEMSET_V3_2:
+            sizeInBytes += sizeof(g2fw::arc_cmd_nic_edma_lin_memset_v3_2_t);
+            break;
+        default:
+            VERIFY(sizeInBytes != sizeof(g2fw::sched_arc_cmd_nic_edma_ops_t),
+                   "unsupported dmaType [{}] for {}",
+                   dmaType,
+                   __func__);
     }
 
     g2fw::sched_arc_cmd_nic_edma_ops_t* command =
@@ -481,7 +256,9 @@ void SchedArcCommandsGaudi2::serializeDmaCommandV3(hcl::ScalStreamBase& scalStre
          SCAL_EDMA_NETWORK_GC_REDUCTION_GROUP0,
          SCAL_EDMA_NETWORK_GC_REDUCTION_GROUP0,
          SCAL_EDMA_NETWORK_GC_REDUCTION_GROUP0,
-         SCAL_EDMA_NETWORK_GC_REDUCTION_GROUP0},  // dma scheduler
+         SCAL_EDMA_NETWORK_GC_REDUCTION_GROUP0,  // dma scheduler
+         0,
+         SCAL_EDMA_NETWORK_GC_REDUCTION_GROUP0},  // for scaleup_init command
         {SCAL_EDMA_NETWORK_SCALE_UP_SEND_GROUP0,
          SCAL_EDMA_NETWORK_SCALE_UP_SEND_GROUP0,
          0,
@@ -494,21 +271,22 @@ void SchedArcCommandsGaudi2::serializeDmaCommandV3(hcl::ScalStreamBase& scalStre
         {0, 0, 0, 0}};
 
     SET_FIELD(command->opcode, opcodes[schedIdx]);
-    if (dmaType == g2fw::NIC_EDMA_CMD_SIBO_OPS_V3)
+    switch (dmaType)
     {
-        SET_FIELD(command->cmd_size, sizeof(g2fw::arc_cmd_nic_edma_sibo_ops_v3_t) + sizeof(uint32_t));
-    }
-    else if (dmaType == g2fw::NIC_EDMA_CMD_LIN_OPS_V3)
-    {
-        SET_FIELD(command->cmd_size, sizeof(g2fw::arc_cmd_nic_edma_lin_ops_v3_t) + sizeof(uint32_t));
-    }
-    else if (dmaType == g2fw::NIC_EDMA_CMD_SIBO_MEMSET_V3)
-    {
-        SET_FIELD(command->cmd_size, sizeof(g2fw::arc_cmd_nic_edma_sibo_memset_v3_t) + sizeof(uint32_t));
-    }
-    else  // (dmaType == g2fw::NIC_EDMA_CMD_LIN_MEMSET_V3)
-    {
-        SET_FIELD(command->cmd_size, sizeof(g2fw::arc_cmd_nic_edma_lin_memset_v3_t) + sizeof(uint32_t));
+        case g2fw::NIC_EDMA_CMD_SIBO_OPS_V3:
+            SET_FIELD(command->cmd_size, sizeof(g2fw::arc_cmd_nic_edma_sibo_ops_v3_t) + sizeof(uint32_t));
+            break;
+        case g2fw::NIC_EDMA_CMD_LIN_OPS_V3:
+            SET_FIELD(command->cmd_size, sizeof(g2fw::arc_cmd_nic_edma_lin_ops_v3_t) + sizeof(uint32_t));
+            break;
+        case g2fw::NIC_EDMA_CMD_SIBO_MEMSET_V3:
+            SET_FIELD(command->cmd_size, sizeof(g2fw::arc_cmd_nic_edma_sibo_memset_v3_t) + sizeof(uint32_t));
+            break;
+        case g2fw::NIC_EDMA_CMD_LIN_MEMSET_V3_2:
+            SET_FIELD(command->cmd_size, sizeof(g2fw::arc_cmd_nic_edma_lin_memset_v3_2_t) + sizeof(uint32_t));
+            break;
+        default:
+            VERIFY(command->cmd_size != 0, "unsupported dmaType [{}] for {}", dmaType, __func__);
     }
 
     SET_FIELD(command->engine_group_type, groupEngine[schedIdx][dmaType]);
@@ -517,14 +295,15 @@ void SchedArcCommandsGaudi2::serializeDmaCommandV3(hcl::ScalStreamBase& scalStre
 
     if (dmaType == static_cast<uint32_t>(g2fw::NIC_EDMA_CMD_SIBO_OPS_V3))
     {
-        LOG_TRACE(HCL, "SchedArcCommandsGaudi2::serializeDmaCommandV3 First address(0x{:x})", soAddressLSB);
+        LOG_TRACE(HCL, "SchedArcCommandsGaudi2::serializeDmaCommand First address(0x{:x})", soAddressLSB);
         auto firstSoIdxBaseIdx        = getSoIdxBaseIdx(soAddressLSB);
-        LOG_TRACE(HCL, "SchedArcCommandsGaudi2::serializeDmaCommandV3 Second address(0x{:x})", secondSoAddress);
+        LOG_TRACE(HCL, "SchedArcCommandsGaudi2::serializeDmaCommand Second address(0x{:x})", secondSoAddress);
         auto secondSoIdxBaseIdx       = getSoIdxBaseIdx(secondSoAddress);
         struct g2fw::arc_cmd_nic_edma_sibo_ops_v3_t* edma_ops =
             (struct g2fw::arc_cmd_nic_edma_sibo_ops_v3_t*)&command->sibo_ops_v3;
 
-        SET_FIELD(edma_ops->reduction_op, getReductionOp(reduceOp));
+        auto reductionOpCode = getReductionOp(reduceOp);
+        SET_FIELD(edma_ops->reduction_op, reductionOpCode);
         SET_FIELD(edma_ops->sibo_index, (indexOfReproBuffer * numberOfReproBuffers));
         SET_FIELD(edma_ops->rank_count, (numberOfRanks - 1));
         SET_FIELD(edma_ops->rank_offset_in_sibo, (isForScaleout ? 1 : 0));
@@ -550,8 +329,8 @@ void SchedArcCommandsGaudi2::serializeDmaCommandV3(hcl::ScalStreamBase& scalStre
 
         LOG_TRACE(
             HCL_SUBMIT,
-            "Packets | Serializing sched_arc_cmd_nic_edma_ops_t command with arc_cmd_nic_edma_sibo_ops_v3_t. "
-            "sched: {}, Command[0-3]: 0x{:x}, 0x{:x}, 0x{:x}, sched: command address: 0x{:x}, sched_opcode: {}, "
+            "Packets | serializeDmaCommand with arc_cmd_nic_edma_sibo_ops_v3_t. "
+            "schedIdx:{}, Command[0-3]: 0x{:x}, 0x{:x}, 0x{:x}, command address: 0x{:x}, sched_opcode: {}, "
             "cmd_size:{} "
             "engine_group_type:{}, "
             "opcode:{}, sibo_index:{}, rank_offset_in_sibo:{}, "
@@ -602,8 +381,8 @@ void SchedArcCommandsGaudi2::serializeDmaCommandV3(hcl::ScalStreamBase& scalStre
     {
         struct g2fw::arc_cmd_nic_edma_lin_ops_v3_t* edma_ops =
             (struct g2fw::arc_cmd_nic_edma_lin_ops_v3_t*)&command->lin_ops_v3;
-
-        SET_FIELD(edma_ops->reduction_op, getReductionOp(reduceOp));
+        auto reductionOpCode = getReductionOp(reduceOp);
+        SET_FIELD(edma_ops->reduction_op, reductionOpCode);
         SET_FIELD(edma_ops->sob_address, (soAddressLSB & 0x7ffffff));
         SET_FIELD(edma_ops->opcode, dmaType);
         SET_FIELD(edma_ops->transfer_size, size);
@@ -618,8 +397,8 @@ void SchedArcCommandsGaudi2::serializeDmaCommandV3(hcl::ScalStreamBase& scalStre
         SET_FIELD(edma_ops->context_id, streamCtxtID);
 
         LOG_TRACE(HCL_SUBMIT,
-                  "Packets | Serializing sched_arc_cmd_nic_edma_ops_t command with arc_cmd_nic_edma_lin_ops_v3_t. "
-                  "sched: {}, Command[0-3]: 0x{:x}, 0x{:x}, 0x{:x}, sched: command address: 0x{:x}, sched_opcode: {}, "
+                  "Packets | serializeDmaCommand with arc_cmd_nic_edma_lin_ops_v3_t. "
+                  "schedIdx:{}, Command[0-3]: 0x{:x}, 0x{:x}, 0x{:x}, command address: 0x{:x}, sched_opcode: {}, "
                   "cmd_size:{} "
                   "engine_group_type:{}, "
                   "opcode:{}, "
@@ -665,11 +444,11 @@ void SchedArcCommandsGaudi2::serializeDmaCommandV3(hcl::ScalStreamBase& scalStre
         SET_FIELD(edma_ops->rank_offset_in_sibo, 0);
         SET_FIELD(edma_ops->pool_id, poolId);
         SET_FIELD(edma_ops->context_id, streamCtxtID);
-        SET_FIELD(edma_ops->memset_value, 0);
+        SET_FIELD(edma_ops->memset_value, memsetValue);
 
         LOG_TRACE(HCL_SUBMIT,
-                  "Packets | Serializing sched_arc_cmd_nic_edma_ops_t command with arc_cmd_nic_edma_sibo_memset_v3_t. "
-                  "sched: {}, Command[0-3]: 0x{:x}, 0x{:x}, 0x{:x}, sched: command address: 0x{:x}, sched_opcode: {}, "
+                  "Packets | serializeDmaCommand with arc_cmd_nic_edma_sibo_memset_v3_t. "
+                  "schedIdx:{} , Command[0-3]: 0x{:x}, 0x{:x}, 0x{:x}, command address: 0x{:x}, sched_opcode: {}, "
                   "cmd_size:{} "
                   "engine_group_type:{}, "
                   "opcode:{}, sibo_index:{}, rank_offset_in_sibo:{}, pool_id: {} , "
@@ -692,25 +471,30 @@ void SchedArcCommandsGaudi2::serializeDmaCommandV3(hcl::ScalStreamBase& scalStre
                   (uint32_t)edma_ops->memset_value,
                    *(scalStream.getStreamName()));
     }
-    else  //(dmaType == static_cast<uint32_t>(g2fw::NIC_EDMA_CMD_LIN_MEMSET_V3))
+    else  //(dmaType == static_cast<uint32_t>(g2fw::NIC_EDMA_CMD_LIN_MEMSET_V3_2))
     {
-        struct g2fw::arc_cmd_nic_edma_lin_memset_v3_t* edma_ops =
-            (struct g2fw::arc_cmd_nic_edma_lin_memset_v3_t*)&command->edma_lin_memset;
+        LOG_TRACE(HCL, "SchedArcCommandsGaudi2::serializeDmaCommandV3 First address(0x{:x})", soAddressLSB);
+        auto                                             firstSoIdxBaseIdx = getSoIdxBaseIdx(soAddressLSB);
+        struct g2fw::arc_cmd_nic_edma_lin_memset_v3_2_t* edma_ops =
+            (struct g2fw::arc_cmd_nic_edma_lin_memset_v3_2_t*)&command->edma_lin_memset;
+        auto comp_cfg = getCompCfg();
 
-        SET_FIELD(edma_ops->sob_address, (soAddressLSB & 0x7ffffff));
+        SET_FIELD(edma_ops->sob_base, (firstSoIdxBaseIdx.baseIdx & 0x7));
+        SET_FIELD(edma_ops->sob_index, (firstSoIdxBaseIdx.soIdx & 0x3ff));
         SET_FIELD(edma_ops->opcode, dmaType);
         SET_FIELD(edma_ops->transfer_size, size);
         SET_FIELD(edma_ops->dst_addr_lo, (destAddress & 0xffffffff));
         SET_FIELD(edma_ops->dst_addr_hi, (destAddress >> 32));
         SET_FIELD(edma_ops->context_id, streamCtxtID);
-        SET_FIELD(edma_ops->memset_value, 0);
+        SET_FIELD(edma_ops->memset_value, memsetValue);
         LOG_TRACE(HCL_SUBMIT,
-                  "Packets | Serializing sched_arc_cmd_nic_edma_ops_t command with arc_cmd_nic_edma_lin_memset_v3_t. "
-                  "sched: {}, Command[0-3]: 0x{:x}, 0x{:x}, 0x{:x}, sched: command address: 0x{:x}, sched_opcode: {}, "
+                  "Packets | serializeDmaCommand with arc_cmd_nic_edma_lin_memset_v3_2_t. "
+                  "schedIdx:{}, Command[0-3]: 0x{:x}, 0x{:x}, 0x{:x}, command address: 0x{:x}, sched_opcode: {}, "
+
                   "cmd_size:{} "
                   "engine_group_type:{}, "
                   "opcode:{}, "
-                  "sob_address:0x{:x}, transfer_size:{}, "
+                  "sob_address:0x{:x}, sob_base:{}, sob_index:{}, transfer_size:{}, "
                   "dstAddr:0x{:x}, dst_addr_lo:0x{:x}, dst_addr_hi:0x{:x}, memset_value:{} on stream:{}",
                   schedIdx,
                   *((uint32_t*)(command)),
@@ -721,13 +505,15 @@ void SchedArcCommandsGaudi2::serializeDmaCommandV3(hcl::ScalStreamBase& scalStre
                   command->cmd_size,
                   command->engine_group_type,
                   (uint32_t)edma_ops->opcode,
-                  (uint64_t)edma_ops->sob_address,
+                  (uint64_t)comp_cfg[edma_ops->sob_base].m_base + (uint64_t)edma_ops->sob_index * 4,
+                  (uint32_t)edma_ops->sob_base,
+                  (uint32_t)edma_ops->sob_index,
                   (uint32_t)edma_ops->transfer_size,
                   (uint64_t)destAddress,
                   (uint64_t)edma_ops->dst_addr_lo,
                   (uint64_t)edma_ops->dst_addr_hi,
                   (uint32_t)edma_ops->memset_value,
-                   *(scalStream.getStreamName()));
+                  *(scalStream.getStreamName()));
     }
 }
 
@@ -786,19 +572,27 @@ void SchedArcCommandsGaudi2::serializePdmaCommand(hcl::ScalStreamBase& scalStrea
     SET_FIELD(command->has_payload, 1);
     SET_FIELD(command->signal_to_cg, 0);
     SET_FIELD(command->reduction_ind, isReduction);
-    SET_FIELD(command->reduction_op, getReductionOp(reduceOp));
-    SET_FIELD(command->reduction_dtype, getReductionDataType(isCastUp, dataType));
+    auto reductionOpCode = getReductionOp(reduceOp);
+    SET_FIELD(command->reduction_op, reductionOpCode);
+    auto reductionDataType = getReductionDataType(isCastUp, dataType);
+    SET_FIELD(command->reduction_dtype, reductionDataType);
     SET_FIELD(command->pay_data, 0x80000001);
     SET_FIELD(command->pay_addr, sobAddr);  // should also indicate 4 bit for cg index
     SET_FIELD(command->batch_params->transfer_size, size);
     SET_FIELD(command->batch_count, batchCount);
     SET_FIELD(command->api_id, apiId);
-    SET_FIELD(command->stream_ctxt_id, getPdmaCtxtId(isDownload, streamIndex));
+    auto pdmaCtxtId = getPdmaCtxtId(isDownload, streamIndex);
+    SET_FIELD(command->stream_ctxt_id, pdmaCtxtId);
 
     if (command->has_payload)
     {
         VERIFY(!command->signal_to_cg, "both cannot be used at the same time");
     }
+
+    LOG_TRACE(HCL_SUBMIT,
+              "Packets | serializePDMACommand schedIdx:{}, on stream:{}",
+              schedIdx,
+              *(scalStream.getStreamName()));
 }
 
 uint8_t SchedArcCommandsGaudi2::getPdmaCtxtId(bool isDownload, unsigned streamIndex)
@@ -811,63 +605,12 @@ uint8_t SchedArcCommandsGaudi2::getPdmaCtxtId(bool isDownload, unsigned streamIn
            ((((uint8_t)streamIndex) & ContextEncoding::STREAM_MASK) << ContextEncoding::STREAM_OFFSET);
 }
 
-void SchedArcCommandsGaudi2::serializeGlobalDmaCommandV2(hcl::ScalStreamBase&                  scalStream,
-                                                         uint32_t                              soAddressLSB,
-                                                         const std::vector<sibAddressAndSize>& sibAddressesAndSizes,
-                                                         uint32_t                              engineType)
-{
-    size_t sizeInBytes = sizeof(g2fw::sched_arc_cmd_nic_edma_ops_t) +
-                         8 * sizeof(uint32_t);  // sched_arc_cmd_nic_edma_ops_t with arc_cmd_update_edma_nic_ctxt_v3_t
-                                                // and edma_nic_glbl_ctxt_v3_t
-
-    g2fw::sched_arc_cmd_nic_edma_ops_t* command =
-        reinterpret_cast<g2fw::sched_arc_cmd_nic_edma_ops_t*>(scalStream.getNextPtr(sizeInBytes));
-    memset(command, 0, sizeInBytes);
-
-    command->opcode            = g2fw::SCHED_GC_REDUCTION_ARC_CMD_NIC_EDMA_OPS;
-    command->cmd_size          = sizeInBytes;
-    command->engine_group_type = engineType;
-
-    struct g2fw::arc_cmd_update_edma_nic_ctxt_v3_t* edma_ops =
-        (struct g2fw::arc_cmd_update_edma_nic_ctxt_v3_t*)&command->edma_ctxt_v3;
-
-    edma_ops->opcode        = g2fw::NIC_EDMA_CMD_UPDATE_GLBL_CTXT_V3;
-    edma_ops->update_bitmap = 0x3F;
-    edma_ops->num_dwords    = 6;
-    edma_ops->sob_address   = 0;
-
-    struct g2fw::edma_nic_glbl_ctxt_v3_t* edma_ctxt = (struct g2fw::edma_nic_glbl_ctxt_v3_t*)&edma_ops->data;
-
-    edma_ctxt->sib_base_addr[0]    = sibAddressesAndSizes.at(0).sibBaseAddr;
-    edma_ctxt->sib_base_addr[1]    = sibAddressesAndSizes.at(1).sibBaseAddr;
-    edma_ctxt->sibo_rank_stride[0] = sibAddressesAndSizes.at(0).sibSize;
-    edma_ctxt->sibo_rank_stride[1] = sibAddressesAndSizes.at(1).sibSize;
-
-    LOG_TRACE(HCL_SUBMIT,
-              "Packets | serializeGlobalDmaCommand sched_arc_cmd_nic_edma_ops_t  |  command->opcode:{}, "
-              " command->engine_group_type:{}, command->cmd_size:{} "
-              "arc_cmd_update_edma_nic_ctxt_v3_t | opcode:{}, update_bitmap:{}, num_dwords:{} "
-              "edma_nic_glbl_ctxt_v3_t | baseAddress[0]:0x{:x}, sibo_rank_stride[0]:{}, baseAddress[1]:0x{:x}, "
-              "sibo_rank_stride[1]:{} on stream:{}",
-              command->opcode,
-              command->engine_group_type,
-              command->cmd_size,
-              edma_ops->opcode,
-              edma_ops->update_bitmap,
-              edma_ops->num_dwords,
-              ((struct g2fw::edma_nic_glbl_ctxt_v3_t*)(command->edma_ctxt_v3->data))->sib_base_addr[0],
-              ((struct g2fw::edma_nic_glbl_ctxt_v3_t*)(command->edma_ctxt_v3->data))->sibo_rank_stride[0],
-              ((struct g2fw::edma_nic_glbl_ctxt_v3_t*)(command->edma_ctxt_v3->data))->sib_base_addr[1],
-              ((struct g2fw::edma_nic_glbl_ctxt_v3_t*)(command->edma_ctxt_v3->data))->sibo_rank_stride[1],
-               *(scalStream.getStreamName()));
-}
-
-void SchedArcCommandsGaudi2::serializeGlobalDmaCommandV3(hcl::ScalStreamBase&                  scalStream,
-                                                         uint32_t                              soAddressLSB,
-                                                         const std::vector<sibAddressAndSize>& sibAddressesAndSizes,
-                                                         uint32_t                              fwStrideSize,
-                                                         uint64_t                              fwBaseAddress,
-                                                         uint32_t                              engineType)
+void SchedArcCommandsGaudi2::serializeGlobalDmaCommand(hcl::ScalStreamBase&                  scalStream,
+                                                       uint32_t                              soAddressLSB,
+                                                       const std::vector<sibAddressAndSize>& sibAddressesAndSizes,
+                                                       uint32_t                              fwStrideSize,
+                                                       uint64_t                              fwBaseAddress,
+                                                       uint32_t                              engineType)
 {
     const unsigned numDwords            = div(sizeof(g2fw::edma_nic_glbl_ctxt_v3_t), sizeof(uint32_t));
     const unsigned activateAllDwordsMap = (1 << numDwords) - 1;
@@ -904,7 +647,8 @@ void SchedArcCommandsGaudi2::serializeGlobalDmaCommandV3(hcl::ScalStreamBase&   
 
     for (int i = 0; i < 8; i++)
     {
-        SET_FIELD(edma_ctxt->comp_cfg[i], getCompCfg()[i].m_base);
+        auto compCfg = getCompCfg()[i].m_base;
+        SET_FIELD(edma_ctxt->comp_cfg[i], compCfg);
     }
 
     LOG_TRACE(
@@ -915,7 +659,7 @@ void SchedArcCommandsGaudi2::serializeGlobalDmaCommandV3(hcl::ScalStreamBase&   
         "edma_nic_glbl_ctxt_v3_t | baseAddress[0]:0x{:x}, sibo_rank_stride[0]:{}, baseAddress[1]:0x{:x}, "
         "sibo_rank_stride[1]:{}, fwBaseAddress:0x{:x}, sirb_size:{}, "
         "comp_cfg: [0]:0x{:x}, [1]:0x{:x}, [2]:0x{:x}, [3]:0x{:x}, [4]:0x{:x}, [5]:0x{:x}, "
-        "[6]:0x{:x}, [7]:0x{:x}, on stream {}",
+        "[6]:0x{:x}, [7]:0x{:x} on stream: {}",
         command->opcode,
         command->engine_group_type,
         command->cmd_size,
@@ -1107,7 +851,7 @@ void SchedArcCommandsGaudi2::serializeUpdateCollectiveContextCommand(hcl::ScalSt
     SET_FIELD(command->cmd_update_coll_ctxt.update_bitmap, 0);
 
     LOG_INFO(HCL_SUBMIT,
-             "Serializing a collective context update for collectiveContext = {}, "
+             "Packets | serializeCollectiveContextUpdate for collectiveContext = {}, "
              "(commDescIndex={}, {} dwords): on stream:{}",
              collectiveContextIndex,
              commDescIndex,
@@ -1244,22 +988,15 @@ void SchedArcCommandsGaudi2::serializeCollectiveRecvShortInOrderCommand(hcl::Sca
 
     SET_FIELD(cmd_coll_ops_short->cache_line_count, cacheLineCount);
     SET_FIELD(cmd_coll_ops_short->sob_index, syncObjectAddressIndex);
-    SET_FIELD(cmd_coll_ops_short->local_rank_index, (GCFG_HCL_USE_EDMA_COMMAND_V3.value() ? currentRank : 7));
+    SET_FIELD(cmd_coll_ops_short->local_rank_index, currentRank);
     SET_FIELD(cmd_coll_ops_short->comm_desc_index, commDescIndex);
     SET_FIELD(cmd_coll_ops_short->nic_opcode, 5);  // NIC_CMD_COLL_OPS_RECV_INORDER_V2
     SET_FIELD(cmd_coll_ops_short->coll_ctxt_id, collectiveContextIndex);
-    SET_FIELD(cmd_coll_ops_short->siba_index, accuIndex);  // TODORR: Change
-    SET_FIELD(cmd_coll_ops_short->sibo_index, rrIndex);    // TODORR: Change
+    SET_FIELD(cmd_coll_ops_short->siba_index, accuIndex);
+    SET_FIELD(cmd_coll_ops_short->sibo_index, rrIndex);
     SET_FIELD(cmd_coll_ops_short->num_ranks, 0);
     SET_FIELD(cmd_coll_ops_short->pool_id, poolId);
-
-    // TODO: uncomment once supported on FW side. numOfRanks;  // This one means how many ranks need to send to
-    // Accumulative buffer
     SET_FIELD(cmd_coll_ops_short->reduction_opcode, 0);
-    //          TODO: uncomment once num_ranks is supported on FW side.
-    //            numOfRanks > 0 ?
-    //            ((1 << 0) | (REDUCTION_UPSCALING_BF16 << 1) | (REDUCTION_OP_ADDITION << 5) |
-    //            (REDUCTION_ROUND_HALF_TO_NEAREST_EVEN << 7)) : 0;
 
     /**<
      * Reduction parameters to be used when accumulating data into
@@ -1438,7 +1175,7 @@ void SchedArcCommandsGaudi2::serializeCollectiveSendScaleOutCommand(hcl::ScalStr
     if (hasBufferSize)
     {
         // send_address’s size in bytes. The ARCs should not try to access a buffer past send_address + buffer_size.
-        // If not present, it’s inferred to be cell_size * pod_size.
+        // If not present, it’s inferred to be cell_size * scaleupGroupSize.
         std::memcpy(&command->cmd_coll_ops_scaleout.buffer_size, &bufferSize, sizeof(uint32_t));
         dwordIter++;
     }
@@ -1492,12 +1229,14 @@ void SchedArcCommandsGaudi2::serializeCollectiveSendScaleOutCommand(hcl::ScalStr
 
     LOG_TRACE(HCL_SUBMIT,
               "Packets | serializeCollectiveSendScaleOutCommand sched_arc_cmd_nic_coll_ops_scaleout_t  |  "
-              "command->opcode:{}, "
-              " command->engine_group_type:{}, command->cmd_size:{}, qpn_desc_count:{}, "
-              " cache_line_count:{}, cache_line_remainder:{}, element_remainder:{}, "
-              " sob_index:{}, has_size:{}, notify_rndv_ack:{}, wait_for_rndv_acks:{} coll_ctxt_id:{} nic_opcode:{}, "
-              " buffer_addr_lsb:0x{:x}, buffer_size:{}, "
-              " num_dwords_bitmask:{} update_bitmask:0x{:x} on stream:{}",
+              "size:{}, isSend:{}, (rsi, subnic0_qpn, subnic1_qpn, subnic2_qpn)=({},{},{},{}), "
+              "command->opcode:{}, command->engine_group_type:{}, command->cmd_size:{}, qpn_desc_count:{}, "
+              " cache_line_count:{}, cache_line_remainder:{}, element_remainder:{}, sob_index:{}, "
+              "has_size:{}, notify_rndv_ack:{}, wait_for_rndv_acks:{} coll_ctxt_id:{} nic_opcode:{}, "
+              " buffer_addr_lsb:0x{:x}, buffer_size:{}, num_dwords_bitmask:{} update_bitmask:0x{:x} on stream:{}",
+              size,
+              isSend,
+              qpnDesc[0], qpnDesc[1], qpnDesc[2], qpnDesc[3],
               command->opcode,
               command->engine_group_type,
               command->cmd_size,

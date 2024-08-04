@@ -45,31 +45,22 @@ public:
     virtual hcclResult_t             openQpsHlsScaleOut(HCL_Comm comm, const UniqueSortedVector& outerRanks) override;
     virtual void                     openWQs() override;
 
-    std::unique_ptr<QPManagerScaleUp>  m_qpManagerScaleUp  = nullptr;  // Needs late init in ctor after Hal
-    std::unique_ptr<QPManagerScaleOut> m_qpManagerScaleOut = nullptr;  // Needs late init in ctor after Hal
+    std::unique_ptr<QPManagerScaleUpGaudi3>  m_qpManagerScaleUp  = nullptr;  // Needs late init in ctor after Hal
+    std::unique_ptr<QPManagerScaleOutGaudi3> m_qpManagerScaleOut = nullptr;  // Needs late init in ctor after Hal
 
     virtual spHclNic allocateNic(uint32_t nic, uint32_t max_qps) override
     {
-        if (GCFG_HCL_USE_IBVERBS.value())
-        {
-            return std::make_shared<Gaudi3IBVNic>(this, nic, max_qps, isScaleOutPort(nic, SCALEOUT_SPOTLIGHT), getBackpressureOffset(nic));
-        };
-
-        return std::make_shared<Gaudi3Nic>(this, nic, max_qps, getBackpressureOffset(nic));
+        return std::make_shared<Gaudi3Nic>(this, nic, max_qps, isScaleOutPort(nic, SCALEOUT_SPOTLIGHT), getBackpressureOffset(nic));
     }
 
     Gaudi3Nic* getNic(uint32_t nic) { return (Gaudi3Nic*)m_hclNic[nic].get(); }
-    Gaudi3IBVNic* getIBVNic(uint32_t nic) { return (Gaudi3IBVNic*)m_hclNic[nic].get(); }
 
     uint32_t getNicToQpOffset(uint32_t nic)
     {
-        if (GCFG_HCL_USE_IBVERBS.value())
-        {
-            return getIBVNic(nic)->nic2QpOffset;
-        }
-
         return getNic(nic)->nic2QpOffset;
     }
+
+    virtual void closeScaleoutQPs(HCL_Comm comm, const UniqueSortedVector& ranks);
 
 protected:
     uint32_t     createQp(uint32_t nic, unsigned qpId, uint32_t coll_qpn);

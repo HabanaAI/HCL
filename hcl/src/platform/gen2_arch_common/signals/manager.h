@@ -12,8 +12,6 @@
 class HclGraphSyncGen2Arch;
 class Gen2ArchScalUtils;
 
-static constexpr unsigned MAX_CACHED_GRAPHS = 4096;
-
 class SignalsManager
 {
 private:
@@ -80,7 +78,7 @@ public:
     SignalsManager(HclGraphSyncGen2Arch& graphSync, Gen2ArchScalUtils* utils, unsigned cgSize, unsigned archStream);
     virtual ~SignalsManager() = default;
 
-    void initialize(CommonState* commonState);
+    void initialize(CommonState* commonState, uint64_t cuid);
     void finalize(bool entireCollective = false);
     void finalize(WaitEvent waitEvent);
 
@@ -96,9 +94,9 @@ public:
     uint32_t enqueueInternalCompletion(SignalEvent signalEvent);
 
     void allocateResources();
-    void updateCompletionTracker(uint64_t targetValue);
+    void updateCompletionTracker(uint64_t targetValue, uint64_t cuid);
     void printGraph();
-    bool isGraphLoaded() { return !m_graph->m_firstUse; }
+    bool isGraphLoaded() { return !m_graph->m_firstUse && !m_graph->m_firstCollective; }
 
     unsigned getNumSignalsForCompletion() const;
     unsigned getNumSignalsForInternal() const;
@@ -129,7 +127,7 @@ private:
         std::array<bool, (unsigned)WaitMethod::WAIT_METHOD_MAX> m_methodsToClean {};
 
         bool m_firstUse    = true;
-        bool m_hasLongterm = false;
+        bool m_firstCollective = true;
 
         // max number phases based on communicator size
         uint64_t m_maxPhases = 0;
@@ -142,9 +140,9 @@ private:
 
     bool isCachingRequired(CommonState& commonState);
     bool updateGraph(uint64_t cuid, CommonState* commonState);
-    bool isCacheAvailable(CommonState* commonState);
     void handleLongtermOnGraphSwitch(bool created, Graph* oldGraph);
-    void resetUncachedGraph();
+    void updateEventsOnLongterm(Graph* oldGraph);
+    void resetGraph();
 
     std::unordered_map<uint64_t, Graph> m_cache;
     Graph*                              m_graph = nullptr;
@@ -152,6 +150,7 @@ private:
     bool                                m_usingCache = false;
 
     std::vector<std::array<SyncObjectDescriptor, (unsigned)WaitMethod::WAIT_METHOD_MAX>> m_completionTracker;
+    std::vector<uint64_t> m_cuidTracker;
 
     HclGraphSyncGen2Arch&     m_graphSync;
     Gen2ArchScalUtils*    m_utils;
@@ -160,10 +159,9 @@ private:
     unsigned                  m_archStream;
 
     CommonState* m_commonState = nullptr;
-    HCL_CollectiveOp m_prevCollective = eHCLNoCollective;
+    int          m_prevIteration = -1;
 
     bool hasWaitEvent(WaitEvent waitEvent) const;
-    bool isReusableEvent(WaitEvent waitEvent) const;
     bool isNextReusable(WaitMethod method, int phase, Graph* graph) const;
 
     unsigned getNumSignals(WaitMethod waitMethod) const;

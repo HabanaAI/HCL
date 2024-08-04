@@ -1,41 +1,41 @@
 #pragma once
 
-#include <arpa/inet.h>                  // for inet_ntoa, inet_pton
-#include <netinet/ether.h>              // for ether_aton
-#include <cerrno>                       // for errno
-#include <fcntl.h>                      // for open, O_RDWR
-#include <linux/if_ether.h>             // for ETH_ALEN
-#include <netdb.h>                      // for gethostbyname, hostent
-#include <cstdio>                       // for printf, sprintf, sscanf
-#include <cstring>                      // for strrchr, memcpy
-#include <sys/mman.h>                   // for PROT_READ, PROT_WRITE, mmap
-#include <sys/socket.h>                 // for AF_INET
-#include <unistd.h>                     // for close, usleep, gethostname
-#include <algorithm>                    // for min
-#include <chrono>                       // for nanoseconds, steady_clock
-#include <cstdint>                      // for uint8_t, uint32_t, uint64_t
-#include <cstdlib>                      // for getenv, size_t, strtoul, NULL
-#include <exception>                    // for terminate
-#include <iomanip>                      // for operator<<, setprecision, setw
-#include <iostream>                     // for operator<<, basic_ostream
-#include <fstream>                      // for fstream
-#include <string>                       // for allocator, operator+, string
-#include <unordered_set>                // for unordered_set, unordered_set...
-#include <vector>                       // for vector
-#include <future>                       // for future
-#include "infra/futex.h"                // for Futex
-#include "hccl_types.h"                 // for hcclResult_t
-#include "hcl_api_types.h"              // for HCL_CollectiveOp
-#include "hccl_types.h"                 // for hcclInternalError
-#include "hcl_exceptions.h"             // for VerifyException
-#include "hcl_global_conf.h"            // for GCFG_HCL_ALIVE_ON_FAILURE
-#include "hcl_types.h"                  // for HCL_MAC_BYTE_SIZE, SRAM_REDU...
-#include "hcl_log_manager.h"            // for LOG_ERR, LogManager, LOG_CRI...
-#include "version.h"                    // for HL_DRIVER_MAJOR, HL_DRIVER_M...
+#include <arpa/inet.h>        // for inet_ntoa, inet_pton
+#include <netinet/ether.h>    // for ether_aton
+#include <cerrno>             // for errno
+#include <fcntl.h>            // for open, O_RDWR
+#include <linux/if_ether.h>   // for ETH_ALEN
+#include <netdb.h>            // for gethostbyname, hostent
+#include <cstdio>             // for printf, sprintf, sscanf
+#include <cstring>            // for strrchr, memcpy
+#include <sys/mman.h>         // for PROT_READ, PROT_WRITE, mmap
+#include <sys/socket.h>       // for AF_INET
+#include <unistd.h>           // for close, usleep, gethostname
+#include <algorithm>          // for min
+#include <chrono>             // for nanoseconds, steady_clock
+#include <cstdint>            // for uint8_t, uint32_t, uint64_t
+#include <cstdlib>            // for getenv, size_t, strtoul, NULL
+#include <exception>          // for terminate
+#include <iomanip>            // for operator<<, setprecision, setw
+#include <iostream>           // for operator<<, basic_ostream
+#include <fstream>            // for fstream
+#include <string>             // for allocator, operator+, string
+#include <unordered_set>      // for unordered_set, unordered_set...
+#include <vector>             // for vector
+#include <future>             // for future
+#include "infra/futex.h"      // for Futex
+#include "hccl_types.h"       // for hcclResult_t
+#include "hcl_api_types.h"    // for HCL_CollectiveOp
+#include "hccl_types.h"       // for hcclInternalError
+#include "hcl_exceptions.h"   // for VerifyException
+#include "hcl_global_conf.h"  // for GCFG_HCL_ALIVE_ON_FAILURE
+#include "hcl_types.h"        // for HCL_MAC_BYTE_SIZE, SRAM_REDU...
+#include "hcl_log_manager.h"  // for LOG_ERR, LogManager, LOG_CRI...
+#include "version.h"          // for HL_DRIVER_MAJOR, HL_DRIVER_M...
 #include <cxxabi.h>
 
-#include "internal/dfa_defines.hpp"     // for DfaPhase
-#include "internal/hcl_api.hpp"         // for hclNotifyFailure
+#include "internal/dfa_defines.hpp"  // for DfaPhase
+#include "internal/hcl_api.hpp"      // for hclNotifyFailure
 
 #define IS_DEVICE_GAUDI2(deviceType)   (deviceType == synDeviceGaudi2)
 #define IS_DEVICE_GAUDI3(deviceType)   (deviceType == synDeviceGaudi3)
@@ -68,30 +68,29 @@
  * }
  */
 extern volatile hcclResult_t g_status;
-extern          DfaPhase     g_dfaPhase;
-extern          std::mutex   g_dfaMutex;
-
+extern DfaPhase              g_dfaPhase;
+extern std::mutex            g_dfaMutex;
 
 #define LOG_HCL_COMMON                                                                                                 \
     static std::string __class__;                                                                                      \
-    static bool        hasDemangled = false;                                                                           \
-    if (!hasDemangled)                                                                                                 \
+    static bool        __hasDemangled = false;                                                                         \
+    if (!__hasDemangled)                                                                                               \
     {                                                                                                                  \
-        static FutexLock            futex;                                                                             \
-        std::unique_lock<FutexLock> lk(futex);                                                                         \
-        int                         status;                                                                            \
-        size_t                      size   = 128;                                                                      \
-        char*                       buffer = static_cast<char*>(std::malloc(size));                                    \
-        VERIFY(nullptr != abi::__cxa_demangle(typeid(*this).name(), buffer, &size, &status),                           \
+        static FutexLock            __futex;                                                                           \
+        std::unique_lock<FutexLock> __lk(__futex);                                                                     \
+        int                         __status;                                                                          \
+        size_t                      __size   = 128;                                                                    \
+        char*                       __buffer = static_cast<char*>(std::malloc(__size));                                \
+        VERIFY(nullptr != abi::__cxa_demangle(typeid(*this).name(), __buffer, &__size, &__status),                     \
                "Demangling typeid().name() failed");                                                                   \
-        __class__  = std::string(buffer);                                                                              \
-        size_t pos = __class__.find('<');                                                                              \
-        if (pos != std::string::npos)                                                                                  \
+        __class__    = std::string(__buffer);                                                                          \
+        size_t __pos = __class__.find('<');                                                                            \
+        if (__pos != std::string::npos)                                                                                \
         {                                                                                                              \
-            __class__ = std::string(buffer).substr(0, pos);                                                            \
+            __class__ = std::string(__buffer).substr(0, __pos);                                                        \
         }                                                                                                              \
-        std::free(buffer);                                                                                             \
-        hasDemangled = true;                                                                                           \
+        std::free(__buffer);                                                                                           \
+        __hasDemangled = true;                                                                                         \
     }
 
 /**
@@ -138,9 +137,9 @@ public:
         }
     }
 
-    LogContext(LogContext&)  = delete;
-    LogContext(LogContext&&) = delete;
-    LogContext& operator=(LogContext&) = delete;
+    LogContext(LogContext&)             = delete;
+    LogContext(LogContext&&)            = delete;
+    LogContext& operator=(LogContext&)  = delete;
     LogContext& operator=(LogContext&&) = delete;
 
 private:
@@ -148,7 +147,10 @@ private:
 };
 
 #define LOG_CONTEXT_INIT(log_type)                                                                                     \
-    LogContext _log_context { HLLOG_ENUM_TYPE_NAME::log_type }
+    LogContext _log_context                                                                                            \
+    {                                                                                                                  \
+        HLLOG_ENUM_TYPE_NAME::log_type                                                                                 \
+    }
 #define LOG_HCL_CONTEXT_TRACE(log_type, msg, ...)                                                                      \
     _HCL_LOG_(TRACE, log_type, msg, ##__VA_ARGS__);                                                                    \
     LOG_CONTEXT_INIT(log_type)
@@ -383,7 +385,6 @@ private:
                                   ##__VA_ARGS__);                                                                      \
     } while (false)
 
-
 #define VERIFY_1(dfa, dfaMsg, condition) VERIFY_2(dfa, dfaMsg, condition, "")
 #define VERIFY_2(dfa, dfaMsg, condition, msg)                                                                          \
     do                                                                                                                 \
@@ -422,7 +423,9 @@ private:
     } while (false)
 
 #define VERIFY_n(dfa, dfaMsg, condition, str, ...)                                                                     \
-    VERIFY_2(dfa, dfaMsg, condition,                                                                                   \
+    VERIFY_2(dfa,                                                                                                      \
+             dfaMsg,                                                                                                   \
+             condition,                                                                                                \
              fmt::format(FMT_COMPILE(str) HLLOG_APPLY_WITH_LEADING_COMMA(HLLOG_DUPLICATE_PARAM, ##__VA_ARGS__)))
 
 /* The following is a macro trick that allows you to write a macro with a varying number of arguments. It's needed
@@ -434,8 +437,8 @@ private:
 #define VERIFY_X(x, A, B, C, D, E, F, G, I, J, K, L, M, FUNC, ...) FUNC
 
 #define VERIFY(...)                            VERIFYX(false, "", __VA_ARGS__)
-#define VERIFY_DFA(...)                        VERIFYX(true,  "", __VA_ARGS__)
-#define VERIFY_DFA_MSG(condition, dfaMsg, ...) VERIFYX(true,  dfaMsg, condition, __VA_ARGS__)
+#define VERIFY_DFA(...)                        VERIFYX(true, "", __VA_ARGS__)
+#define VERIFY_DFA_MSG(condition, dfaMsg, ...) VERIFYX(true, dfaMsg, condition, __VA_ARGS__)
 
 #define VERIFYX(dfa, dfaMsg, ...)                                                                                      \
     VERIFY_X(,                                                                                                         \
@@ -496,7 +499,7 @@ private:
 
 #define HCL_API_RETURN_IF_ADDR_INVALID(addr)                                                                           \
     {                                                                                                                  \
-        bool valid = hccl_device()->isDramAddressValid(addr);                                                  \
+        bool valid = hccl_device()->isDramAddressValid(addr);                                                          \
         if (!valid)                                                                                                    \
         {                                                                                                              \
             LOG_ERR(HCL, "{}: The ADDR [ {} ] is INVALID.", __func__, #addr);                                          \
@@ -516,7 +519,6 @@ private:
             X;                                                                                                         \
         }                                                                                                              \
     }
-
 
 inline bool checkReductionOp(hcclRedOp_t reduceOp)
 {
@@ -574,7 +576,7 @@ inline unsigned dataTypeSizeInBytes(hcclDataType_t type, bool packed = false)
         }                                                                                                              \
     }
 
-#define HCCL_TRY                                                                                                        \
+#define HCCL_TRY                                                                                                       \
     if (g_dfaPhase == DfaPhase::STARTED)                                                                               \
     {                                                                                                                  \
         std::unique_lock<std::mutex> lck(g_dfaMutex); /* hold api until dfa finished collecting info */                \
@@ -585,7 +587,6 @@ inline unsigned dataTypeSizeInBytes(hcclDataType_t type, bool packed = false)
     }                                                                                                                  \
     try                                                                                                                \
     {
-
 #define HCL_API_EXIT(status)                                                                                           \
     if (g_dfaPhase == DfaPhase::STARTED)                                                                               \
     {                                                                                                                  \
@@ -649,8 +650,8 @@ inline int64_t getEnvInt(const char* s, int64_t val = 0)
 inline std::string ip2str(uint32_t ip)
 {
     struct in_addr addr;
-    addr.s_addr = ip; // s_addr must be in network byte order
-    return inet_ntoa(addr); // --> "10.1.2.3"
+    addr.s_addr = ip;        // s_addr must be in network byte order
+    return inet_ntoa(addr);  // --> "10.1.2.3"
 }
 
 // Extend std namespace
@@ -696,7 +697,8 @@ inline std::string getHLDevice(int fd)
 inline uint64_t parseMac(const std::string& in)
 {
     struct ether_addr* addr = ether_aton(in.c_str());
-    if (addr == NULL) {
+    if (addr == NULL)
+    {
         return -1;
     }
 
@@ -768,7 +770,6 @@ void* alloc_and_map_to_device(size_t    length,
 
 void free_mem_mapped_to_device(void* hostAddr, int length, uint64_t deviceHandle = 0, int fd = -1);
 
-
 extern const char* HCL_VERSION_HEAD;
 
 // Should be used only for initialization step
@@ -789,41 +790,24 @@ inline void hclPrintVersionToLog()
         bPrinted = true;
 
         LOG_INFO_F(HCL,
-                   "Version:\t{}.{}.{}-{}",
+                   "Version:\t{}.{}.{}",
                    HL_DRIVER_MAJOR,
                    HL_DRIVER_MINOR,
-                   HL_DRIVER_PATCHLEVEL,
-                   HCL_VERSION_HEAD);
+                   HL_DRIVER_PATCHLEVEL);
     }
 }
 extern "C" {
 __attribute__((__visibility__("default"))) void getHclVersion(char* pVersion, const unsigned len);
 }
 
-//A macro for not using parameters / members but not getting warned about it.
+// A macro for not using parameters / members but not getting warned about it.
 #define UNUSED(x) ((void)x)
-
-inline uint64_t getBoxToPodSize(std::string boxType)
-{
-    static std::map<std::string, uint64_t> BOX_TYPE_TO_POD = {{"BACK_2_BACK", 8},
-                                                              {"LOOPBACK", 8},
-                                                              {"RING", 8},
-                                                              {"HLS1", 8},
-                                                              {"OCP1", 8},
-                                                              {"HLS1-H", 16},
-                                                              {"HLS2", 8},
-                                                              {"HLS3", 8},
-                                                              {"HLS3PCIE", 4},
-                                                              {"UNKNOWN", 8},
-                                                              {"SWITCH", 8}};
-    return BOX_TYPE_TO_POD[boxType];
-}
 
 void dumpStack(int s);
 #define HCL_DUMP_STACK() dumpStack(0)
 
 std::string getMemoryInfo();
-#define HCL_MEM_STATS() LOG_ERR(HCL, "{}:{} - {}", __FILE__ ,__LINE__ , getMemoryInfo())
+#define HCL_MEM_STATS() LOG_ERR(HCL, "{}:{} - {}", __FILE__, __LINE__, getMemoryInfo())
 
 /**
  * @brief Get current Process Memory Consumption In GB
@@ -837,12 +821,12 @@ float getProcMemConsInGB();
  *        should be called from hccl API level only
  *        assuming hccl_ctx and comm are defined in calling code
  */
-#define HCL_COLLECTIVE_LOG(op, count, dtype, reduce, peer, root)                                                \
-    {                                                                                                           \
-        if (unlikely((GCFG_HCL_COLLECTIVE_LOG.value() == true)))                                                \
-        {                                                                                                       \
-            hccl_ctx.communicator(comm)->getCoordClient()->sendCollectiveLog(op,count,dtype,reduce,peer,root);  \
-        }                                                                                                       \
+#define HCL_COLLECTIVE_LOG(op, count, dtype, reduce, peer, root)                                                       \
+    {                                                                                                                  \
+        if (unlikely((GCFG_HCL_COLLECTIVE_LOG.value() == true)))                                                       \
+        {                                                                                                              \
+            hccl_ctx.communicator(comm)->getCoordClient()->sendCollectiveLog(op, count, dtype, reduce, peer, root);    \
+        }                                                                                                              \
     }
 
 /**

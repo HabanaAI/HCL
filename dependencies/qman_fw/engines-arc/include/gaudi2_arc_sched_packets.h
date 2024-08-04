@@ -31,9 +31,10 @@ enum sched_compute_arc_cmd_opcode_t {
 	SCHED_COMPUTE_ARC_CMD_DISPATCH_COMPUTE_ECB_LIST_V3 = 7,
 	SCHED_COMPUTE_ARC_CMD_PDMA_BATCH_TRANSFER = 8,
 	SCHED_COMPUTE_ARC_CMD_UPDATE_RECIPE_BASE_V2 = 9,
-	SCHED_COMPUTE_ARC_CMD_LBW_READ = 10,			// TODO: Only in Debug
-	SCHED_COMPUTE_ARC_CMD_MEM_FENCE = 11,			// TODO: Only in Debug
-	SCHED_COMPUTE_ARC_CMD_COUNT = 12,
+	SCHED_COMPUTE_ARC_CMD_WAIT_FOR_EXT_SIGNAL = 10,
+	SCHED_COMPUTE_ARC_CMD_LBW_READ = 11,			// TODO: Only in Debug
+	SCHED_COMPUTE_ARC_CMD_MEM_FENCE = 12,			// TODO: Only in Debug
+	SCHED_COMPUTE_ARC_CMD_COUNT = 13,
 	SCHED_COMPUTE_ARC_CMD_SIZE = 0x1F
 };
 /**
@@ -637,6 +638,27 @@ struct sched_arc_cmd_alloc_barrier_v2_t {
 	 */
 } __attribute__ ((aligned(4), __packed__));
 
+/**<
+ * Max number of fence IDs that can be accomodated in a single fence_id_arr element
+ */
+#define FENCE_ID_COUNT_IN_ARR_ELEMENT	4
+
+/**<
+ * Max fence count that can be accomodated in a single alloc nic barrier command
+ */
+#define MAX_FENCE_COUNT_IN_ALLOC_NIC_BARRIER	7
+
+/**
+ * \struct  sched_arc_fence_id_arr_t
+ * \brief   array of fence IDs used in Alloc nic barrier command
+ * \details fence Ids that are sent to the device as a part of alloc nic
+ *          barrier command are sent via the above structure. These fence
+ *          ids are incremented
+ */
+struct sched_arc_fence_id_arr_t {
+	uint8_t fence_id[FENCE_ID_COUNT_IN_ARR_ELEMENT];
+} __attribute__ ((aligned(4), __packed__));
+
 /**
  * \struct  sched_arc_cmd_alloc_nic_barrier_t
  * \brief   allocate NIC barrier
@@ -646,18 +668,31 @@ struct sched_arc_cmd_alloc_barrier_v2_t {
 struct sched_arc_cmd_alloc_nic_barrier_t {
 	uint32_t opcode:5;
 	/**< opcode of the command = SCHED_ARC_CMD_ALLOC_NIC_BARRIER */
-	uint32_t comp_group_index:8;
+	uint32_t comp_group_index:4;
 	/**<
 	 * Completion Group index. Index bettween 0 to
 	 * (COMP_GROUP_COUNT - 1)
 	 */
-	uint32_t required_sobs:14;
+	uint32_t fence_count:4;
+	/**<
+	 * No of fences that needs to be incremented.
+	 * Count can be between 0 to 7
+	 */
+	uint32_t required_sobs:7;
 	/**<
 	 * required number of sobs to be allocated
 	 */
-	uint32_t reserved:5;
+	uint32_t cmd_size_bytes:4;
 	/**<
-	 * reserved
+	 * Size of command in bytes
+	 */
+	uint32_t rsvd:8;
+	/**<
+	 * Reserved
+	 */
+	struct sched_arc_fence_id_arr_t fence_arr[0];
+	/**<
+	 * array of fence Ids. Each element can contain upto 4 fence IDs
 	 */
 } __attribute__ ((aligned(4), __packed__));
 
@@ -768,18 +803,31 @@ struct sched_arc_cmd_lbw_read_t {
 struct sched_arc_cmd_lbw_write_t {
 	uint32_t opcode:5;
 	/**< opcode of the command = SCHED_ARC_CMD_LBW_WRITE */
-	uint32_t reserved:25;
+	uint32_t fence:1;
 	/**<
-	 * Reserved
+	 * flag to indicate if firmware needs to do fence wait
 	 */
+	uint32_t fence_id:6;
+	/**<
+	 * fence id on which fence wait needs to be done. Valid only if
+	 * fence is true
+	 */
+	uint32_t target:6;
+	/**< target value of the fence */
 	uint32_t block_next:1;
 	/**<
 	 * Block execution of next command by putting the stream into
 	 * suspended state
+	 * TODO: Remove this
 	 */
 	uint32_t wait_for_completion:1;
 	/**<
 	 * Wait until current write is completed
+	 * TODO: Remove this
+	 */
+	uint32_t reserved:12;
+	/**<
+	 * Reserved
 	 */
 	uint32_t dst_addr;
 	/**<
@@ -1138,8 +1186,8 @@ struct sched_arc_cmd_nic_edma_ops_t {
 	struct arc_cmd_nic_edma_ops_cdc_t edma_cdc[0];
 	struct arc_cmd_nic_edma_lin_ops_v3_t lin_ops_v3[0];
 	struct arc_cmd_nic_edma_lin_memset_v3_t edma_lin_memset[0];
+	struct arc_cmd_nic_edma_lin_memset_v3_2_t edma_linear_memset[0];
 	struct arc_cmd_nic_edma_sibo_memset_v3_t sibo_memset_v3[0];
-	struct arc_cmd_nic_edma_sibo_memset_v3_2_t sibo_memset_v3_2[0];
 	struct arc_cmd_nic_edma_sibo_ops_v3_t sibo_ops_v3[0];
 	/**<
 	 * NIC EDMA command payload that needs to be dispatched
@@ -1173,5 +1221,44 @@ struct sched_arc_cmd_nic_coll_ops_scaleout_t {
 	 */
 	struct arc_cmd_coll_ops_scaleout_t cmd_coll_ops_scaleout;
 } __attribute__ ((aligned(4), __packed__));
+
+
+/**
+ * \struct  sched_arc_cmd_wait_for_ext_signal_t
+ * \brief   wait for external signal
+ * \details adds wait to an array of engine group types for external signal
+ */
+struct sched_arc_cmd_wait_for_ext_signal_t {
+	uint32_t opcode:5;
+	/**< opcode of the command = SCHED_ARC_CMD_WAIT_FOR_EXT_SIGNAL */
+	uint32_t sob_id:13;
+	uint32_t sm_id:2;
+	/**<
+	 * SOB related info, for monitor arming
+	 */
+	uint32_t num_engine_group_type:8;
+	/**<
+	 * Number of engine group types to which the external signal needs
+	 * to be sent
+	 */
+	uint32_t reserved:4;
+	/**< reserved */
+	union {
+		struct {
+			uint64_t target_value0:15;
+			uint64_t target_value1:15;
+			uint64_t target_value2:15;
+			uint64_t target_value3:15;
+			uint64_t reserved0:4;
+		} __attribute__ ((aligned(4), __packed__));
+		uint64_t target_value;
+	};
+	uint8_t engine_group_type[4];
+	/**<
+	 * Array of engine group types to which the external signal needs
+	 * to be sent
+	 */
+} __attribute__ ((aligned(4), __packed__));
+
 
 #endif /* __GAUDI2_ARC_SCHED_PACKETS_H__ */

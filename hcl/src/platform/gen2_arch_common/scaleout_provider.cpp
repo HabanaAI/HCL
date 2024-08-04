@@ -153,7 +153,7 @@ void Gen2ArchScaleoutProvider::calculateScaleoutRecvResources(SliceState& sliceS
         {
             if (sliceState.m_collectiveOp == eHCLBroadcast)
             {
-                unsigned     nextBox   = getNextBox(sliceState.m_dynamicComm.getMyPod(), sliceState.m_boxIterations);
+                unsigned     nextBox   = getNextBox(sliceState.m_dynamicComm.getMyScaleupGroup(), sliceState.m_boxIterations);
                 unsigned int numFences = (nextBox == sliceState.rootBox()) ? 1 : 2;
                 signalsManager.enqueueWait(waitEvent, {signalEvent}, waitMethod, 0, numFences);
             }
@@ -231,24 +231,24 @@ void Gen2ArchScaleoutProvider::updateConnectionsNonPeer(const HCL_Comm          
 
 void Gen2ArchScaleoutProvider::closeConnections(HCL_Comm comm)
 {
-    const unsigned myBox = m_device->getComm(comm).getMyPod();
+    const unsigned myBox = m_device->getComm(comm).getMyScaleupGroup();
 
     LOG_HCL_TRACE(HCL, "Started, comm={}, myBox={}", comm, myBox);
     UniqueSortedVector allOuterRank;
     for (const HCL_Rank rank : m_device->getOpenScaleOutRanks(comm))
     {
-        if (m_device->getComm(comm).getRankToPodMap()[rank] != myBox)
+        if (m_device->getComm(comm).getRankToScaleupGroupMap()[rank] != myBox)
         {
             LOG_HCL_TRACE(HCL, "Need to close comm={}, outer rank={}", comm, rank);
             allOuterRank.insert_sorted(rank);
         }
     }
-    m_device->closeQps(comm, allOuterRank);
+    m_device->closeScaleoutQPs(comm, allOuterRank);
 }
 
 unsigned Gen2ArchScaleoutProvider::getNumOfNicsPerDevice(unsigned spotlightType) const
 {
-    return ((Gen2ArchDevicePortMapping&)m_device->getPortMapping()).getNumScaleOutPorts(spotlightType);
+    return (m_device->getPortMapping()).getNumScaleOutPorts(spotlightType);
 }
 
 LibfabricScaleoutProvider::LibfabricScaleoutProvider(HclDeviceGen2Arch* device)
@@ -559,7 +559,7 @@ void LibfabricScaleoutProvider::requestScaleoutResources(SliceState& sliceState,
         else if (sliceState.m_collectiveOp == eHCLBroadcast && sliceState.m_currentOp == eHCLScatter)
         {
             WaitPhase waitPhase = isGaudiDirect() ? 0 : 1;
-            unsigned     nextBox   = getNextBox(sliceState.m_dynamicComm.getMyPod(), sliceState.m_boxIterations);
+            unsigned     nextBox   = getNextBox(sliceState.m_dynamicComm.getMyScaleupGroup(), sliceState.m_boxIterations);
             unsigned int numFences = 1;
             if (isGaudiDirect() && (nextBox != sliceState.rootBox()))
             {

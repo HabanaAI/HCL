@@ -10,6 +10,7 @@ public:
     virtual ~WqeTrackerGaudi2() = default;
 
     void              incWqe(const HCL_Comm commId, const unsigned rank, const QpType qpType) override;
+    void              resizeDB(const HCL_Comm commId) override;
     WqeWraparoundBits getWqeWraparoundBits(HCL_Comm commId, unsigned rank, QpType qpType) override;
 
 private:

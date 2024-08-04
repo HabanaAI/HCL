@@ -172,6 +172,12 @@ struct engine_config_t {
 	 * Monitor ID that should be used by this engine for back to back
 	 * execution
 	 */
+	uint32_t ext_sig_mon_start_id;
+	/*
+	 * Monitor start ID used for Ext signal monitor, Starting from here
+	 * 4 Mons are used by the engine (used as long monitor). This is used
+	 * to update EXT_SIG_FENCE
+	 */
 	uint32_t tpc_nop_kernel_addr_lo;
 	/**<
 	 * Lower 32 bit address of TPC NOP kernel
@@ -210,6 +216,13 @@ struct engine_config_t {
 	 * SOB Start ID for compute completion groups
 	 * This is used for configuring the monitor which is used for
 	 * serializing compute workload
+	 */
+	uint32_t long_mon_wa_dummy_sob;
+	/**<
+	 * For long monitor, it is required to write one extra dummy message
+	 * (as w/a for SM bug H6-3342)
+	 * So this dummy message will be written to long_mon_wa_dummy_sob.
+	 * It is fixed for gaudi3.
 	 */
 	uint32_t cmpt_csg_sob_id_count;
 	/**<

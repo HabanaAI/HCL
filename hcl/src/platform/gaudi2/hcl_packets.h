@@ -12,23 +12,9 @@
 #include "platform/gen2_arch_common/host_stream.h"
 #include "hcl_api_types.h"
 #include "platform/gen2_arch_common/device_buffer_manager.h"
+#include "platform/gen2_arch_common/commands/hcl_commands_types.h"
 #include "platform/gaudi2/nic_passthrough_handler.h"  // for pRecordWithMetadata
 #include "platform/gaudi2/context_manager.h"
-
-#ifdef NDEBUG
-#define SET_FIELD(field, value)                                                                                        \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        (field) = (value);                                                                                             \
-    } while (0);
-#else
-#define SET_FIELD(field, value)                                                                                        \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        (field) = (value);                                                                                             \
-        VERIFY((field) == (value), "The values {},{} are not equal.", field, value);                                   \
-    } while (0);
-#endif
 
 namespace hcl
 {
@@ -44,10 +30,10 @@ void serializeAllocBarrierCommand(hcl::ScalStreamBase& scalStream,
                                   uint32_t             completionGroupIndex,
                                   uint32_t             requiredSobs);
 
-void serializeFenceCommand(hcl::ScalStreamBase& scalStream,
-                           unsigned             schedIdx,
-                           uint32_t             fenceIndex,
-                           uint32_t             target = 1);
+void serializeFenceDecCommand(hcl::ScalStreamBase& scalStream,
+                              unsigned             schedIdx,
+                              uint32_t             fenceIndex,
+                              uint32_t             target = 1);
 
 void serializeFenceIncCommand(hcl::ScalStreamBase& scalStream,
                               unsigned             schedIdx,
@@ -60,47 +46,32 @@ void serializeLbwWriteCommand(hcl::ScalStreamBase& scalStream,
                               uint32_t             data,
                               bool                 blockUntilCompletion = false);
 
-void serializeDmaCommandV2(hcl::ScalStreamBase& scalStream,
-                           unsigned             schedIdx,
-                           uint32_t             dmaType,
-                           uint32_t             soAddressLSB,
-                           uint32_t             soAddressLSB2,
-                           uint32_t             size,
-                           uint64_t             destAddress,
-                           uint64_t             srcAddress,
-                           hcclRedOp_t          reduceOp,
-                           bool                 isReduction,
-                           bool                 reductionSignalToCg,
-                           hcclDataType_t       dataType,
-                           uint32_t             poolId               = 0,
-                           bool                 isReproReduction     = false,
-                           bool                 useSibo              = false,
-                           uint32_t             numberOfRanks        = 0,
-                           uint32_t             numberOfReproBuffers = 0,
-                           uint32_t             indexOfReproBuffer   = 0,
-                           bool                 is16BitMemcpy        = false,
-                           bool                 isGDRMemcpy          = false);
+void serializeLbwBurstWriteCommand(hcl::ScalStreamBase&      scalStream,
+                                   unsigned                  schedIdx,
+                                   const LBWBurstDestData_t& destData,
+                                   bool                      blockUntilCompletion = false);
 
-void serializeDmaCommandV3(hcl::ScalStreamBase& scalStream,
-                           unsigned             schedIdx,
-                           uint32_t             dmaType,
-                           uint32_t             soAddressLSB,
-                           uint32_t             size,
-                           uint64_t             destAddress,
-                           uint64_t             srcAddress,
-                           hcclRedOp_t          reduceOp,
-                           uint8_t              streamCtxtID,
-                           hcclDataType_t       dataType,
-                           uint32_t             poolId               = 0,
-                           bool                 isForScaleout        = false,
-                           bool                 useCasting           = false,
-                           uint32_t             numberOfRanks        = 0,
-                           uint32_t             numberOfReproBuffers = 0,
-                           uint32_t             indexOfReproBuffer   = 0,
-                           bool                 is16BitMemcpy        = false,
-                           uint32_t             secondSoAddress      = 0,
-                           bool                 isBFloat             = false,
-                           bool                 useReductionInd      = false);
+void serializeDmaCommand(hcl::ScalStreamBase& scalStream,
+                         unsigned             schedIdx,
+                         uint32_t             dmaType,
+                         uint32_t             soAddressLSB,
+                         uint32_t             size,
+                         uint64_t             destAddress,
+                         uint64_t             srcAddress,
+                         hcclRedOp_t          reduceOp,
+                         uint8_t              streamCtxtID,
+                         hcclDataType_t       dataType,
+                         uint32_t             poolId               = 0,
+                         bool                 isForScaleout        = false,
+                         bool                 useCasting           = false,
+                         uint32_t             numberOfRanks        = 0,
+                         uint32_t             numberOfReproBuffers = 0,
+                         uint32_t             indexOfReproBuffer   = 0,
+                         bool                 is16BitMemcpy        = false,
+                         uint32_t             secondSoAddress      = 0,
+                         bool                 isBFloat             = false,
+                         bool                 useReductionInd      = false,
+                         uint32_t             memsetValue          = 0);
 
 void serializePdmaCommand(hcl::ScalStreamBase& scalStream,
                           unsigned             schedIdx,
@@ -118,17 +89,12 @@ void serializePdmaCommand(hcl::ScalStreamBase& scalStream,
 
 uint8_t getPdmaCtxtId(bool isDownload, unsigned streamIndex);
 
-void serializeGlobalDmaCommandV2(hcl::ScalStreamBase&                  scalStream,
-                                 uint32_t                              soAddressLSB,
-                                 const std::vector<sibAddressAndSize>& sibAddressesAndSizes,
-                                 uint32_t                              engineType);
-
-void serializeGlobalDmaCommandV3(hcl::ScalStreamBase&                  scalStream,
-                                 uint32_t                              soAddressLSB,
-                                 const std::vector<sibAddressAndSize>& sibAddressesAndSizes,
-                                 uint32_t                              fwStrideSize,
-                                 uint64_t                              fwBaseAddress,
-                                 uint32_t                              engineType);
+void serializeGlobalDmaCommand(hcl::ScalStreamBase&                  scalStream,
+                               uint32_t                              soAddressLSB,
+                               const std::vector<sibAddressAndSize>& sibAddressesAndSizes,
+                               uint32_t                              fwStrideSize,
+                               uint64_t                              fwBaseAddress,
+                               uint32_t                              engineType);
 
 void serializeUpdateGlobalContextCommand(hcl::ScalStreamBase&                scalStream,
                                          uint32_t                            soAddressLSB,

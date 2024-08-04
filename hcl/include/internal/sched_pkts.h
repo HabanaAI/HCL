@@ -19,3 +19,10 @@ struct g3fw
 #include "gaudi3/gaudi3_arc_common_packets.h"  // IWYU pragma: export
 #include "gaudi3/gaudi3_arc_eng_packets.h"     // IWYU pragma: export
 };
+
+#define SET_FIELD(field, value)                                                                                        \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        (field) = (value);                                                                                             \
+        VERIFY((field) == (value), "The values 0x{:x},0x{:x} are not equal.", field, value);                           \
+    } while (0);

@@ -109,7 +109,7 @@ uint32_t HclGraphSyncGaudi3::createMonConfig(bool isLong, unsigned soQuarter)
     gaudi3::sob_objs::reg_mon_config_0 monConfig;
     monConfig._raw     = 0;
     monConfig.long_sob = isLong ? 1 : 0;
-    monConfig.msb_sid  = soQuarter;  // TODO: Yaniv check
+    monConfig.msb_sid  = soQuarter;
     return monConfig._raw;
 }
 

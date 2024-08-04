@@ -14,7 +14,7 @@
 
 #include <cstddef>                      // for size_t
 #include <string>                       // for string
-#include "synapse_common_types.h"       // for synDataType, synStatus
+#include "synapse_common_types.h"       // for synStatus
 #include "hccl_types.h"                 // for hcclDataType_t, hcclResult_t,...
 #include "hcl_log_manager.h"            // for LOG_INFO, LOG_TRACE
 #include "hcl_utils.h"                  // for checkReductionOp
@@ -99,7 +99,5 @@ std::string  to_string(const synStatus status);
 
 size_t         hccl_data_type_elem_size(hcclDataType_t data_type);
 hcclDataType_t from_hccl_data_type_for_emulation(hcclDataType_t data_type);
-synDataType to_synapse_data_type(hcclDataType_t data_type);
-
 
 std::ostream& operator<<(std::ostream& os, const hcclRedOp_t& reduceOp);

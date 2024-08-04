@@ -63,7 +63,8 @@ enum eng_compute_arc_cmd_t {
 	ENG_COMPUTE_ARC_CMD_ALLOC_BARRIER = 0x1,
 	ENG_COMPUTE_ARC_CMD_DISPATCH_COMPUTE_ECB_LIST_V3 = 0x2,
 	ENG_COMPUTE_ARC_CMD_UPDATE_RECIPE_BASE_V2 = 0x3,
-	ENG_COMPUTE_ARC_CMD_COUNT = 0x4,
+	ENG_COMPUTE_ARC_CMD_WAIT_FOR_EXT_SIGNAL = 0X4,
+	ENG_COMPUTE_ARC_CMD_COUNT = 0x5,
 	ENG_COMPUTE_ARC_CMD_SIZE = 0x1F
 };
 
@@ -1405,7 +1406,7 @@ enum edma_eng_arc_cmd_t {
 	NIC_EDMA_CMD_LIN_MEMSET_V3 = 3,
 	NIC_EDMA_CMD_UNUSED4 = 4,
 	NIC_EDMA_CMD_CAST_DOWN_CLEAR = 5,
-	NIC_EDMA_CMD_SIBO_MEMSET_V3_2 = 6,
+	NIC_EDMA_CMD_LIN_MEMSET_V3_2 = 6,
 	NIC_EDMA_CMD_MEMCPY_V3 = 7,
 	NIC_EDMA_CMD_UPDATE_GLBL_CTXT_V3 = 8,
 	NIC_EDMA_CMD_CAST_UP_BATCH_V3 = 9,
@@ -1944,80 +1945,6 @@ struct arc_cmd_nic_edma_sibo_memset_v3_t {
 #define ARC_CMD_NIC_EDMA_SIBO_MEMSET_V3_SIZE_DWORD (ARC_CMD_NIC_EDMA_SIBO_MEMSET_V3_SIZE / 4)
 
 /**
- * \struct  arc_cmd_nic_edma_sibo_memset_v3_2_t
- * \brief   Perform Memset operation on SIBO buffer
- * \details Perform Memset operation on SIBO buffer
- *	    associated with NICs. HCL team uses this to clear buffers
- *          partially in SIBO, thats why we cant just use linear memset
- *          instead of this.
- */
-struct arc_cmd_nic_edma_sibo_memset_v3_2_t {
-	struct {
-		uint32_t opcode:4;
-		/**<
-		 * opcode of the command
-		 */
-		uint32_t sob_address:27;
-		/**<
-		 * SOB address that needs to be used for signaling completion
-		 * address = 0xF8000000 | sob_address;
-		 */
-		uint32_t :1;
-		/**<
-		 */
-	} __attribute__ ((aligned(4), __packed__));
-
-	struct {
-		uint32_t sibo_index:9;
-		/**<
-		 * SIB Order buffer Index to calculate the source buffer address
-		 */
-		uint32_t rank_offset_in_sibo:3;
-		/**<
-		 * Rank offset in SIB order buffer to start with
-		 */
-		uint32_t rank_count:4;
-		/**<
-		 * Number of ranks to be used as input buffer
-		 */
-		uint32_t hbw_axcache:4;
-		/**<
-		 * HBW AX CACHE Setting for write operation.
-		 * WR[4:7]
-		 */
-		uint32_t class_type:2;
-		/**<
-		 * HB CLASS TYPE Setting for write operation
-		 * WR[0:1]
-		 */
-		uint32_t pool_id:1;
-		/**<
-		 * pool id to select which intermediate buffer to be used
-		 */
-		uint32_t context_id:7;
-		/**<
-		 * context id for profiler trace
-		 */
-		uint32_t :2;
-		/**<
-		 * unused
-		 */
-	} __attribute__ ((aligned(4), __packed__));
-
-	uint32_t transfer_size;
-	/**<
-	 * transfer size in bytes
-	 */
-	uint32_t memset_value;
-	/**<
-	 * Value to be used for memset
-	 */
-}  __attribute__ ((aligned(4), __packed__));
-
-#define ARC_CMD_NIC_EDMA_SIBO_MEMSET_V3_2_SIZE (sizeof(struct arc_cmd_nic_edma_sibo_memset_v3_2_t))
-#define ARC_CMD_NIC_EDMA_SIBO_MEMSET_V3_2_SIZE_DWORD (ARC_CMD_NIC_EDMA_SIBO_MEMSET_V3_2_SIZE / 4)
-
-/**
  * \struct  arc_cmd_nic_edma_lin_memset_v3_t
  * \brief   Perform various EDMA operations
  * \details Perform various EDMA operations
@@ -2085,6 +2012,71 @@ struct arc_cmd_nic_edma_lin_memset_v3_t {
 
 #define ARC_CMD_NIC_EDMA_LIN_MEMSET_V3_SIZE (sizeof(struct arc_cmd_nic_edma_lin_memset_v3_t))
 #define ARC_CMD_NIC_EDMA_LIN_MEMSET_V3_SIZE_DWORD (ARC_CMD_NIC_EDMA_LIN_MEMSET_V3_SIZE / 4)
+
+/**
+ * \struct  arc_cmd_nic_edma_lin_memset_v3_2_t
+ * \brief   Perform various EDMA operations
+ * \details Perform various EDMA operations
+ *	    associated with NICs.
+ */
+struct arc_cmd_nic_edma_lin_memset_v3_2_t {
+	struct {
+		uint32_t opcode:4;
+		/**<
+		 * opcode of the command
+		 */
+
+		uint32_t sob_base:3;
+		/**<
+		 * index of SOB base in glbl ctxt that needs to be used for signaling first
+		 * completion address = comp_cfg[sob_base] + sob_index * 4;
+		 */
+		uint32_t sob_index:10;
+		/**<
+		 * SOB index from comp_cfg base that needs to be used for signaling first
+		 * completion address = comp_cfg[sob_base] + sob_index * 4;
+		 */
+		uint32_t hbw_axcache:4;
+		/**<
+		 * HBW AX CACHE Setting for write operation
+		 * WR[4:7]
+		 */
+		uint32_t class_type:2;
+		/**<
+		 * HB CLASS TYPE Setting for write operation
+		 * WR[0:1]
+		 */
+		uint32_t context_id:7;
+		/**<
+		 * context id for profiler trace
+		 */
+		uint32_t :2;
+		/**<
+		 * unused
+		 */
+	} __attribute__ ((aligned(4), __packed__));
+
+
+	uint32_t transfer_size;
+	/**<
+	 * transfer size in bytes
+	 */
+	uint32_t dst_addr_lo;
+	/**<
+	 * Destination address lo
+	 */
+	uint32_t dst_addr_hi;
+	/**<
+	 * Destination address high
+	 */
+	uint32_t memset_value;
+	/**<
+	 * Value to be used for memset
+	 */
+}  __attribute__ ((aligned(4), __packed__));
+
+#define ARC_CMD_NIC_EDMA_LIN_MEMSET_SIZE (sizeof(struct arc_cmd_nic_edma_lin_memset_v3_2_t))
+#define ARC_CMD_NIC_EDMA_LIN_MEMSET_SIZE_DWORD (ARC_CMD_NIC_EDMA_LIN_MEMSET_SIZE / 4)
 
 #define FP32_MAX_POS_VAL	0x7F800000
 #define FP32_MAX_NEG_VAL	0xFF800000

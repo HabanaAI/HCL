@@ -9,7 +9,6 @@ namespace hcl
 {
 class HclException : public std::exception
 {
-    // TODO: call-stack may be printed as part of the object constructor
 public:
     template<typename T, typename... Args>
     HclException(T&& a_value, Args&&... a_args)

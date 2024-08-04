@@ -18,7 +18,6 @@ class IHclDevice;
 class ofi_communicator;
 struct hcclHandle;
 
-
 struct RankInfo;
 
 using ofi_communicator_handle = std::unique_ptr<ofi_communicator>;
@@ -29,7 +28,8 @@ public:
                                 int                       nranks,
                                 const UniqueSortedVector& peers,
                                 IHclDevice*               hclDevice,
-                                RankInfo&                 rankInfo);
+                                RankInfo&                 rankInfo,
+                                uint16_t                  qpSetCount);
     bool updateConnections(const HCL_Rank outerRank, const HostNicConnectInfo& hnicsInfoBuf);
 
     hcclResult_t sendAsync(void*                  sendbuff,
@@ -37,13 +37,15 @@ public:
                            int                    peer,
                            hcclHandle*            handle,
                            unsigned               hostConnIdx,
-                           OfiCompCallbackParams& compParams);
+                           OfiCompCallbackParams& compParams,
+                           uint16_t               qpSetIndex);
     hcclResult_t recvAsync(void*                  recvbuff,
                            size_t                 size,
                            int                    peer,
                            hcclHandle*            handle,
                            unsigned               hostConnIdx,
-                           OfiCompCallbackParams& compParams);
+                           OfiCompCallbackParams& compParams,
+                           uint16_t               qpSetIndex);
     bool         waitForCompletionNb(void* handle, int& done);
 
     bool destroy();
@@ -57,8 +59,10 @@ public:
     ofi_communicator&& operator=(ofi_communicator&&) = delete;
 
 private:
-    int                                                                my_rank_;
-    std::vector<std::array<allConnectionComm_t, MAX_HNIC_CONNECTIONS>> m_peerRankToConnectionInfo;
+    int      my_rank_;
+    uint16_t m_qpSetCount;
+    using QpSet = std::array<allConnectionComm_t, MAX_HNIC_CONNECTIONS>;
+    std::vector<std::array<QpSet, MAX_HNIC_CONNECTION_SETS>> m_peerRankToConnectionInfo;
 
     ofi_t*               m_ofi_;
     SocketThreadsManager threads_manager_;

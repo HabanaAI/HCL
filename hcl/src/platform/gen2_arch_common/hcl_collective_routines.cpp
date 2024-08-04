@@ -67,6 +67,17 @@ HclCollectiveRoutinesGen2Arch::~HclCollectiveRoutinesGen2Arch()
     }
 }
 
+/**
+ * @brief initialize data related per new communicator should be called on hcclCommInitRank
+ *
+ * @param commId - the new communicator ID
+ * @param nRanks - new communicator size
+ */
+void HclCollectiveRoutinesGen2Arch::onCommInit(const HCL_Comm commId)
+{
+    m_wqeTracker->resizeDB(commId);
+}
+
 int HclCollectiveRoutinesGen2Arch::getRemoteRankToRsi(CommonState& commonState,
                                                       bool         isSend,
                                                       HCL_Rank     remoteRank,
@@ -84,7 +95,7 @@ int HclCollectiveRoutinesGen2Arch::getRemoteRankToRsi(CommonState& commonState,
             else if (m_boxType == LOOPBACK || remoteRank == commonState.m_root)
             {
                 m_wqeTracker->incWqe(commonState.m_dynamicComm,
-                                     remoteRank / commonState.m_dynamicComm.getPodSize(),
+                                     div((uint32_t)remoteRank, (uint32_t)commonState.m_dynamicComm.getScaleupGroupSize()),
                                      isAllGatherQp ? QpType::ScaleOutAllGather : QpType::ScaleOutReduceScatter);
                 return 0;
             }
@@ -93,10 +104,10 @@ int HclCollectiveRoutinesGen2Arch::getRemoteRankToRsi(CommonState& commonState,
             if (!isMyRank && !isSend)
             {
                 m_wqeTracker->incWqe(commonState.m_dynamicComm,
-                                     remoteRank / commonState.m_dynamicComm.getPodSize(),
+                                     div((uint32_t)remoteRank, (uint32_t)commonState.m_dynamicComm.getScaleupGroupSize()),
                                      isAllGatherQp ? QpType::ScaleOutAllGather : QpType::ScaleOutReduceScatter);
             }
-            return commonState.m_dynamicComm.getRankToPodMap()[remoteRank];
+            return commonState.m_dynamicComm.getRankToScaleupGroupMap()[remoteRank];
             break;
     }
 
@@ -216,20 +227,20 @@ hcclResult_t HclCollectiveRoutinesGen2Arch::sendRecv(hcl::GroupCallsBuckets&    
                   scaleoutRecvGroups.size());
     LOG_HCL_TRACE(HCL, "scaleoutSendGroups={}", scaleoutSendGroups);
     LOG_HCL_TRACE(HCL, "scaleoutRecvGroups={}", scaleoutRecvGroups);
-    const HCL_Rank myRank         = m_device->getMyRank(comm);
-    const unsigned myBox          = m_device->getComm(comm).getRankToPodMap()[myRank];
-    const HCL_Rank lastRank       = m_device->getComm(comm).getScaleOutLastRank();
-    const unsigned lastBox        = m_device->getComm(comm).getRankToPodMap()[lastRank];
-    const unsigned podSize        = m_device->getComm(comm).getPodSize();
-    const unsigned numOfCommRanks = podSize * (lastBox + 1);
+    const HCL_Rank myRank           = m_device->getMyRank(comm);
+    const unsigned myBox            = m_device->getComm(comm).getRankToScaleupGroupMap()[myRank];
+    const HCL_Rank lastRank         = m_device->getComm(comm).getScaleOutLastRank();
+    const unsigned lastBox          = m_device->getComm(comm).getRankToScaleupGroupMap()[lastRank];
+    const unsigned ScaleupGroupSize = m_device->getComm(comm).getScaleupGroupSize();
+    const unsigned numOfCommRanks   = ScaleupGroupSize * (lastBox + 1);
     BoxNumInfo     myBoxNumInfo(myBox, BoxNumInfo::boxOrientation::MY_BOX);
     LOG_HCL_TRACE(HCL,
-                  "myRank={}, myBox{}, lastRank={}, lastBox={}, podSize={}, numOfCommRanks={}",
+                  "myRank={}, myBox{}, lastRank={}, lastBox={}, ScaleupGroupSize={}, numOfCommRanks={}",
                   myRank,
                   myBox,
                   lastRank,
                   lastBox,
-                  podSize,
+                  ScaleupGroupSize,
                   numOfCommRanks);
 
     const SendRecvVector& orderedSendList =
@@ -351,7 +362,7 @@ hcclResult_t HclCollectiveRoutinesGen2Arch::sendRecv(hcl::GroupCallsBuckets&    
                 }
 
                 recvCnt++;
-                m_wqeTracker->incWqe(comm, hwModId % podSize, srStream);
+                m_wqeTracker->incWqe(comm, mod(hwModId, ScaleupGroupSize), srStream);
             }
         }
 
@@ -397,7 +408,7 @@ hcclResult_t HclCollectiveRoutinesGen2Arch::sendRecv(hcl::GroupCallsBuckets&    
         std::vector<SendRecvMemCopyEntry> iterMemcpyVec;  // can be empty vector if no self s/r in current iter
         if (iter < sendRecvMemCpyVec.size())
         {
-            iterMemcpyVec.push_back(sendRecvMemCpyVec.at(iter));  // TODO use single SendRecvMemCopyEntry ref
+            iterMemcpyVec.push_back(sendRecvMemCpyVec.at(iter));
 
             if (!GCFG_WEAK_ORDER.value() && GCFG_ENABLE_DEPENDENCY_CHECKER.value())
             {
@@ -422,7 +433,7 @@ hcclResult_t HclCollectiveRoutinesGen2Arch::sendRecv(hcl::GroupCallsBuckets&    
         // check if any scaleup ranks send/recv in this iteration
         unsigned currentNumberOfSend = maxNumberOfSend > iter ? 1 : 0;
         unsigned currentNumberOfRecv = maxNumberOfRecv > iter ? 1 : 0;
-        if (currentNumberOfSend == 0 && currentNumberOfRecv == 0 && podSize != 1)
+        if (currentNumberOfSend == 0 && currentNumberOfRecv == 0 && ScaleupGroupSize != 1)
         {
             // To make sure we execute at something over internal ranks in each iteration - even if its noop
             currentNumberOfSend = 1;
@@ -452,7 +463,7 @@ hcclResult_t HclCollectiveRoutinesGen2Arch::sendRecv(hcl::GroupCallsBuckets&    
             m_device->getDeviceType(),
             this->m_remainderCalculator};
         commonState.initCurrentOp(eHCLNoCollective, 0, 0);
-        m_signalsManager->initialize(&commonState);
+        m_signalsManager->initialize(&commonState, 0);
 
         commonState.m_scaleoutNonCollectiveSend = scaleoutSendIter.size();
         commonState.m_scaleoutNonCollectiveRecv = scaleoutRecvIter.size();
@@ -553,9 +564,8 @@ hcclResult_t HclCollectiveRoutinesGen2Arch::hclCollectiveCall(HclCollectiveParam
             if ((commonState.m_collectiveOp == eHCLReduce) && !commonState.isRootBox())
             {
                 // Determine the exact single iteration that non-root boxes do the scaleout send
-                scaleoutSendBoxIter =
-                    (commonState.m_boxIterations + commonState.rootBox() - commonState.m_dynamicComm.getMyPod()) %
-                    commonState.m_boxIterations;
+                scaleoutSendBoxIter = mod(commonState.m_boxIterations + commonState.rootBox()
+                                          - commonState.m_dynamicComm.getMyScaleupGroup(), commonState.m_boxIterations);
                 gatherStartBoxIter = scaleoutSendBoxIter;
                 gatherEndBoxIter   = scaleoutSendBoxIter + 1;  // exactly 1 iteration
             }
@@ -640,21 +650,23 @@ void HclCollectiveRoutinesGen2Arch::hclCollectiveCall(CommonState&     commonSta
         ((commonState.m_currentOp == eHCLAllGather || commonState.m_currentOp == eHCLGather ||
           commonState.m_collectiveOp == eHCLBroadcast || commonState.m_collectiveOp == eHCLSinglePeerBroadcast ||
           commonState.m_collectiveOp == eHCLSimpleBroadcast) &&
-         commonState.m_dynamicComm.getPodSize() != 1);
+         commonState.m_dynamicComm.getScaleupGroupSize() != 1);
 
-    const unsigned nextBox = (commonState.m_dynamicComm.getMyPod() + boxIter) % commonState.m_boxIterations;
+    const unsigned nextBox = mod(commonState.m_dynamicComm.getMyScaleupGroup() + boxIter, commonState.m_boxIterations);
 
-    const unsigned prevBox = (commonState.m_boxIterations + (int)commonState.m_dynamicComm.getMyPod() - (int)boxIter) %
-                             commonState.m_boxIterations;
+    const unsigned prevBox = mod(commonState.m_boxIterations + (int)commonState.m_dynamicComm.getMyScaleupGroup() -
+                              (int)boxIter, commonState.m_boxIterations);
     BoxNumInfo boxNumInfo =
         BoxNumInfo(scaleOutFirstOp ? prevBox : nextBox,
                    scaleOutFirstOp ? BoxNumInfo::boxOrientation::PREV_BOX : BoxNumInfo::boxOrientation::NEXT_BOX);
     BoxNumInfo nextBoxNumInfo(nextBox, BoxNumInfo::boxOrientation::NEXT_BOX);
     BoxNumInfo prevBoxNumInfo(prevBox, BoxNumInfo::boxOrientation::PREV_BOX);
 
-    const bool isFirstBox = (boxNumInfo.m_boxNum == commonState.m_dynamicComm.getMyPod());
+    const bool isFirstBox = (boxNumInfo.m_boxNum == commonState.m_dynamicComm.getMyScaleupGroup());
     const bool isLastBox =
-        (((boxNumInfo.m_boxNum + 1) % commonState.m_boxIterations) == commonState.m_dynamicComm.getMyPod());
+        (mod(boxNumInfo.m_boxNum + 1, commonState.m_boxIterations) == commonState.m_dynamicComm.getMyScaleupGroup());
+
+    uint64_t cuid = commonState.calculateCUID(isFirstBox, isLastBox);
 
     uint64_t dependencyTargetVal = 0;
 
@@ -711,7 +723,7 @@ void HclCollectiveRoutinesGen2Arch::hclCollectiveCall(CommonState&     commonSta
                   boxNumInfo.m_boxNum);
 
     // New Api call -> inc the long SO
-    advanceProg(false, &commonState);
+    advanceProg(false, cuid, &commonState);
 
     {
         LOG_HCL_CONTEXT_TRACE(HCL, "Registering static buffers");
@@ -757,7 +769,7 @@ void HclCollectiveRoutinesGen2Arch::hclCollectiveCall(CommonState&     commonSta
     }
 
     m_signalsManager->allocateResources();
-    m_signalsManager->updateCompletionTracker(m_longSo.targetValue);
+    m_signalsManager->updateCompletionTracker(m_longSo.targetValue, cuid);
     m_signalsManager->printGraph();
 
     unsigned completionSignals = m_signalsManager->getNumSignalsForCompletion();
@@ -791,7 +803,7 @@ void HclCollectiveRoutinesGen2Arch::hclCollectiveCall(CommonState&     commonSta
     bool submitToHw = true;
 
     if (GCFG_HCL_SUBMIT_THRESHOLD.isSetFromUserConfig() && m_scaleoutProvider->isGaudiDirect() &&
-        sendSliceState.m_isMultiPod)
+        sendSliceState.m_isMultiScaleupGroup)
     {
         commonState.m_submitCounter++;
         bool lastIterInCollective = ((sendSliceState.m_sliceIter + 1) == sendSliceState.m_sliceIterations &&

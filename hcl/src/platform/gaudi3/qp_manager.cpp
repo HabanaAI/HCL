@@ -11,8 +11,6 @@
 #include "platform/gaudi3/commands/hcl_commands.h"
 #include "hcl_math_utils.h"
 
-QPManager::QPManager(HclDeviceGaudi3* device) : m_device(device) {}
-
 inline G3QP_e getQpIndex(HCL_CollectiveOp collectiveOp, bool isSend)
 {
     switch (collectiveOp)
@@ -34,130 +32,31 @@ inline G3QP_e getQpIndex(HCL_CollectiveOp collectiveOp, bool isSend)
     return (G3QP_e)0;
 }
 
-void QPManager::registerQPs(HCL_Comm comm, const QpsVector& qp_vec, HCL_Rank remoteRank, uint8_t qpSets)
+QPManagerGaudi3::QPManagerGaudi3(HclDeviceGaudi3* device) : m_device(device) {}
+
+/* scale up */
+
+QPUsage QPManagerGaudi3::getBaseQpAndUsage(HclDynamicCommunicator& dynamicComm,
+                                           HCL_CollectiveOp        collectiveOp,
+                                           bool                    isSend,
+                                           bool                    isComplexCollective,
+                                           bool                    isReductionInIMB,
+                                           bool                    isHierarchical,
+                                           uint64_t                count,
+                                           uint64_t                cellCount,
+                                           HclConfigType           boxType,
+                                           bool                    isScaleOut,
+                                           HCL_Rank                remoteRank,
+                                           uint8_t                 qpSet,
+                                           const bool              isReproReduction,
+                                           HCL_CollectiveOp        complexCollective,
+                                           bool                    isRoot)
 {
-    if (comm >= getDBSize())
-    {
-        LOG_HCL_DEBUG(HCL, "Resizing m_qpInfoDb for new comm({})", comm);
-        resizeDb();
-    }
-
-    for (uint8_t qpSet = 0; qpSet < qpSets; qpSet++)
-    {
-        uint8_t qpSetBase = m_device->getHal()->getMaxQPsPerNic() * qpSet;
-
-        // RS, recv, my rank indexed
-        *getQpInfo(comm, eHCLReduceScatter, false, remoteRank, qpSet) =
-            QpInfo(qp_vec[qpSetBase + QPE_RS_RECV], QPE_RS_RECV);
-        // AG, recv, remote rank indexed
-        *getQpInfo(comm, eHCLAllGather, false, remoteRank, qpSet) =
-            QpInfo(qp_vec[qpSetBase + QPE_AG_RECV], QPE_AG_RECV);
-        // A2A, recv, remote rank indexed
-        *getQpInfo(comm, eHCLAll2All, false, remoteRank, qpSet) =
-            QpInfo(qp_vec[qpSetBase + QPE_A2A_RECV], QPE_A2A_RECV);
-        // RS, send, remote rank indexed
-        *getQpInfo(comm, eHCLReduceScatter, true, remoteRank, qpSet) =
-            QpInfo(qp_vec[qpSetBase + QPE_RS_SEND], QPE_RS_SEND);
-        // AG, send, my rank indexed
-        *getQpInfo(comm, eHCLAllGather, true, remoteRank, qpSet) = QpInfo(qp_vec[qpSetBase + QPE_AG_SEND], QPE_AG_SEND);
-        // A2A, send, remote rank indexed
-        *getQpInfo(comm, eHCLAll2All, true, remoteRank, qpSet) = QpInfo(qp_vec[qpSetBase + QPE_A2A_SEND], QPE_A2A_SEND);
-    }
-}
-
-uint32_t QPManager::getBaseQp(HCL_Comm comm, HCL_CollectiveOp collectiveOp, bool isSend, HCL_Rank remoteRank)
-{
-    return getQpInfo(comm, collectiveOp, isSend, remoteRank)->getQpn();
-}
-
-uint32_t QPManager::getQpi(HCL_Comm comm, uint8_t nic, uint32_t qpn, HCL_Rank remoteRank)
-{
-    QpInfo* qp = seek(comm, nic, qpn, remoteRank);
-    return qp->getQpi();
-}
-
-QpInfo* QPManager::seek(HCL_Comm comm, uint8_t nic, uint32_t qpn, HCL_Rank remoteRank)
-{
-    uint32_t idx   = 0;
-    uint8_t  qpSet = 0;
-
-    for (qpSet = 0; qpSet < m_device->getComm(comm).getMaxScaleOutQpSetsNum(); qpSet++)
-    {
-        for (idx = 0; idx < m_device->getHal()->getMaxQPsPerNic(); idx++)
-        {
-            if (getQpInfo(comm, idx, remoteRank, qpSet)->getQpn() + m_device->getNicToQpOffset(nic) == qpn)
-            {
-                return getQpInfo(comm, idx, remoteRank, qpSet);
-            }
-        }
-    }
-
-    VERIFY(false, "Couldn't find QpInfo for comm={}, nic={}, qpn={}, remoteRank={}", comm, nic, qpn, remoteRank);
-
-    return nullptr;
-}
-
-uint32_t QPManager::getLastRankPortMask(HclDynamicCommunicator&  dynamicComm,
-                                        HCL_CollectiveOp         collectiveOp,
-                                        bool                     isSend,
-                                        Gaudi3DevicePortMapping& portMapping)
-{
-    if ((collectiveOp == eHCLAllGather && isSend) || (collectiveOp == eHCLReduceScatter && !isSend))
-    {
-        return isScaleUp() ? portMapping.getInnerRanksPortMask(dynamicComm) : portMapping.getExternalPortsMask();
-    }
-    return 0;
-}
-
-void QPManager::setNicOffsets(hcl::ScalStream& Stream,
-                              HclDeviceGaudi3* device,
-                              HCL_Comm         comm,
-                              HCL_CollectiveOp collectiveOp,
-                              bool             isSend)
-{
-    Gaudi3DevicePortMapping& portMapping = device->getPortMappingGaudi3();
-    HclDynamicCommunicator&  dynamicComm = device->getComm(comm);
-
-    // for each scenario all nics use the same qpn
-    const uint32_t qpn = getBaseQp(dynamicComm, collectiveOp, isSend);
-    LOG_HCL_TRACE(HCL, "comm={}, collectiveOp={}, qpn={}, isSend={}", comm, collectiveOp, qpn, isSend);
-
-    // get nic to remote rank index map
-    std::array<uint16_t, MAX_NICS_GEN2ARCH>& remoteIndices = getRemoteRankIndices(dynamicComm,
-                                                                                  collectiveOp,
-                                                                                  isSend,
-                                                                                  portMapping,
-                                                                                  device->getNicsStatusMask(),
-                                                                                  device->getHal()->getMaxNics());
-
-    // add the command to the cyclic buffer
-    HclCommandsGaudi3& commands = ((HclCommandsGaudi3&)(device->getGen2ArchCommands()));
-    commands.serializeUpdateNicOffsets(Stream, isSend, isScaleUp(), qpn, remoteIndices);
-}
-
-QPUsage QPManager::getBaseQpAndUsage(HclDynamicCommunicator& dynamicComm,
-                                     HCL_CollectiveOp        collectiveOp,
-                                     bool                    isSend,
-                                     bool                    isComplexCollective,
-                                     bool                    isReductionInIMB,
-                                     bool                    isHierarchical,
-                                     uint64_t                count,
-                                     uint64_t                cellCount,
-                                     HclConfigType           boxType,
-                                     bool                    isScaleOut,
-                                     HCL_Rank                remoteRank,
-                                     uint8_t                 qpSet,
-                                     const bool              isReproReduction,
-                                     HCL_CollectiveOp        complexCollective,
-                                     bool                    isRoot)
-{
-    QPUsage ret = {
-        0,
-    };
+    QPUsage ret = {0, false};
 
     G3QP_e qpIndex;
-    bool outOfBounds =
-        count != INVALID_COUNT && ((cellCount * mod(dynamicComm.getMyRank(), dynamicComm.getPodSize())) >= count);
+    bool outOfBounds = count != INVALID_COUNT &&
+                       ((cellCount * mod(dynamicComm.getMyRank(), dynamicComm.getScaleupGroupSize())) >= count);
     switch (collectiveOp)
     {
         case eHCLReduceScatter:
@@ -169,7 +68,7 @@ QPUsage QPManager::getBaseQpAndUsage(HclDynamicCommunicator& dynamicComm,
             {
                 if (complexCollective == eHCLReduce && !isRoot && !outOfBounds)
                 {
-                    ret.disregardRank = 1;
+                    ret.disregardRank = true;
                 }
                 qpIndex = QPE_RS_RECV;
             }
@@ -184,7 +83,7 @@ QPUsage QPManager::getBaseQpAndUsage(HclDynamicCommunicator& dynamicComm,
             else
             {
                 qpIndex           = QPE_RS_RECV;
-                ret.disregardRank = 1;
+                ret.disregardRank = true;
             }
             break;
         case eHCLGather: // FALLTHROUGH
@@ -194,7 +93,7 @@ QPUsage QPManager::getBaseQpAndUsage(HclDynamicCommunicator& dynamicComm,
                 qpIndex = QPE_AG_SEND;
                 if (!isComplexCollective || collectiveOp == eHCLGather)
                 {
-                    ret.disregardRank = 1;
+                    ret.disregardRank = true;
                 }
             }
             else
@@ -203,18 +102,32 @@ QPUsage QPManager::getBaseQpAndUsage(HclDynamicCommunicator& dynamicComm,
             }
             break;
         case eHCLAll2All:
-            if (isSend)
+            if (isScaleOut)
             {
-                qpIndex = QPE_A2A_SEND;
+                if (isSend)
+                {
+                    qpIndex = QPE_RS_SEND;
+                }
+                else
+                {
+                    qpIndex = QPE_RS_RECV;
+                }
             }
             else
             {
-                qpIndex = QPE_A2A_RECV;
+                if (isSend)
+                {
+                    qpIndex = QPE_A2A_SEND;
+                }
+                else
+                {
+                    qpIndex = QPE_A2A_RECV;
+                }
             }
             break;
         case eHCLReduce:
         case eHCLScatter:
-            if (boxType == LOOPBACK) ret.disregardRank = 1;
+            if (boxType == LOOPBACK) ret.disregardRank = true;
             if (isSend)
             {
                 qpIndex = QPE_RS_SEND;
@@ -222,7 +135,7 @@ QPUsage QPManager::getBaseQpAndUsage(HclDynamicCommunicator& dynamicComm,
             else
             {
                 qpIndex           = QPE_RS_RECV;
-                ret.disregardRank = 1;
+                ret.disregardRank = true;
             }
             break;
         case eHCLBroadcast:  // FALLTHROUGH
@@ -236,7 +149,7 @@ QPUsage QPManager::getBaseQpAndUsage(HclDynamicCommunicator& dynamicComm,
             {
                 qpIndex = QPE_AG_RECV;
             }
-            ret.disregardRank = 1;
+            ret.disregardRank = true;
             break;
         case eHCLNoCollective:  // send recv
             if (isSend)
@@ -247,24 +160,25 @@ QPUsage QPManager::getBaseQpAndUsage(HclDynamicCommunicator& dynamicComm,
             {
                 qpIndex = QPE_RS_RECV;
             }
-            ret.disregardRank = 1;
+            ret.disregardRank = true;
             break;
         default:
             VERIFY(false, "Cannot run collectiveOp {} on Gaudi3 device", (int)collectiveOp);
     }
 
-    ret.qpn = getQpInfo(dynamicComm, qpIndex, remoteRank, qpSet)->getQpn();
+    ret.qpn = getQP(dynamicComm, qpIndex, remoteRank, qpSet);
 
     // we use offset 0 for all collective in scaleOut
-    if (isScaleOut) ret.disregardRank = 1;
+    if (isScaleOut) ret.disregardRank = true;
 
     return ret;
 }
 
-QPManagerScaleUp::QPManagerScaleUp(HclDeviceGaudi3* device) : QPManager(device)
+QPManagerScaleUpGaudi3::QPManagerScaleUpGaudi3(HclDeviceGaudi3* device) : QPManagerGaudi3(device)
 {
     m_remoteRankOffsets.resize(DEFAULT_COMMUNICATORS_SIZE);
     m_myRankOffsets.resize(DEFAULT_COMMUNICATORS_SIZE);
+
     for (auto& commRemoteRankOffsets : m_remoteRankOffsets)
     {
         commRemoteRankOffsets.fill((uint16_t)-1);
@@ -273,43 +187,119 @@ QPManagerScaleUp::QPManagerScaleUp(HclDeviceGaudi3* device) : QPManager(device)
     {
         commmMyRankOffsets.fill((uint16_t)-1);
     }
-    m_qpInfoDb.resize(DEFAULT_COMMUNICATORS_SIZE);
+
+    m_qpInfoScaleUp.resize(DEFAULT_COMMUNICATORS_SIZE);
+    for (auto& qpi : m_qpInfoScaleUp)
+    {
+        qpi.fill(INVALID_QP);
+    }
 }
 
-bool QPManagerScaleUp::isScaleUp() const
+void QPManagerScaleUpGaudi3::resizeDB(HCL_Comm comm)
 {
-    return true;
+    size_t oldSize = m_qpInfoScaleUp.size();
+    size_t newSize = oldSize + DEFAULT_COMMUNICATORS_SIZE;
+
+    m_qpInfoScaleUp.resize(newSize);
+    for (unsigned index = oldSize; index < newSize; index++)
+    {
+        for (auto& qpn : m_qpInfoScaleUp.at(index))
+        {
+            qpn = INVALID_QP;
+        }
+    }
+
+    LOG_HCL_INFO(HCL, "resizing m_qpInfoScaleUp for comm {} from {} to {}", comm, oldSize, newSize);
 }
 
-QpInfo* QPManagerScaleUp::getQpInfo(HCL_Comm         comm,
-                                    HCL_CollectiveOp collectiveOp,
-                                    bool             isSend,
-                                    HCL_Rank         remoteRank,
-                                    uint8_t          qpSet)
+void QPManagerScaleUpGaudi3::registerQPs(HCL_Comm         comm,
+                                         const QpsVector& qps,
+                                         const HCL_Rank   remoteRank,
+                                         unsigned         qpSets)
 {
-    return getQpInfo(comm, getQpIndex(collectiveOp, isSend), remoteRank);
+    VERIFY(MAX_QPS_PER_CONNECTION_G3 == m_device->getHal()->getMaxQPsPerNic());
+    VERIFY(qps.size() == m_device->getHal()->getMaxQPsPerNic(),
+           "Each connection should hold {} QPs but opened {} QPs for comm {}",
+           m_device->getHal()->getMaxQPsPerNic(),
+           qps.size(),
+           comm);
+
+    if (unlikely(comm >= m_qpInfoScaleUp.size()))
+    {
+        resizeDB(comm);
+    }
+
+    for (unsigned qpi = 0; qpi < MAX_QPS_PER_CONNECTION_G3; qpi++)
+    {
+        m_qpInfoScaleUp.at(comm).at(qpi) = qps[qpi];
+
+        LOG_HCL_DEBUG(HCL, "m_qpInfoScaleUp[comm {}][qpi {}] = qpn {}", comm, qpi, m_qpInfoScaleUp.at(comm).at(qpi));
+    }
 }
 
-QpInfo* QPManagerScaleUp::getQpInfo(HCL_Comm comm, unsigned index, HCL_Rank remoteRank, uint8_t qpSet)
+uint32_t
+QPManagerScaleUpGaudi3::getQP(HCL_Comm comm, const unsigned qpi, const HCL_Rank remoteRank, const uint8_t qpSet)
 {
-    return &(m_qpInfoDb[comm][index]);
+    return m_qpInfoScaleUp.at(comm).at(qpi);
 }
 
-size_t QPManagerScaleUp::getDBSize() const
+uint32_t QPManagerScaleUpGaudi3::getQPi(HCL_Comm comm, const uint8_t nic, const uint32_t qpn, const HCL_Rank remoteRank)
 {
-    return m_qpInfoDb.size();
+    for (unsigned qpi = 0; qpi < MAX_QPS_PER_CONNECTION_G3; qpi++)
+    {
+        if (m_qpInfoScaleUp.at(comm).at(qpi) + m_device->getNicToQpOffset(nic) == qpn)
+        {
+            return qpi;
+        }
+    }
+
+    VERIFY(false, "could not find a match for comm {} qpn {}", comm, qpn);
 }
 
-void QPManagerScaleUp::resizeDb()
+uint32_t QPManagerScaleUpGaudi3::getLastRankPortMask(HclDynamicCommunicator&  dynamicComm,
+                                                     HCL_CollectiveOp         collectiveOp,
+                                                     bool                     isSend,
+                                                     Gaudi3DevicePortMapping& portMapping)
 {
-    m_qpInfoDb.resize(m_qpInfoDb.size() + DEFAULT_COMMUNICATORS_SIZE);
+    if ((collectiveOp == eHCLAllGather && isSend) || (collectiveOp == eHCLReduceScatter && !isSend))
+    {
+        return portMapping.getInnerRanksPortMask(dynamicComm);
+    }
+    return 0;
 }
 
-void QPManagerScaleUp::resizeOffsetsDB(HCL_Comm comm)
+void QPManagerScaleUpGaudi3::setNicOffsets(hcl::ScalStream& Stream,
+                                           HclDeviceGaudi3* device,
+                                           HCL_Comm         comm,
+                                           HCL_CollectiveOp collectiveOp,
+                                           bool             isSend)
+{
+    Gaudi3DevicePortMapping& portMapping = device->getPortMappingGaudi3();
+    HclDynamicCommunicator&  dynamicComm = device->getComm(comm);
+
+    // for each scenario all nics use the same qpn
+    const uint32_t qpn = getQP(dynamicComm, getQpIndex(collectiveOp, isSend));
+    LOG_HCL_TRACE(HCL, "comm={}, collectiveOp={}, qpn={}, isSend={}", comm, collectiveOp, qpn, isSend);
+
+    // get nic to remote rank index map
+    std::array<uint16_t, MAX_NICS_GEN2ARCH>& remoteIndices = getRemoteRankIndices(dynamicComm,
+                                                                                  collectiveOp,
+                                                                                  isSend,
+                                                                                  portMapping,
+                                                                                  device->getNicsStatusMask(),
+                                                                                  device->getHal()->getMaxNics());
+
+    // add the command to the cyclic buffer
+    HclCommandsGaudi3& commands = ((HclCommandsGaudi3&)(device->getGen2ArchCommands()));
+    commands.serializeUpdateNicOffsets(Stream, isSend, true, qpn, remoteIndices);
+}
+
+void QPManagerScaleUpGaudi3::resizeOffsetDBs(HCL_Comm comm)
 {
     VERIFY(m_remoteRankOffsets.size() == m_myRankOffsets.size(), "Offsets DBs must be equal");
     size_t old_size = m_remoteRankOffsets.size();
-    LOG_HCL_DEBUG(HCL, "Resizing m_remoteRankOffsets and m_myRankOffsets for new comm({})", comm);
+    LOG_HCL_INFO(HCL, "Resizing m_remoteRankOffsets and m_myRankOffsets for new comm({})", comm);
+
     m_remoteRankOffsets.resize(old_size + DEFAULT_COMMUNICATORS_SIZE);
     m_myRankOffsets.resize(old_size + DEFAULT_COMMUNICATORS_SIZE);
     for (size_t i = old_size; i < m_remoteRankOffsets.size(); i++)
@@ -319,12 +309,13 @@ void QPManagerScaleUp::resizeOffsetsDB(HCL_Comm comm)
     }
 }
 
-std::array<uint16_t, MAX_NICS_GEN2ARCH>& QPManagerScaleUp::getRemoteRankIndices(HclDynamicCommunicator&  dynamicComm,
-                                                                                HCL_CollectiveOp         collectiveOp,
-                                                                                bool                     isSend,
-                                                                                Gaudi3DevicePortMapping& portMapping,
-                                                                                uint64_t                 nicsStatusMask,
-                                                                                const uint64_t           maxNics)
+std::array<uint16_t, MAX_NICS_GEN2ARCH>&
+QPManagerScaleUpGaudi3::getRemoteRankIndices(HclDynamicCommunicator&  dynamicComm,
+                                             HCL_CollectiveOp         collectiveOp,
+                                             bool                     isSend,
+                                             Gaudi3DevicePortMapping& portMapping,
+                                             uint64_t                 nicsStatusMask,
+                                             const uint64_t           maxNics)
 {
     LOG_HCL_DEBUG(HCL,
                   "collectiveOp={}, isSend={}, nicsStatusMask={:024b}, maxNics={}",
@@ -337,7 +328,7 @@ std::array<uint16_t, MAX_NICS_GEN2ARCH>& QPManagerScaleUp::getRemoteRankIndices(
     // resize if needed
     if (comm >= m_remoteRankOffsets.size())
     {
-        resizeOffsetsDB(comm);
+        resizeOffsetDBs(comm);
     }
 
     // this is an array of offsets for the nics, please note that all offsets can be set later to zero
@@ -366,7 +357,7 @@ std::array<uint16_t, MAX_NICS_GEN2ARCH>& QPManagerScaleUp::getRemoteRankIndices(
                     dynamicComm.m_remoteDevices[rank]->header.hwModuleID)
                 {
                     remoteRankOffsets[nicIndex] =
-                        mod(rank, dynamicComm.getPodSize()) -
+                        mod(rank, dynamicComm.getScaleupGroupSize()) -
                         (((collectiveOp == eHCLReduceScatter) && !isSend && (rank > dynamicComm.getMyRank())) ? 1 : 0);
                     break;
                 }
@@ -385,22 +376,22 @@ std::array<uint16_t, MAX_NICS_GEN2ARCH>& QPManagerScaleUp::getRemoteRankIndices(
             myRankOffsets[nicIndex] = 0;
             continue;
         }
-        myRankOffsets[nicIndex] = mod(dynamicComm.getMyRank(), dynamicComm.getPodSize());
+        myRankOffsets[nicIndex] = mod(dynamicComm.getMyRank(), dynamicComm.getScaleupGroupSize());
     }
     return myRankOffsets;
 }
 
-void QPManagerScaleUp::setLastRankScaleup(hcl::ScalStream& Stream,
-                                          HclDeviceGaudi3* device,
-                                          HCL_Comm         comm,
-                                          HCL_CollectiveOp collectiveOp,
-                                          bool             isSend)
+void QPManagerScaleUpGaudi3::setLastRankScaleup(hcl::ScalStream& Stream,
+                                                HclDeviceGaudi3* device,
+                                                HCL_Comm         comm,
+                                                HCL_CollectiveOp collectiveOp,
+                                                bool             isSend)
 {
     Gaudi3DevicePortMapping& portMapping = device->getPortMappingGaudi3();
     HclDynamicCommunicator& dynamicComm = device->getComm(comm);
 
     // for each scenario all nics use the same qpn
-    uint32_t qpn = getBaseQp(comm, collectiveOp, isSend);
+    uint32_t qpn = getQP(comm, getQpIndex(collectiveOp, isSend));
 
     // we need to set the port mask to 1 for port that go out to the last rank
     uint32_t portsMask = 0;
@@ -434,88 +425,190 @@ void QPManagerScaleUp::setLastRankScaleup(hcl::ScalStream& Stream,
     commands.serializeUpdateLastRank(Stream, isSend, true, qpn, portsMask);
 }
 
-void QPManagerScaleUp::registerQPs(HCL_Comm comm, const QpsVector& qp_vec, HCL_Rank remoteRank)
+void QPManagerScaleUpGaudi3::closeQPs(HCL_Comm comm, const UniqueSortedVector& ranks)
 {
-    VERIFY(MAX_QPS_PER_NIC_G3 == m_device->getHal()->getMaxQPsPerNic());
-    VERIFY(qp_vec.size() == m_device->getHal()->getMaxQPsPerNic(),
-           "Each connection should hold {} QPs but opened {} QPs for comm {}",
-           m_device->getHal()->getMaxQPsPerNic(),
-           qp_vec.size(),
-           comm);
-
-    QPManager::registerQPs(comm, qp_vec, remoteRank, SINGLE_QP_SET);
-}
-
-QPManagerScaleOut::QPManagerScaleOut(HclDeviceGaudi3* device) : QPManager(device)
-{
-    m_qpInfoDb.resize(DEFAULT_COMMUNICATORS_SIZE);
-}
-
-bool QPManagerScaleOut::isScaleUp() const
-{
-    return false;
-}
-
-QpInfo* QPManagerScaleOut::getQpInfo(HCL_Comm         comm,
-                                     HCL_CollectiveOp collectiveOp,
-                                     bool             isSend,
-                                     HCL_Rank         remoteRank,
-                                     uint8_t          qpSet)
-{
-    return getQpInfo(comm, getQpIndex(collectiveOp, isSend), remoteRank, qpSet);
-}
-
-QpInfo* QPManagerScaleOut::getQpInfo(HCL_Comm comm, unsigned index, HCL_Rank remoteRank, uint8_t qpSet)
-{
-    return &(this->m_qpInfoDb[comm][remoteRank][qpSet][index]);
-}
-
-size_t QPManagerScaleOut::getDBSize() const
-{
-    return m_qpInfoDb.size();
-}
-
-void QPManagerScaleOut::resizeDb()
-{
-    m_qpInfoDb.resize(m_qpInfoDb.size() + DEFAULT_COMMUNICATORS_SIZE);
-}
-
-std::array<uint16_t, MAX_NICS_GEN2ARCH>& QPManagerScaleOut::getRemoteRankIndices(HclDynamicCommunicator&  dynamicComm,
-                                                                                 HCL_CollectiveOp         collectiveOp,
-                                                                                 bool                     isSend,
-                                                                                 Gaudi3DevicePortMapping& portMapping,
-                                                                                 uint64_t       nicsStatusMask,
-                                                                                 const uint64_t maxNics)
-{
-    // TODO GAUDI3 SCALEOUT All2All: SW-126608
-    // we dont care about most offsets since they should all be 0, except for All2All
-    std::unique_ptr<std::array<uint16_t, MAX_NICS_GEN2ARCH>> arr(new std::array<uint16_t, MAX_NICS_GEN2ARCH>);
-    std::array<uint16_t, MAX_NICS_GEN2ARCH>&                 arrRef = *arr;
-    return arrRef;
-}
-
-/**
- * @brief allocate the QP vector buffer for new comm
- */
-void QPManagerScaleOut::allocateCommQPs(HCL_Comm comm, uint32_t comm_size)
-{
-    if (comm >= getDBSize())
+    for (auto& rank : ranks)
     {
-        LOG_HCL_DEBUG(HCL, "Resizing m_qpInfoDb for new comm({})", comm);
-        resizeDb();
+        for (unsigned qpi = 0; qpi < MAX_QPS_PER_CONNECTION_G3; qpi++)
+        {
+            for (auto nic : m_device->getActiveNics(m_device->getMyRank(comm), rank, 1, comm))
+            {
+                if (m_device->getPortMappingGaudi3().isScaleoutPort(nic)) continue;
+
+                uint32_t qpBase = m_qpInfoScaleUp.at(comm).at(qpi);
+                if (isInvalidQPn(qpBase)) continue;
+
+                uint32_t qpn = qpBase + m_device->getNicToQpOffset(nic);
+                LOG_HCL_TRACE(HCL, "closing QP: comm({}) nic({}) qpi({}) qpn({})", comm, nic, qpi, qpn);
+
+                m_device->destroyQp(nic, qpn);
+            }
+
+            m_qpInfoScaleUp.at(comm).at(qpi) = 0;
+        }
     }
-    m_qpInfoDb[comm].resize(comm_size);
 }
 
-void QPManagerScaleOut::registerQPs(HCL_Comm comm, const QpsVector& qp_vec, HCL_Rank remoteRank)
+/* ScaleOut QP Manager*/
+
+QPManagerScaleOutGaudi3::QPManagerScaleOutGaudi3(HclDeviceGaudi3* device) : QPManagerGaudi3(device)
 {
-    VERIFY(MAX_QPS_PER_NIC_G3 == m_device->getHal()->getMaxQPsPerNic());
-    uint8_t qpSets = m_device->getNumQpSets(true, comm, remoteRank);
-    VERIFY(qp_vec.size() == m_device->getHal()->getMaxQPsPerNic() * qpSets,
+    m_qpInfoScaleOut.resize(DEFAULT_COMMUNICATORS_SIZE);
+    for (auto& rank : m_qpInfoScaleOut)
+    {
+        for (auto& qpSet : rank)
+        {
+            for (auto& qpi : qpSet)
+            {
+                qpi.fill(INVALID_QP);
+            }
+        }
+    }
+}
+
+void QPManagerScaleOutGaudi3::resizeDB(HCL_Comm comm)
+{
+    size_t oldSize = m_qpInfoScaleOut.size();
+    size_t newSize = oldSize + DEFAULT_COMMUNICATORS_SIZE;
+
+    m_qpInfoScaleOut.resize(newSize);
+
+    for (unsigned index = oldSize; index < newSize; index++)
+    {
+        for (auto& qpSet : m_qpInfoScaleOut.at(index))
+        {
+            for (auto& qpi : qpSet)
+            {
+                qpi.fill(INVALID_QP);
+            }
+        }
+    }
+
+    LOG_HCL_INFO(HCL, "resizing m_qpInfoScaleOut for comm {} from {} to {}", comm, oldSize, newSize);
+}
+
+void QPManagerScaleOutGaudi3::resizeDBForComm(HCL_Comm comm, const size_t commSize)
+{
+    m_qpInfoScaleOut.at(comm).resize(commSize);
+
+    for (auto& qpSet : m_qpInfoScaleOut.at(comm))
+    {
+        for (auto& qpi : qpSet)
+        {
+            qpi.fill(INVALID_QP);
+        }
+    }
+
+    LOG_HCL_INFO(HCL, "resizing for comm {} to size {}", comm, commSize);
+}
+
+void QPManagerScaleOutGaudi3::allocateCommQPs(HCL_Comm comm, const uint32_t commSize)
+{
+    if (unlikely(comm >= m_qpInfoScaleOut.size()))
+    {
+        resizeDB(comm);
+    }
+    if (m_qpInfoScaleOut[comm].size() == 0)
+    {
+        resizeDBForComm(comm, commSize);
+    }
+}
+
+void QPManagerScaleOutGaudi3::registerQPs(HCL_Comm         comm,
+                                          const QpsVector& qps,
+                                          const HCL_Rank   remoteRank,
+                                          unsigned         qpSets)
+{
+    VERIFY(qpSets <= MAX_QPS_SETS_PER_CONNECTION);
+    VERIFY(MAX_QPS_PER_CONNECTION_G3 == m_device->getHal()->getMaxQPsPerNic());
+    VERIFY(qps.size() == m_device->getHal()->getMaxQPsPerNic() * qpSets,
            "Each connection should hold {} QPs but opened {} QPs for comm {}",
            m_device->getHal()->getMaxQPsPerNic() * qpSets,
-           qp_vec.size(),
+           qps.size(),
            comm);
 
-    QPManager::registerQPs(comm, qp_vec, remoteRank, qpSets);
+    if (unlikely(comm >= m_qpInfoScaleOut.size()))
+    {
+        resizeDB(comm);
+    }
+    if (unlikely(m_qpInfoScaleOut.at(comm).size() == 0))
+    {
+        resizeDBForComm(comm, m_device->getCommSize(comm));
+    }
+
+    for (unsigned qpSet = 0; qpSet < qpSets; qpSet++)
+    {
+        for (unsigned qpi = 0; qpi < MAX_QPS_PER_CONNECTION_G3; qpi++)
+        {
+            unsigned qpIndex = m_device->getHal()->getMaxQPsPerNic() * qpSet + qpi;
+            uint32_t qpn     = qpIndex < qps.size() ? qps[qpIndex] : INVALID_QP;
+
+            m_qpInfoScaleOut.at(comm).at(remoteRank).at(qpSet).at(qpi) = qpn;
+
+            LOG_HCL_DEBUG(HCL,
+                          "m_qpInfoScaleOut[comm {}][rank {}][qpSet {}][qpi {}] = qpn {}",
+                          comm,
+                          remoteRank,
+                          qpSet,
+                          qpi,
+                          m_qpInfoScaleOut.at(comm).at(remoteRank).at(qpSet).at(qpi));
+        }
+    }
+}
+
+uint32_t
+QPManagerScaleOutGaudi3::getQP(HCL_Comm comm, const unsigned qpi, const HCL_Rank remoteRank, const uint8_t qpSet)
+{
+    return m_qpInfoScaleOut.at(comm).at(remoteRank).at(qpSet).at(qpi);
+}
+
+uint32_t
+QPManagerScaleOutGaudi3::getQPi(HCL_Comm comm, const uint8_t nic, const uint32_t qpn, const HCL_Rank remoteRank)
+{
+    for (unsigned qpSet = 0; qpSet < MAX_QPS_SETS_PER_CONNECTION; qpSet++)
+    {
+        for (unsigned qpi = 0; qpi < MAX_QPS_PER_CONNECTION_G3; qpi++)
+        {
+            if (m_qpInfoScaleOut.at(comm).at(remoteRank).at(qpSet).at(qpi) + m_device->getNicToQpOffset(nic) == qpn)
+            {
+                return qpi;
+            }
+        }
+    }
+
+    VERIFY(false, "could not find a match for comm {} rank {} nic {} qpn {}", comm, remoteRank, nic, qpn);
+    return 0;
+}
+
+void QPManagerScaleOutGaudi3::closeQPs(HCL_Comm comm, const UniqueSortedVector& ranks)
+{
+    const nics_mask_t myScaleOutPorts = m_device->getPortMappingGaudi3().getScaleOutPorts();
+    for (auto& rank : ranks)
+    {
+        for (unsigned qpSet = 0; qpSet < MAX_QPS_SETS_PER_CONNECTION; qpSet++)
+        {
+            for (unsigned qpi = 0; qpi < MAX_QPS_PER_CONNECTION_G3; qpi++)
+            {
+                for (auto nic : myScaleOutPorts)
+                {
+                    const uint32_t qpBase = m_qpInfoScaleOut.at(comm).at(rank).at(qpSet).at(qpi);
+                    if (isInvalidQPn(qpBase)) continue;
+
+                    const uint32_t qpn = qpBase + m_device->getNicToQpOffset(nic);
+                    LOG_HCL_TRACE(HCL,
+                                  "closing QP: comm({}) rank({}) nic({}) qpSet({}) qpi({}) qpn({})",
+                                  comm,
+                                  rank,
+                                  nic,
+                                  qpSet,
+                                  qpi,
+                                  qpn);
+
+                    m_device->destroyQp(nic, qpn);
+                }
+
+                m_qpInfoScaleOut.at(comm).at(rank).at(qpSet).at(qpi) = 0;
+            }
+        }
+    }
 }

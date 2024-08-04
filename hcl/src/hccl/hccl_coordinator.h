@@ -58,8 +58,8 @@ private:
     void processNewBootstrapConn(int new_socket, hcclBsCommInfo& commInfo);
     void processCommInitHandshake1(int socket, RankInfoHeader& payload);
     void processCommInitHandshake2(int socket, std::vector<uint8_t>& payload);
-    void process_sync_between_ranks_msg(int socket, hccl_bootstrap_general_payload_t& payload);
-    void process_comm_destroy_msg(int socket, hccl_bootstrap_general_payload_t& payload);
+    void process_sync_between_ranks_msg(hccl_bootstrap_general_payload_t& payload);
+    void process_comm_destroy_msg(hccl_bootstrap_general_payload_t& payload);
     void process_ranks_exchange_msg(int socket, msg_header_t& hdr, std::vector<uint8_t>& payload);
     void processCollectiveLog(const CollectiveLogMessage& msg);
     void processCollectiveLogMsg(const CollectiveLogMessage& msg);

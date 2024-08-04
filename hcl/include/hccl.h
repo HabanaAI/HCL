@@ -127,14 +127,14 @@ int hcclLookupDMABuff(uint64_t addr, uint64_t size, int* fd);
  *
  * In-place operation will happen if sendbuff == recvbuff.
  */
-hcclResult_t hcclReduce(const void*     sendbuff,
-                        void*           recvbuff,
-                        size_t          count,
-                        hcclDataType_t  datatype,
-                        hcclRedOp_t     reduceOp,
-                        int             root,
-                        hcclComm_t      comm,
-                        synStreamHandle stream_handle);
+hcclResult_t hcclReduce(const void*    sendbuff,
+                        void*          recvbuff,
+                        size_t         count,
+                        hcclDataType_t datatype,
+                        hcclRedOp_t    reduceOp,
+                        int            root,
+                        hcclComm_t     comm,
+                        void*          stream_handle);
 
 /*
  * (deprecated) Broadcast (in-place)
@@ -146,8 +146,7 @@ hcclResult_t hcclReduce(const void*     sendbuff,
  * This operation is implicitely in place.
  */
 hcclResult_t
-hcclBcast(void* buff, size_t count, hcclDataType_t datatype, int root, hcclComm_t comm, synStreamHandle stream_handle);
-
+hcclBcast(void* buff, size_t count, hcclDataType_t datatype, int root, hcclComm_t comm, void* stream_handle);
 
 /*
  * Broadcast
@@ -158,13 +157,13 @@ hcclBcast(void* buff, size_t count, hcclDataType_t datatype, int root, hcclComm_
  *
  * In-place operation will happen if sendbuff == recvbuff.
  */
-hcclResult_t hcclBroadcast(const void*     sendbuff,
-                           void*           recvbuff,
-                           size_t          count,
-                           hcclDataType_t  datatype,
-                           int             root,
-                           hcclComm_t      comm,
-                           synStreamHandle stream_handle);
+hcclResult_t hcclBroadcast(const void*    sendbuff,
+                           void*          recvbuff,
+                           size_t         count,
+                           hcclDataType_t datatype,
+                           int            root,
+                           hcclComm_t     comm,
+                           void*          stream_handle);
 
 /*
  * All-Reduce
@@ -174,13 +173,13 @@ hcclResult_t hcclBroadcast(const void*     sendbuff,
  *
  * In-place operation will happen if sendbuff == recvbuff.
  */
-hcclResult_t hcclAllReduce(const void*     sendbuff,
-                           void*           recvbuff,
-                           size_t          count,
-                           hcclDataType_t  datatype,
-                           hcclRedOp_t     reduceOp,
-                           hcclComm_t      comm,
-                           synStreamHandle stream_handle);
+hcclResult_t hcclAllReduce(const void*    sendbuff,
+                           void*          recvbuff,
+                           size_t         count,
+                           hcclDataType_t datatype,
+                           hcclRedOp_t    reduceOp,
+                           hcclComm_t     comm,
+                           void*          stream_handle);
 
 /*
  * Reduce-Scatter
@@ -193,13 +192,13 @@ hcclResult_t hcclAllReduce(const void*     sendbuff,
  *
  * In-place operations will happen if recvbuff == sendbuff + rank * recvcount.
  */
-hcclResult_t hcclReduceScatter(const void*     sendbuff,
-                               void*           recvbuff,
-                               size_t          recvcount,
-                               hcclDataType_t  datatype,
-                               hcclRedOp_t     reduceOp,
-                               hcclComm_t      comm,
-                               synStreamHandle stream_handle);
+hcclResult_t hcclReduceScatter(const void*    sendbuff,
+                               void*          recvbuff,
+                               size_t         recvcount,
+                               hcclDataType_t datatype,
+                               hcclRedOp_t    reduceOp,
+                               hcclComm_t     comm,
+                               void*          stream_handle);
 
 /*
  * All-Gather
@@ -211,12 +210,12 @@ hcclResult_t hcclReduceScatter(const void*     sendbuff,
  *
  * In-place operations will happen if sendbuff == recvbuff + rank * sendcount.
  */
-hcclResult_t hcclAllGather(const void*     sendbuff,
-                           void*           recvbuff,
-                           size_t          sendcount,
-                           hcclDataType_t  datatype,
-                           hcclComm_t      comm,
-                           synStreamHandle stream_handle);
+hcclResult_t hcclAllGather(const void*    sendbuff,
+                           void*          recvbuff,
+                           size_t         sendcount,
+                           hcclDataType_t datatype,
+                           hcclComm_t     comm,
+                           void*          stream_handle);
 
 /*
  * AlltoAll
@@ -225,19 +224,19 @@ hcclResult_t hcclAllGather(const void*     sendbuff,
  *
  *
  */
-hcclResult_t hcclAlltoAll(const void*     sendbuff,
-                          void*           recvbuff,
-                          size_t          count,
-                          hcclDataType_t  datatype,
-                          hcclComm_t      comm,
-                          synStreamHandle stream_handle);
+hcclResult_t hcclAlltoAll(const void*    sendbuff,
+                          void*          recvbuff,
+                          size_t         count,
+                          hcclDataType_t datatype,
+                          hcclComm_t     comm,
+                          void*          stream_handle);
 
 /*
  * Barrier
  * Wait on syncing between all the ranks in the communicator
  * This function is blocking only in TCP mode
  */
-hcclResult_t hcclBarrier(hcclComm_t comm, synStreamHandle stream_handle);
+hcclResult_t hcclBarrier(hcclComm_t comm, void* stream_handle);
 
 /*
  * Point to Point communications
@@ -253,12 +252,8 @@ hcclResult_t hcclBarrier(hcclComm_t comm, synStreamHandle stream_handle);
  * \count from this rank. Blocking for HPU unless operation is part of group within hcclGroupStart() and hcclGroupEnd()
  * section.
  */
-hcclResult_t hcclSend(const void*     sendbuff,
-                      size_t          count,
-                      hcclDataType_t  datatype,
-                      int             peer,
-                      hcclComm_t      comm,
-                      synStreamHandle stream);
+hcclResult_t
+hcclSend(const void* sendbuff, size_t count, hcclDataType_t datatype, int peer, hcclComm_t comm, void* stream);
 
 /*
  * Receive
@@ -267,8 +262,7 @@ hcclResult_t hcclSend(const void*     sendbuff,
  * Rank \peer needs to call hcclSend with the same \datatype and the same \count to this rank.
  * Blocking for HPU unless operation is part of group within hcclGroupStart() and hcclGroupEnd() section.
  */
-hcclResult_t
-hcclRecv(void* recvbuff, size_t count, hcclDataType_t datatype, int peer, hcclComm_t comm, synStreamHandle stream);
+hcclResult_t hcclRecv(void* recvbuff, size_t count, hcclDataType_t datatype, int peer, hcclComm_t comm, void* stream);
 
 /*
  * Group semantics

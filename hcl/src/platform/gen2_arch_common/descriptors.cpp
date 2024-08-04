@@ -91,7 +91,7 @@ void NativeScaleoutDescriptor::run(SliceState& sliceState)
     const unsigned collectiveContextIndex = m_archStreamIdx * 2 + m_uarchStreamIdx;
 
     // prepare next remoteRank to receive data from
-    HCL_Rank remoteRank = sliceState.m_dynamicComm.getPodToRankMap()[sliceState.m_boxNumInfo.m_boxNum];
+    HCL_Rank remoteRank = sliceState.m_dynamicComm.getScaleupGroupToRankMap()[sliceState.m_boxNumInfo.m_boxNum];
     int      remoteRankToRsi =
         m_collectiveRoutines.getRemoteRankToRsi(sliceState, sliceState.m_isSend, remoteRank, m_uarchStreamIdx == 1);
 
@@ -112,8 +112,8 @@ void NativeScaleoutDescriptor::run(SliceState& sliceState)
     else
     {
         unsigned boxIter =
-            mod(sliceState.m_boxNumInfo.m_boxNum + sliceState.m_boxIterations - sliceState.m_dynamicComm.getMyPod(),
-                sliceState.m_boxIterations);
+            mod(sliceState.m_boxNumInfo.m_boxNum + sliceState.m_boxIterations -
+                    sliceState.m_dynamicComm.getMyScaleupGroup(), sliceState.m_boxIterations);
         doReduction = sliceState.m_isReductionCollective && boxIter >= sliceState.m_reproScaleoutBuffersAmount;
     }
 
@@ -131,7 +131,7 @@ void NativeScaleoutDescriptor::run(SliceState& sliceState)
               sliceState.getQpSet(),
               doReduction);
 
-    ScaleOutCollectiveOp op {sliceState.m_dynamicComm.getMyPod(),
+    ScaleOutCollectiveOp op {sliceState.m_dynamicComm.getMyScaleupGroup(),
                              remoteRankToRsi,
                              sliceState.m_dynamicComm,
                              sliceState.m_currentOp,
@@ -176,7 +176,7 @@ void NativeNonCollectiveScaleoutDescriptor::run(NonCollectiveState& nonCollectiv
     HCL_Rank             remoteRank = nonCollectiveState.m_remoteRank;
 
     ScaleOutCollectiveOp op {
-        nonCollectiveState.m_dynamicComm.getMyPod(),  // myPod
+        nonCollectiveState.m_dynamicComm.getMyScaleupGroup(),  // myScaleupGroup
         0,  // remoteRanksToRSI - offset of where to get data from for each remote rank. In case of send its always 0
         nonCollectiveState.m_dynamicComm,                   // comm
         eHCLNoCollective,                                   // collectiveOp
@@ -248,7 +248,7 @@ void LibfabricScaleoutDescriptor::run(SliceState& sliceState)
                                      ->getCurrentMappedBuffer(sliceState.m_isSend ? HNIC_SEND_POOL : HNIC_RECV_POOL);
     uint64_t hostAddress = provider.getHostBufferManager(m_archStreamIdx)
                                ->getCurrentBuffer(sliceState.m_isSend ? HNIC_SEND_POOL : HNIC_RECV_POOL);
-    HCL_Rank remoteRank         = sliceState.m_dynamicComm.getPodToRankMap()[sliceState.m_boxNumInfo.m_boxNum];
+    HCL_Rank remoteRank         = sliceState.m_dynamicComm.getScaleupGroupToRankMap()[sliceState.m_boxNumInfo.m_boxNum];
     unsigned hostUarchStreamIdx = getHostUarchStreamIdx();
 
     uint32_t remoteRankIteration = sliceState.m_all2allIter;
@@ -321,7 +321,8 @@ void LibfabricScaleoutDescriptor::run(SliceState& sliceState)
                                                                          sliceState.m_comm,
                                                                          fence.index,
                                                                          compParams,
-                                                                         sendHostStream->getSrCount());
+                                                                         sendHostStream->getSrCount(),
+                                                                         sliceState.getQpSet());
 
         LOG_HCL_TRACE(HCL, "scaleout send's completion will signal to {}", m_utils->printSOBInfo(sob));
         HostSchedCommandsGen2Arch::serializeHostWaitForCompletionCommand(waitForCompHostStream->getOuterQueue(),
@@ -354,7 +355,8 @@ void LibfabricScaleoutDescriptor::run(SliceState& sliceState)
                                                                          sliceState.m_comm,
                                                                          fence.index,
                                                                          compParams,
-                                                                         recvHostStream->getSrCount());
+                                                                         recvHostStream->getSrCount(),
+                                                                         sliceState.getQpSet());
 
         LOG_HCL_TRACE(HCL, "scaleout recv's completion will signal to {}", m_utils->printSOBInfo(sob));
         HostSchedCommandsGen2Arch::serializeHostWaitForCompletionCommand(waitForCompHostStream->getOuterQueue(),
@@ -435,9 +437,7 @@ void LibfabricNonCollectiveScaleoutDescriptor::run(NonCollectiveState& nonCollec
     unsigned                   hostUarchStreamIdx = getHostUarchStreamIdx();
 
     const uint32_t size =
-        nonCollectiveState.m_execution.m_deviceCount *
-        dataTypeSizeInBytes(nonCollectiveState.m_dataType);  // TODO - not good - we implicitly mult 64bits * unsigned
-                                                             // and store it in 32 bits w/o check.
+        nonCollectiveState.m_execution.m_deviceCount * dataTypeSizeInBytes(nonCollectiveState.m_dataType);
     LOG_HCL_TRACE(HCL,
                   "(NonCollectiveState): hostMappedAddress=0x{:x}, hostAddress=0x{:x}, size={}, remoteRank={}, "
                   "m_recvFenceValue={}, m_isSend={}",
@@ -503,7 +503,8 @@ void LibfabricNonCollectiveScaleoutDescriptor::run(NonCollectiveState& nonCollec
                                                                          nonCollectiveState.m_comm,
                                                                          fence.index,
                                                                          compParams,
-                                                                         sendHostStream->getSrCount());
+                                                                         sendHostStream->getSrCount(),
+                                                                         nonCollectiveState.getQpSet());
         LOG_HCL_TRACE(HCL,
                       "scaleout send's completion will signal to {} [0x{:x}]",
                       m_collectiveRoutines.getScalUtils()->printSOBInfo(sob),
@@ -548,7 +549,8 @@ void LibfabricNonCollectiveScaleoutDescriptor::run(NonCollectiveState& nonCollec
                                                                     size,
                                                                     nonCollectiveState.m_comm,
                                                                     compParams,
-                                                                    recvHostStream->getSrCount());
+                                                                    recvHostStream->getSrCount(),
+                                                                    nonCollectiveState.getQpSet());
         LOG_HCL_TRACE(HCL,
                       "scaleout recv's completion will signal to {}",
                       m_collectiveRoutines.getScalUtils()->printSOBInfo(sob1));
@@ -633,7 +635,7 @@ GaudiDirectNonCollectiveScaleoutDescriptor::GaudiDirectNonCollectiveScaleoutDesc
 void GaudiDirectScaleoutDescriptor::run(SliceState& sliceState)
 {
     LibfabricScaleoutProvider& provider   = dynamic_cast<LibfabricScaleoutProvider&>(m_scaleoutProvider);
-    HCL_Rank remoteRank = sliceState.m_dynamicComm.getPodToRankMap()[sliceState.m_boxNumInfo.m_boxNum];
+    HCL_Rank remoteRank = sliceState.m_dynamicComm.getScaleupGroupToRankMap()[sliceState.m_boxNumInfo.m_boxNum];
 
     uint32_t remoteRankIteration = sliceState.m_all2allIter;
     uint32_t dataSize            = sliceState.m_execution.m_cellCount * sliceState.m_dataTypeSizeInBytes;
@@ -701,7 +703,8 @@ void GaudiDirectScaleoutDescriptor::run(SliceState& sliceState)
                                                                              sliceState.m_comm,
                                                                              fence.index,
                                                                              compParams,
-                                                                             sendHostStream->getSrCount());
+                                                                             sendHostStream->getSrCount(),
+                                                                             sliceState.getQpSet());
 
             LOG_HCL_TRACE(HCL, "scaleout send's completion will signal to {}", m_utils->printSOBInfo(sob));
             HostSchedCommandsGen2Arch::serializeHostWaitForCompletionCommand(waitForCompHostStream->getOuterQueue(),
@@ -748,7 +751,8 @@ void GaudiDirectScaleoutDescriptor::run(SliceState& sliceState)
                                                                              sliceState.m_comm,
                                                                              fence.index,
                                                                              compParams,
-                                                                             recvHostStream->getSrCount());
+                                                                             recvHostStream->getSrCount(),
+                                                                             sliceState.getQpSet());
 
             LOG_HCL_TRACE(HCL, "scaleout recv's completion will signal to {}", m_utils->printSOBInfo(sob));
             HostSchedCommandsGen2Arch::serializeHostWaitForCompletionCommand(waitForCompHostStream->getOuterQueue(),
@@ -778,9 +782,7 @@ void GaudiDirectNonCollectiveScaleoutDescriptor::run(NonCollectiveState& nonColl
     const sob_info             sob(m_collectiveRoutines.getScalUtils()->getSOBInfo(soAddr));
 
     const uint32_t size =
-        nonCollectiveState.m_execution.m_deviceCount *
-        dataTypeSizeInBytes(nonCollectiveState.m_dataType);  // TODO - not good - we implicitly mult 64bits * unsigned
-                                                             // and store it in 32 bits w/o check.
+        nonCollectiveState.m_execution.m_deviceCount * dataTypeSizeInBytes(nonCollectiveState.m_dataType);
     LOG_HCL_TRACE(HCL,
                   "(NonCollectiveState): deviceAddr=0x{:x}, size={}, remoteRank={}, m_recvFenceValue={}, m_isSend={}",
                   deviceAddr,
@@ -827,7 +829,8 @@ void GaudiDirectNonCollectiveScaleoutDescriptor::run(NonCollectiveState& nonColl
                                                                          nonCollectiveState.m_comm,
                                                                          fence.index,
                                                                          compParams,
-                                                                         sendHostStream->getSrCount());
+                                                                         sendHostStream->getSrCount(),
+                                                                         nonCollectiveState.getQpSet());
 
         HostSchedCommandsGen2Arch::serializeHostWaitForCompletionCommand(waitForCompHostStream->getOuterQueue(),
                                                                          nonCollectiveState.m_comm,
@@ -871,7 +874,8 @@ void GaudiDirectNonCollectiveScaleoutDescriptor::run(NonCollectiveState& nonColl
                                                                     size,
                                                                     nonCollectiveState.m_comm,
                                                                     compParams,
-                                                                    recvHostStream->getSrCount());
+                                                                    recvHostStream->getSrCount(),
+                                                                    nonCollectiveState.getQpSet());
 
         HostSchedCommandsGen2Arch::serializeHostWaitForCompletionCommand(waitForCompHostStream->getOuterQueue(),
                                                                          nonCollectiveState.m_comm,

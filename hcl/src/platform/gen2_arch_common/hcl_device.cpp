@@ -22,6 +22,7 @@
 #include "hcl_math_utils.h"
 #include "libfabric/mr_mapping.h"  // for MRMapping
 #include "platform/gen2_arch_common/hcl_device_controller.h"
+#include "platform/gen2_arch_common/port_mapping_config.h"  // for SCALEOUT_DEVICE_ID
 
 class HclCommandsGen2Arch;
 class DeviceBufferManager;
@@ -45,10 +46,14 @@ HclDeviceGen2Arch::HclDeviceGen2Arch(HclDeviceControllerGen2Arch& controller, Hc
 {
     setLogContext(deviceConfig.getHwModuleId(), deviceConfig.getHostName(), (uint64_t)pthread_self());
 
-    VERIFY(GCFG_HCL_SCALE_OUT_QP_SETS.value() <= MAX_QPS_SETS_PER_CONNECTION,
-           "HCL_NUM_QP_SETS (0x{:x}) is expected to be equal or less than MAX_QPS_SETS_PER_CONNECTION (0x{:x})",
-           GCFG_HCL_SCALE_OUT_QP_SETS.value(),
+    VERIFY(GCFG_HCL_GNIC_SCALE_OUT_QP_SETS.value() <= MAX_QPS_SETS_PER_CONNECTION,
+        "HCL_GNIC_SCALE_OUT_QP_SETS (0x{:x}) is expected to be equal or less than MAX_QPS_SETS_PER_CONNECTION (0x{:x})",
+        GCFG_HCL_GNIC_SCALE_OUT_QP_SETS.value(),
            MAX_QPS_SETS_PER_CONNECTION);
+    VERIFY(GCFG_HCL_HNIC_SCALE_OUT_QP_SETS.value() <= MAX_HNIC_CONNECTION_SETS,
+           "HCL_HNIC_SCALE_OUT_QP_SETS (0x{:x}) is expected to be equal or less than MAX_HNIC_CONNECTION_SETS (0x{:x})",
+           GCFG_HCL_HNIC_SCALE_OUT_QP_SETS.value(),
+           MAX_HNIC_CONNECTION_SETS);
 
     char busId[13] {};
     int  res = hlthunk_get_pci_bus_id_from_fd(deviceConfig.m_fd, busId, sizeof(busId));
@@ -57,28 +62,18 @@ HclDeviceGen2Arch::HclDeviceGen2Arch(HclDeviceControllerGen2Arch& controller, Hc
         LOG_ERR(HCL, "Failed to get busId from fd {} for interfaces", deviceConfig.m_fd);
     }
 
-    m_ethStats.init(busId);  // TODO: consider moving this out of ctor
+    m_ethStats.init(busId);
     m_portMappingConfig.parseConfig(GCFG_HCL_PORT_MAPPING_CONFIG.value());  // parse json port mapping file if exists
 }
 
 uint32_t HclDeviceGen2Arch::createQp(uint32_t port, uint8_t qpId)
 {
-    if (GCFG_HCL_USE_IBVERBS.value())
-    {
-        return g_ibv.create_qp(isSender(qpId), port) ;
-    }
-
-    return IHclDevice::createQp(port, qpId);
+    return g_ibv.create_qp(isSender(qpId), port) ;
 }
 
 bool HclDeviceGen2Arch::isNicUp(uint32_t nic)
 {
-    if (GCFG_HCL_USE_IBVERBS.value())
-    {
-        return g_ibv.is_nic_up(nic);
-    }
-
-    return IHclDevice::isNicUp(nic);
+    return g_ibv.is_nic_up(nic);
 }
 
 void HclDeviceGen2Arch::updateRankHasQp(const HCL_Comm comm, const HCL_Rank remoteRank)
@@ -120,10 +115,7 @@ HclDeviceGen2Arch::~HclDeviceGen2Arch() noexcept(false)
     delete m_sibContainer;
     delete m_scaleoutProvider;
 
-    if (GCFG_HCL_USE_IBVERBS.value())
-    {
-        g_ibv.close();
-    }
+    g_ibv.close();
 }
 
 hcclResult_t HclDeviceGen2Arch::openQpsHLS(HCL_Comm comm)
@@ -162,13 +154,18 @@ HclDeviceGen2Arch::getActiveNics(HCL_Rank fromRank, HCL_Rank toRank, int physica
         return it->second;
     }
 
-    int deviceId = getComm(comm).isRankInsidePod(toRank)
-                       ? getComm(comm).m_remoteDevices[toRank]->header.hwModuleID
-                       : -1;
+    const int deviceId = getComm(comm).isRankInsideScaleupGroup(toRank)
+                             ? getComm(comm).m_remoteDevices[toRank]->header.hwModuleID
+                             : SCALEOUT_DEVICE_ID;
 
     nics_mask_t result = getAllPorts(deviceId, getComm(comm).getSpotlightType());
-    VERIFY(result.count() <= COMPACT_RANK_INFO_NICS,
+
+    VERIFY(result.count() <= ((SCALEOUT_DEVICE_ID == (unsigned)deviceId)
+                                  ? getPortMapping().getMaxNumScaleOutPorts()
+                                  : getHal()->getMaxNumScaleUpPortsPerConnection()),
+
            "invalid number of active nics({}) from rank({}) to rank({})",
+
            result.count(),
            fromRank,
            toRank);
@@ -307,7 +304,6 @@ void HclDeviceGen2Arch::checkSignals()
             }
         }
 
-        // TODO: add more signals checks
         if (anyRegNonZero)
         {
             failedCheckSignals = true;
@@ -339,134 +335,41 @@ hcclResult_t HclDeviceGen2Arch::destroy(bool force)
 hcclResult_t
 HclDeviceGen2Arch::setupQps(HCL_Comm comm, HCL_Rank rank, uint32_t stream, uint32_t port, uint32_t qpn, uint8_t qpSet)
 {
-    if (GCFG_HCL_USE_IBVERBS.value())
-    {
+    const uint16_t   peerNic = getPeerNic(rank, comm, port);
+    GaudiNicAddress& remoteNicAddress =
+        getComm(comm).m_remoteDevices[rank]->device.gaudiNicAddresses.nics[peerNic];
 
-        uint16_t peerNic = getPeerNic(rank, comm, port);
-        GaudiNicAddress& remoteNicAddress =
-            getComm(comm).m_remoteDevices[rank]->device.gaudiNicAddresses.nics[peerNic];
+    GaudiNicQPs::NicQPs& remoteQPs =
+        getComm(comm).m_remoteDevices[rank]->remoteInfo.gaudiNicQPs[peerNic];
+    uint32_t         qpi    = getQpi(comm, port, rank, qpn, qpSet);
+    GaudiNicAddress& srcNic = getComm(comm).m_rankInfo.device.gaudiNicAddresses.nics[port];
 
-        GaudiNicQPs::NicQPs& remoteQPs =
-            getComm(comm).m_remoteDevices[rank]->remoteInfo.gaudiNicQPs[peerNic];
-        uint32_t         qpi    = getQpi(comm, port, rank, qpn, qpSet);
-        GaudiNicAddress& srcNic = getComm(comm).m_rankInfo.device.gaudiNicAddresses.nics[port];
-
-        uint8_t lagIdx, lastInLag;
-        getLagInfo(port, lagIdx, lastInLag, getComm(comm).getSpotlightType());
-
-        LOG_HCL_TRACE(HCL,
-                      "comm({}), rank({}), stream({}), port({}), qpn({}), qpSet({}) calling getDestQpi({})",
-                      comm,
-                      rank,
-                      stream,
-                      port,
-                      qpn,
-                      qpSet,
-                      qpi);
-        g_ibv.set_qp_ctx(qpn,
-                         port,
-                         srcNic.ip,
-                         srcNic.mac.u64,
-                         remoteNicAddress.ip,
-                         remoteNicAddress.mac.u64,
-                         remoteQPs.qp[qpSet][getDestQpi(qpi)],
-                         lagIdx,
-                         lastInLag);
-
-        return hcclSuccess;
-    }
-
-    return IHclDevice::setupQps(comm, rank, stream, port, qpn, qpSet);
-}
-
-void HclDeviceGen2Arch::updateRequesterContext(hlthunk_requester_conn_ctx& req_ctx,
-                                               HCL_Comm                    comm,
-                                               uint8_t                     nic,
-                                               HCL_Rank                    remoteRank,
-                                               uint32_t                    qpn,
-                                               uint8_t                     qpSet)
-{
-    uint8_t peerNic = getPeerNic(remoteRank, comm, nic);
-
-    GaudiNicQPs::NicQPs& remoteNicQPs =
-        getComm(comm).m_remoteDevices[remoteRank]->remoteInfo.gaudiNicQPs[peerNic];
-
-    unsigned qpi    = getQpi(comm, nic, remoteRank, qpn, qpSet);
-    bool  sender = isSender(qpi);
+    uint8_t lagIdx, lastInLag;
+    getLagInfo(port, lagIdx, lastInLag, getComm(comm).getSpotlightType());
 
     LOG_HCL_TRACE(HCL,
-                  "comm({}), nic({}) remoteRank({}), qpn({}), qpSet({}) calling getDestQpi({})",
-                  comm,
-                  nic,
-                  remoteRank,
-                  qpn,
-                  qpSet,
-                  qpi);
-    req_ctx.dst_conn_id        = remoteNicQPs.qp[qpSet][getDestQpi(qpi)];
-    req_ctx.wq_remote_log_size = std::log2(getSenderWqeTableSize());  // This should equal to log of the wq table size
-    req_ctx.wq_type            = sender ? WQ_RENDEZVOUS_WRITE : WQ_WRITE; // 3 : 1
-    req_ctx.mtu                = GCFG_MTU_SIZE.value();
+                    "comm({}), rank({}), stream({}), port({}), peerNic={}, qpn({}), qpSet({}) calling getDestQpi({})",
+                    comm,
+                    rank,
+                    stream,
+                    port,
+                    peerNic,
+                    qpn,
+                    qpSet,
+                    qpi);
 
-    if (sender)
-    {
-        req_ctx.wq_size = getSenderWqeTableSize();
-    }
-    else
-    {
-        req_ctx.wq_size = getReceiverWqeTableSize();
-    }
-    getLagInfo(nic, req_ctx.coll_lag_idx, req_ctx.coll_last_in_lag, getComm(comm).getSpotlightType());
+    g_ibv.set_qp_ctx(qpn,
+                    port,
+                    srcNic.ip,
+                    srcNic.mac.u64,
+                    remoteNicAddress.ip,
+                    remoteNicAddress.mac.u64,
+                    remoteQPs.qp[qpSet][getDestQpi(qpi)],
+                     lagIdx,
+                     lastInLag);
 
-    LOG_HCL_TRACE(HCL,
-                  "rank={} nic={} qpn={} qpi={}({}), lag_idx={}, last_in_lag={}, dest_conn_id={}",
-                  remoteRank,
-                  nic,
-                  qpn,
-                  qpi,
-                  sender ? "send" : "recv",
-                  req_ctx.coll_lag_idx,
-                  req_ctx.coll_last_in_lag,
-                  req_ctx.dst_conn_id);
-}
+    return hcclSuccess;
 
-void HclDeviceGen2Arch::updateResponderContext(hlthunk_responder_conn_ctx& res_ctx,
-                                               HCL_Comm                    comm,
-                                               uint8_t                     nic,
-                                               HCL_Rank                    remoteRank,
-                                               uint32_t                    qpn,
-                                               uint8_t                     qpSet)
-{
-    uint8_t peerNic = getPeerNic(remoteRank, comm, nic);
-
-    GaudiNicQPs::NicQPs& remoteNicQPs =
-        getComm(comm).m_remoteDevices[remoteRank]->remoteInfo.gaudiNicQPs[peerNic];
-
-    unsigned qpi    = getQpi(comm, nic, remoteRank, qpn, qpSet);
-    bool  sender = isSender(qpi);
-
-    // If this QP is for a Recv() path, we need to tell it what is the Send() QP so it will know to sync with it
-    LOG_HCL_TRACE(HCL,
-                  "comm({}), nic({}) remoteRank({}), qpn({}), qpSet({}) calling getDestQpi({})",
-                  comm,
-                  nic,
-                  remoteRank,
-                  qpn,
-                  qpSet,
-                  qpi);
-    res_ctx.dst_conn_id         = remoteNicQPs.qp[qpSet][getDestQpi(qpi)];
-    res_ctx.wq_peer_granularity = 0;  // no multistride
-    res_ctx.conn_peer           = qpn;
-    res_ctx.rdv                 = sender;
-    res_ctx.wq_peer_size        = getReceiverWqeTableSize();  // G3 only
-
-    LOG_HCL_TRACE(HCL,
-                  "rank={} nic={} qpn={} qpi={}({}), dest_conn_id={}",
-                  remoteRank,
-                  nic,
-                  qpn,
-                  qpi,
-                  sender ? "send" : "recv",
-                  res_ctx.dst_conn_id);
 }
 
 bool HclDeviceGen2Arch::isDramAddressValid(uint64_t addr) const
@@ -496,7 +399,6 @@ ScaleoutProvider* HclDeviceGen2Arch::getScaleOutProvider()
     return m_scaleoutProvider;
 }
 
-// TODO: need to be pure virtual and empty impl move to G3
 hcclResult_t HclDeviceGen2Arch::openQps(HCL_Comm comm, const UniqueSortedVector& ranks)
 {
     VERIFY(false, "HclDeviceGen2Arch::openQps - not implemented yet");
@@ -668,27 +570,12 @@ void HclDeviceGen2Arch::synchronizeRemoteRanks(const HCL_Comm comm, const Unique
 
 unsigned HclDeviceGen2Arch::getEdmaEngineWorkDistributionSize()
 {
-    // edma group 1 is not in use for V3 commands
-    if (!GCFG_HCL_USE_EDMA_COMMAND_V3.value())
-    {
-        return std::max(edmaEngineGroupSizes[0], edmaEngineGroupSizes[1]);
-    }
-    else
-    {
-        return edmaEngineGroupSizes[0];
-    }
+    return edmaEngineGroupSizes[0];
 }
 
 void HclDeviceGen2Arch::destroyQp(uint32_t port, uint32_t qpn)
 {
-    if (GCFG_HCL_USE_IBVERBS.value())
-    {
-        g_ibv.destroy_qp(port, qpn);
-
-        return;
-    }
-
-    IHclDevice::destroyQp(port, qpn);
+    g_ibv.destroy_qp(port, qpn);
 }
 
 void HclDeviceGen2Arch::dfa(hl_logger::LoggerSPtr logger)
@@ -740,6 +627,16 @@ uint64_t HclDeviceGen2Arch::getDRAMBaseAddr()
     uint64_t scalBase, hbmPoolStart, allocatedSize;
     getScalManager().getHBMInfoForExport(scalBase, hbmPoolStart, allocatedSize);
     return hbmPoolStart;
+}
+
+void HclDeviceGen2Arch::setGaudiDirect()
+{
+    if (GCFG_HCCL_GAUDI_DIRECT.isSetFromUserConfig())
+    {
+        return;
+    }
+    GCFG_HCCL_GAUDI_DIRECT.setValue(true);
+    LOG_HCL_INFO(HCL, "Attempting to use gaudi direct");
 }
 
 uint8_t HclDeviceGen2Arch::getNumQpSets(bool isScaleOut, HCL_Comm comm, HCL_Rank remoteRank)

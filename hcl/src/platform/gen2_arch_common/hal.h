@@ -21,7 +21,7 @@ public:
     virtual uint32_t getMaxEDMAs() const override;
 
     virtual uint32_t getDefaultBoxSize() const override;
-    virtual uint32_t getDefaultPodSize() const override;
+    virtual uint32_t getDefaultScaleupGroupSize() const override;
 
     virtual uint64_t getFlushPCIeReg() const override = 0;
 
@@ -48,9 +48,9 @@ protected:
     std::set<HCL_HwModuleId> m_hwModuleIds;  // module ids inside the box with me
 
 private:
-    const uint32_t m_defaultBoxSize = GEN2ARCH_HLS_BOX_SIZE;
-    const uint32_t m_defaultPodSize = GEN2ARCH_HLS_BOX_SIZE;  // Amount of Gaudis with any to any connectivity
-    const uint32_t m_maxCommGroups  = DEFAULT_COMMUNICATORS_SIZE;
+    const uint32_t m_defaultBoxSize          = GEN2ARCH_HLS_BOX_SIZE;
+    const uint32_t m_defaultScaleupGroupSize = GEN2ARCH_HLS_BOX_SIZE;  // Amount of Gaudis with any to any connectivity
+    const uint32_t m_maxCommGroups           = DEFAULT_COMMUNICATORS_SIZE;
 };
 
 }  // namespace hcl

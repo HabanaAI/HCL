@@ -23,7 +23,7 @@ typedef std::array<Gen2ArchNicsBoxConfig, MAX_DYNAMIC_PORT_SCHEMES_GEN2ARCH> Gen
 
 constexpr unsigned SCALEOUT_DEVICE_ID = -1;
 constexpr unsigned NOT_CONNECTED_DEVICE_ID = -2;
-constexpr unsigned MAX_SUB_NICS            = 6;  // TODO: per server type
+constexpr unsigned MAX_SUB_NICS            = 6;
 
 class Gen2ArchPortMappingConfig
 {

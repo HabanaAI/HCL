@@ -1,28 +1,28 @@
 #include "hcl_dynamic_communicator.h"
 
-#include <algorithm>                                // for max
-#include <array>                                    // for array
-#include <cstdint>                                  // for uint16_t
-#include <set>                                      // for set
-#include <vector>                                   // for vector
-#include <cstddef>                                  // for size_t
-#include <memory>                                   // for __shared_ptr_access
-#include <string>                                   // for string, basic_st...
-#include <set>                                      // for set
+#include <algorithm>  // for max
+#include <array>      // for array
+#include <cstdint>    // for uint16_t
+#include <set>        // for set
+#include <vector>     // for vector
+#include <cstddef>    // for size_t
+#include <memory>     // for __shared_ptr_access
+#include <string>     // for string, basic_st...
+#include <set>        // for set
 
-#include "hcl_api_types.h"                          // for HCL_Rank
-#include "hccl_types.h"                             // for hcclInternalError
-#include "hcl_global_conf.h"                        // for GCFG...
-#include "interfaces/hcl_remote_device.h"           // for HclRemoteDevice
-#include "hcl_utils.h"                              // for LOG_HCL_INFO, LOG_H...
-#include "interfaces/hcl_unique_sorted_vector.h"    // for UniqueSortedVector
-#include "hcl_log_manager.h"                        // for LOG*
-#include "platform/gen2_arch_common/types.h"        // for MAX_NICS_GEN2ARCH
+#include "hcl_api_types.h"                           // for HCL_Rank
+#include "hccl_types.h"                              // for hcclInternalError
+#include "hcl_global_conf.h"                         // for GCFG...
+#include "interfaces/hcl_remote_device.h"            // for HclRemoteDevice
+#include "hcl_utils.h"                               // for LOG_HCL_INFO, LOG_H...
+#include "interfaces/hcl_unique_sorted_vector.h"     // for UniqueSortedVector
+#include "hcl_log_manager.h"                         // for LOG*
+#include "platform/gen2_arch_common/types.h"         // for MAX_NICS_GEN2ARCH
 #include "platform/gen2_arch_common/port_mapping.h"  // for Gen2ArchDevicePortMapping
 #include "hccl/hccl_context.h"                       // for hccl_context
 #include "hccl/ofi_communicator.h"                   // for ofi_communicator_handle
-#include "hcl_sockaddr.h"                           // for address_to_string
-#include "interfaces/hcl_hal.h"                     // for HalPtr
+#include "hcl_sockaddr.h"                            // for address_to_string
+#include "interfaces/hcl_hal.h"                      // for HalPtr
 #include "hcl_math_utils.h"
 #include "hcl_types.h"  // for HCL_HwModuleId
 
@@ -30,8 +30,7 @@ class IHclDevice;
 
 static constexpr unsigned MAX_SEND_RECV_PEER_COUNTER = 16;
 
-HclDynamicCommunicator::HclDynamicCommunicator(HCL_Comm comm, hcl::HalPtr hal)
-: m_commId(comm), m_hal(hal)
+HclDynamicCommunicator::HclDynamicCommunicator(HCL_Comm comm, hcl::HalPtr hal) : m_commId(comm), m_hal(hal)
 {
     m_streamLatestLongSo.resize(m_hal->getMaxStreams());
     m_streamLatestLongSo.assign(m_hal->getMaxStreams(), 0);
@@ -57,9 +56,7 @@ void HclDynamicCommunicator::setUniqueID(const internal_unique_id_t* internal_un
  * @param internal_unique_id - hccl unique id
  * @return true on success, false on failure (invalid configuration)
  */
-bool HclDynamicCommunicator::init(const uint32_t hcclCommSize,
-                                  const HCL_Rank rank,
-                                  const int      box_size)
+bool HclDynamicCommunicator::init(const uint32_t hcclCommSize, const HCL_Rank rank, const int box_size)
 {
     LOG_HCL_DEBUG(HCL,
                   "Init dynamic communicator({}) hccl ({}), rank({}), box({})",
@@ -71,11 +68,11 @@ bool HclDynamicCommunicator::init(const uint32_t hcclCommSize,
     m_commSize = hcclCommSize;
 
     // allocate maps memory
-    m_rankToPodMap.resize(hcclCommSize, INVALID_POD);
-    m_podToRankMap.resize(hcclCommSize, INVALID_RANK);
+    m_rankToScaleupGroupMap.resize(hcclCommSize, INVALID_SCALEUP_GROUP);
+    m_scaleupGroupToRankMap.resize(hcclCommSize, INVALID_RANK);
     m_remoteDevices.resize(hcclCommSize);
     m_rankInfo.remoteInfo.resize(hcclCommSize);
-    m_rankInfo.header.boxSize  = box_size;
+    m_rankInfo.header.boxSize = box_size;
 
     for (size_t i = 0; i < m_remoteDevices.size(); i++)
     {
@@ -92,27 +89,27 @@ bool HclDynamicCommunicator::init(const uint32_t hcclCommSize,
 
 bool HclDynamicCommunicator::isPeer(HCL_Rank rank) const
 {
-    return getRankInPod() == mod(rank, m_podSize);
+    return getRankInScaleupGroup() == mod(rank, m_scaleupGroupSize);
 }
 
 bool HclDynamicCommunicator::arePeers(HCL_Rank rank1, HCL_Rank rank2) const
 {
-    return mod(rank1, m_podSize) == mod(rank2, m_podSize);
+    return mod(rank1, m_scaleupGroupSize) == mod(rank2, m_scaleupGroupSize);
 }
 
-bool HclDynamicCommunicator::isRankInsidePod(HCL_Rank rank) const
+bool HclDynamicCommunicator::isRankInsideScaleupGroup(HCL_Rank rank) const
 {
-    return isRanksInSamePod(m_rankInfo.header.hcclRank, m_remoteDevices[rank]->header.hcclRank);
+    return isRanksInSameScaleupGroup(m_rankInfo.header.hcclRank, m_remoteDevices[rank]->header.hcclRank);
 }
 
-bool HclDynamicCommunicator::isPeerOrInsideSamePod(HCL_Rank rank)
+bool HclDynamicCommunicator::isPeerOrInsideSameScaleupGroup(HCL_Rank rank)
 {
     bool peer     = isPeer(rank);
-    bool isInside = isRankInsidePod(rank);
+    bool isInside = isRankInsideScaleupGroup(rank);
     return (isInside || peer);
 }
 
-bool HclDynamicCommunicator::isCommunicatorPodPeers() const
+bool HclDynamicCommunicator::isCommunicatorScaleupGroupPeers() const
 {
     for (HCL_Rank remote = 0; remote < m_commSize; remote++)
     {
@@ -124,11 +121,11 @@ bool HclDynamicCommunicator::isCommunicatorPodPeers() const
     return true;
 }
 
-bool HclDynamicCommunicator::isCommunicatorInPod() const
+bool HclDynamicCommunicator::isCommunicatorInScaleupGroup() const
 {
     for (HCL_Rank remoteRank = 0; remoteRank < m_commSize; remoteRank++)
     {
-        if (!isRankInsidePod(remoteRank))
+        if (!isRankInsideScaleupGroup(remoteRank))
         {
             return false;
         }
@@ -136,19 +133,20 @@ bool HclDynamicCommunicator::isCommunicatorInPod() const
     return true;
 }
 
-bool HclDynamicCommunicator::isCommunicatorMultiPod() const
+bool HclDynamicCommunicator::isCommunicatorMultiScaleupGroup() const
 {
-    return m_commSize > m_podSize;
+    return m_commSize > m_scaleupGroupSize;
 }
 
 bool HclDynamicCommunicator::isCommunicatorHierarchical() const
 {
-    return !isCommunicatorPodPeers() && isCommunicatorMultiPod();
+    return !isCommunicatorScaleupGroupPeers() && isCommunicatorMultiScaleupGroup();
 }
 
-bool HclDynamicCommunicator::isRanksInSamePod(HCL_Rank rank1, HCL_Rank rank2) const
+bool HclDynamicCommunicator::isRanksInSameScaleupGroup(HCL_Rank rank1, HCL_Rank rank2) const
 {
-    return ((getRemoteConnectionHeader(rank1).hcclRank / m_podSize) == (getRemoteConnectionHeader(rank2).hcclRank / m_podSize));
+    return (div((uint32_t)getRemoteConnectionHeader(rank1).hcclRank, (uint32_t)m_scaleupGroupSize) ==
+            div((uint32_t)getRemoteConnectionHeader(rank2).hcclRank, (uint32_t)m_scaleupGroupSize));
 }
 
 const RankInfoHeader& HclDynamicCommunicator::getRemoteConnectionHeader(HCL_Rank rank) const
@@ -179,30 +177,31 @@ const UniqueSortedVector& HclDynamicCommunicator::getOuterRanksInclusive()
     return m_outerRanksInclusiveCache;
 }
 
-const std::vector<uint16_t>& HclDynamicCommunicator::getRankToPodMap()
+const std::vector<uint16_t>& HclDynamicCommunicator::getRankToScaleupGroupMap()
 {
-    if (m_rankToPodMap[0] == INVALID_POD)
+    if (m_rankToScaleupGroupMap[0] == INVALID_SCALEUP_GROUP)
     {
         for (const auto& remoteRank : getRemoteRanks())
         {
-            m_rankToPodMap[remoteRank] = remoteRank / m_podSize;  // this is correct because of integer division
+            m_rankToScaleupGroupMap[remoteRank] =
+                div((uint32_t)remoteRank, (uint32_t)m_scaleupGroupSize);  // this is correct because of integer division
         }
     }
-    return m_rankToPodMap;
+    return m_rankToScaleupGroupMap;
 }
 
-const std::vector<HCL_Rank>& HclDynamicCommunicator::getPodToRankMap()
+const std::vector<HCL_Rank>& HclDynamicCommunicator::getScaleupGroupToRankMap()
 {
-    if (m_podToRankMap[0] == INVALID_RANK)
+    if (m_scaleupGroupToRankMap[0] == INVALID_RANK)
     {
         int k = 0;
         for (const auto& remoteRank : getOuterRanksInclusive())
         {
-            m_podToRankMap[k] = remoteRank;
+            m_scaleupGroupToRankMap[k] = remoteRank;
             k++;
         }
     }
-    return m_podToRankMap;
+    return m_scaleupGroupToRankMap;
 }
 
 const UniqueSortedVector& HclDynamicCommunicator::getInnerRanksExclusive()
@@ -212,7 +211,7 @@ const UniqueSortedVector& HclDynamicCommunicator::getInnerRanksExclusive()
         for (auto& remoteRank : getRemoteRanks())
         {
             if (remoteRank == m_rankInfo.header.hcclRank) continue;
-            if (isRankInsidePod(remoteRank))
+            if (isRankInsideScaleupGroup(remoteRank))
             {
                 m_innerRanksExclusiveCache.insert_sorted(remoteRank);
             }
@@ -256,17 +255,17 @@ HCL_Rank HclDynamicCommunicator::getScaleUpLastRank()
 
 HCL_Rank HclDynamicCommunicator::getScaleOutLastRank()
 {
-    return getOuterRanksInclusive()[getOuterRanksInclusive().size()-1];
+    return getOuterRanksInclusive()[getOuterRanksInclusive().size() - 1];
 }
 
-bool HclDynamicCommunicator::isLastRankInPod()
+bool HclDynamicCommunicator::isLastRankInScaleupGroup()
 {
     return getMyRank() == getScaleUpLastRank();
 }
 
-uint16_t HclDynamicCommunicator::getMyPod()
+uint16_t HclDynamicCommunicator::getMyScaleupGroup()
 {
-    return getRankToPodMap()[getMyRank()];
+    return getRankToScaleupGroupMap()[getMyRank()];
 }
 
 const UniqueSortedVector& HclDynamicCommunicator::getRanks() const
@@ -292,9 +291,9 @@ const std::vector<HCL_Rank>& HclDynamicCommunicator::getRemoteRanks() const
     return m_remoteRanks;
 }
 
-int HclDynamicCommunicator::getPodSize()
+int HclDynamicCommunicator::getScaleupGroupSize()
 {
-    return m_podSize;
+    return m_scaleupGroupSize;
 }
 
 void HclDynamicCommunicator::incCollectiveCtr()
@@ -309,7 +308,8 @@ const uint64_t HclDynamicCommunicator::getCollectiveCtr() const
 
 const uint64_t HclDynamicCommunicator::incSendCtr(int peer)
 {
-    return (m_sendCounter.size() < MAX_SEND_RECV_PEER_COUNTER || m_sendCounter.count(peer) > 0) ? ++m_sendCounter[peer] : 0;
+    return (m_sendCounter.size() < MAX_SEND_RECV_PEER_COUNTER || m_sendCounter.count(peer) > 0) ? ++m_sendCounter[peer]
+                                                                                                : 0;
 }
 
 const uint64_t HclDynamicCommunicator::getSendCtr(int peer)
@@ -319,7 +319,8 @@ const uint64_t HclDynamicCommunicator::getSendCtr(int peer)
 
 const uint64_t HclDynamicCommunicator::incRecvCtr(int peer)
 {
-    return (m_recvCounter.size() < MAX_SEND_RECV_PEER_COUNTER || m_recvCounter.count(peer) > 0) ? ++m_recvCounter[peer] : 0;
+    return (m_recvCounter.size() < MAX_SEND_RECV_PEER_COUNTER || m_recvCounter.count(peer) > 0) ? ++m_recvCounter[peer]
+                                                                                                : 0;
 }
 
 const uint64_t HclDynamicCommunicator::getRecvCtr(int peer)
@@ -364,7 +365,7 @@ hcclResult_t HclDynamicCommunicator::validateRankIds()
 
 hcclResult_t HclDynamicCommunicator::setSliceSize()
 {
-    bool isMultiNode = getCommSize() / getPodSize() > 1;
+    bool isMultiNode = div((uint32_t)getCommSize(), (uint32_t)getScaleupGroupSize()) > 1;
     if (isMultiNode && hccl_device()->getScaleOutProvider()->isGaudiDirect() &&
         !GCFG_HCL_SLICE_SIZE.isSetFromUserConfig())
     {
@@ -410,23 +411,23 @@ hcclResult_t HclDynamicCommunicator::validateComm()
     return hcclSuccess;
 }
 
-hcclResult_t HclDynamicCommunicator::setCommPodSize()
+hcclResult_t HclDynamicCommunicator::setCommScaleupGroupSize()
 {
     // for performance we want to run this only once
-    if (m_podSize != -1)
+    if (m_scaleupGroupSize != -1)
     {
-        LOG_HCL_ERR(HCL, "pod size for comm ({}) was already set", m_commId);
+        LOG_HCL_ERR(HCL, "ScaleupGroup size for comm ({}) was already set", m_commId);
         return hcclInternalError;
     }
 
     if (GCFG_HCL_NULL_SUBMIT.value())
     {
-        m_podSize = m_hal->getDefaultBoxSize();
+        m_scaleupGroupSize = m_hal->getDefaultBoxSize();
         return hcclSuccess;
     }
 
     // set a default
-    m_podSize = m_hal->getDefaultPodSize();
+    m_scaleupGroupSize = m_hal->getDefaultScaleupGroupSize();
 
     // get a vector of all the module ids per host
     std::vector<std::string> hostnames;
@@ -452,30 +453,30 @@ hcclResult_t HclDynamicCommunicator::setCommPodSize()
     const unsigned boxSize = m_hal->getDefaultBoxSize();
     // count the number of ranks in my box, adjust by boxSize for cases of server with 2 boxes
     const unsigned ranksInBox =
-        hwModulesInBox.size();  // the number of active comm ranks within the my box is the pod size
+        hwModulesInBox.size();  // the number of active comm ranks within the my box is the ScaleupGroup size
     LOG_HCL_DEBUG(HCL, "boxSize={}, ranksInBox={}, hwModulesInBox=[{}]", boxSize, ranksInBox, hwModulesInBox);
 
     // in loopback mode, its always fixed comm size even only one rank is running
     if (isLoopbackMode())
     {
-        m_podSize = GCFG_LOOPBACK_COMMUNICATOR_SIZE.value();
+        m_scaleupGroupSize = GCFG_LOOPBACK_COMMUNICATOR_SIZE.value();
     }
     else
     {
-        // "fix" pod size to match partial box size
+        // "fix" ScaleupGroup size to match partial box size
         if (ranksInBox > 0 && ranksInBox <= boxSize)
         {
             if (ranksInBox < boxSize)
             {
                 LOG_HCL_INFO(HCL,
-                             "Using partial Box: Setting Communicator ({}) Pod Size from ({}), to "
+                             "Using partial Box: Setting Communicator ({}) ScaleupGroup Size from ({}), to "
                              "amount of devices in the same host ({}) - ({})",
                              m_commId,
-                             m_hal->getDefaultPodSize(),
+                             m_hal->getDefaultScaleupGroupSize(),
                              m_rankInfo.header.hostname,
                              ranksInBox);
             }
-            m_podSize = ranksInBox;
+            m_scaleupGroupSize = ranksInBox;
         }
         else
         {
@@ -488,7 +489,7 @@ hcclResult_t HclDynamicCommunicator::setCommPodSize()
     unsigned              hostIndex = 0;
     for (auto& remote : getRemoteRanks())
     {
-        hostIndex = m_remoteDevices[remote]->header.hcclRank / m_podSize;
+        hostIndex = div((uint32_t)m_remoteDevices[remote]->header.hcclRank, (uint32_t)m_scaleupGroupSize);
         hostSizes[hostIndex]++;
     }
 
@@ -498,31 +499,32 @@ hcclResult_t HclDynamicCommunicator::setCommPodSize()
     {
         if (hostSizes[hostIndex] != ranksInBox)
         {
-            LOG_HCL_ERR(HCL,
-                        "Comm ({}) contains pods with different sized. make sure to use same amount of devices "
-                        "from each box",
-                        m_commId);
+            LOG_HCL_ERR(
+                HCL,
+                "Comm ({}) contains ScaleupGroups with different sized. make sure to use same amount of devices "
+                "from each box",
+                m_commId);
             return hcclInternalError;
         }
         hostIndex++;
     }
 
-    LOG_HCL_DEBUG(HCL, "pod size for comm ({}) was set to ({})", m_commId, m_podSize);
+    LOG_HCL_DEBUG(HCL, "ScaleupGroup size for comm ({}) was set to ({})", m_commId, m_scaleupGroupSize);
     return hcclSuccess;
 }
 
 hcclResult_t HclDynamicCommunicator::prepareAndValidateComm(bool isLoopbackModeOrNullSubmission)
 {
     hcclResult_t res;
-    res = setCommPodSize();
+    res = setCommScaleupGroupSize();
     if (res != hcclSuccess)
     {
-        LOG_HCL_ERR(HCL, "Wasn't able to find valid pod size for comm ({})", m_commId);
+        LOG_HCL_ERR(HCL, "Wasn't able to find valid ScaleupGroup size for comm ({})", m_commId);
         return res;
     }
 
     // override value from init
-    setRankInPod();
+    setRankInScaleupGroup();
 
     if (!isLoopbackModeOrNullSubmission)
     {
@@ -544,9 +546,7 @@ hcclResult_t HclDynamicCommunicator::prepareAndValidateComm(bool isLoopbackModeO
     return res;
 }
 
-// TODO: make it void, return value not used
-//       and it returns false if device already exist for newRank
-bool HclDynamicCommunicator::AddNewRemoteDevice(HCL_Rank newRank)
+void HclDynamicCommunicator::AddNewRemoteDevice(HCL_Rank newRank)
 {
     bool addRank = !m_remoteDevices[newRank]->m_initialized;
     if (addRank)
@@ -554,7 +554,6 @@ bool HclDynamicCommunicator::AddNewRemoteDevice(HCL_Rank newRank)
         m_remoteDevices[newRank]->m_initialized = true;
         m_remoteRanks.push_back(newRank);
     }
-    return addRank;
 }
 
 bool HclDynamicCommunicator::initializeHostNicBridge(const UniqueSortedVector& outerRanks)
@@ -564,7 +563,8 @@ bool HclDynamicCommunicator::initializeHostNicBridge(const UniqueSortedVector& o
                                                    getCommSize(),
                                                    outerRanks,
                                                    hccl_device(),
-                                                   m_rankInfo);
+                                                   m_rankInfo,
+                                                   getMaxScaleOutQpSetsNum());
 }
 
 const std::string HclDynamicCommunicator::getCommUniqueId() const
@@ -572,14 +572,14 @@ const std::string HclDynamicCommunicator::getCommUniqueId() const
     return m_commUniqueIdStr;
 }
 
-HCL_Rank HclDynamicCommunicator::getRankInPod() const
+HCL_Rank HclDynamicCommunicator::getRankInScaleupGroup() const
 {
-    return m_rankInPod;
+    return m_rankInScaleupGroup;
 }
 
-void HclDynamicCommunicator::setRankInPod()
+void HclDynamicCommunicator::setRankInScaleupGroup()
 {
-    m_rankInPod = getMyRank() % m_podSize;
+    m_rankInScaleupGroup = mod(getMyRank(), m_scaleupGroupSize);
 }
 
 bool HclDynamicCommunicator::setSpotlightType(unsigned spotlightType)
@@ -603,5 +603,16 @@ const unsigned HclDynamicCommunicator::getSpotlightType() const
 
 unsigned HclDynamicCommunicator::getMaxScaleOutQpSetsNum()
 {
-    return (unsigned)m_commSize < GCFG_HCL_QP_SETS_COMM_SIZE_THRESHOLD.value() ? GCFG_HCL_SCALE_OUT_QP_SETS.value() : 1;
+    if (GCFG_HCCL_OVER_OFI.value())
+    {
+        return (unsigned)m_commSize < GCFG_HCL_HNIC_QP_SETS_COMM_SIZE_THRESHOLD.value()
+                   ? GCFG_HCL_HNIC_SCALE_OUT_QP_SETS.value()
+                   : 1;
+    }
+    else
+    {
+        return (unsigned)m_commSize < GCFG_HCL_GNIC_QP_SETS_COMM_SIZE_THRESHOLD.value()
+                   ? GCFG_HCL_GNIC_SCALE_OUT_QP_SETS.value()
+                   : 1;
+    }
 }

@@ -157,15 +157,15 @@ void ApiAggregatorGen2Arch::onHandleSendRecvEntry(SendRecvApiEntry& sendRecvEntr
     {
         case ApiType::Send:
         {
-            index =
-                sendRecvEntry.isRankInsidePod ? hcl::SchedulersIndex::sendScaleUp : hcl::SchedulersIndex::sendScaleOut;
+            index = sendRecvEntry.isRankInsideScaleupGroup
+                    ? hcl::SchedulersIndex::sendScaleUp : hcl::SchedulersIndex::sendScaleOut;
 
             break;
         }
         case ApiType::Recv:
         {
             index =
-                sendRecvEntry.isRankInsidePod ? hcl::SchedulersIndex::recvScaleUp : hcl::SchedulersIndex::recvScaleOut;
+                sendRecvEntry.isRankInsideScaleupGroup ? hcl::SchedulersIndex::recvScaleUp : hcl::SchedulersIndex::recvScaleOut;
             break;
         }
         default:

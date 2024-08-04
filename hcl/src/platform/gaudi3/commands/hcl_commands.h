@@ -9,7 +9,6 @@
 
 #include "hcl_api_types.h"                                    // for HCL_Col...
 #include "platform/gen2_arch_common/types.h"                  // for GEN2ARC...
-#include "synapse_common_types.h"                             // for synData...
 #include "platform/gaudi3/send_recv_aggregator.h"             // for SendRecvArray
 #include "platform/gaudi3/nic_passthrough_handler.h"          // for pRecordWithMetadataGaudi3
 
@@ -42,7 +41,7 @@ struct ScaleUpCollectiveOpG3 : public ScaleUpCollectiveOp
     uint8_t  m_dcore;
     uint8_t  m_ssm;
     uint16_t m_sobId;
-    uint32_t m_podSize;
+    uint32_t m_ScaleupGroupSize;
     uint32_t m_qpn;
     bool     m_disregardRank;
     uint32_t m_ports_mask;
@@ -55,7 +54,7 @@ struct ScaleOutCollectiveOpG3 : public ScaleOutCollectiveOp
     uint8_t  m_dcore;
     uint8_t  m_ssm;
     uint16_t m_sobId;
-    uint32_t m_podSize;
+    uint32_t m_ScaleupGroupSize;
     uint32_t m_qpn;
     bool     m_disregardRank;
     uint32_t m_ports_mask;
@@ -87,7 +86,8 @@ public:
                                         bool                 isForScaleout        = false,
                                         uint32_t             numberOfRanks        = 0,
                                         uint32_t             numberOfReproBuffers = 0,
-                                        uint32_t             indexOfReproBuffer   = 0) override;
+                                        uint32_t             indexOfReproBuffer   = 0,
+                                        uint32_t             memsetValue          = 0) override;
 
     void serializeUpdateNicOffsets(hcl::ScalStreamBase&                     scalStream,
                                    bool                                     isSend,
@@ -169,10 +169,15 @@ public:
                                           uint32_t             data,
                                           bool                 blockUntilCompletion = false) override;
 
-    virtual void serializeFenceCommand(hcl::ScalStreamBase& scalStream,
-                                       unsigned             schedIdx,
-                                       uint32_t             fenceIndex,
-                                       uint32_t             target = 1) override;
+    virtual void serializeLbwBurstWriteCommand(hcl::ScalStreamBase&      scalStream,
+                                               unsigned                  schedIdx,
+                                               const LBWBurstDestData_t& destData,
+                                               bool                      blockUntilCompletion = false) override;
+
+    virtual void serializeFenceDecCommand(hcl::ScalStreamBase& scalStream,
+                                          unsigned             schedIdx,
+                                          uint32_t             fenceIndex,
+                                          uint32_t             target = 1) override;
 
     virtual void
     serializeFenceIncCommand(hcl::ScalStreamBase& scalStream, unsigned schedIdx, uint32_t fenceIndex) override;
@@ -184,20 +189,6 @@ public:
                                            const std::vector<sibAddressAndSize>& sibAddressesAndSizes,
                                            uint32_t                              fwStrideSize,
                                            uint64_t                              fwBaseAddress) override;
-
-    virtual void memsetIMBs(DeviceBufferManager&              imb,
-                            hcl::IntermediateBufferContainer* imbContainer,
-                            SignalsManager*                   signalsManager,
-                            SliceState&                       sendSliceState,
-                            SliceState&                       recvSliceState,
-                            unsigned int                      sizeInBytes,
-                            hcl::syncInfo                     longSo,
-                            unsigned                          schedIdx,
-                            hcl::ScalStream&                  garbageCollectionStream,
-                            HCL_StreamId                      m_streamId,
-                            e_devicePoolID                    poolId,
-                            uint8_t                           streamCtxtID,
-                            hcclDataType_t                    dataType);
 
     virtual void serializePdmaCommand(hcl::ScalStreamBase& scalStream,
                                       unsigned             schedIdx,

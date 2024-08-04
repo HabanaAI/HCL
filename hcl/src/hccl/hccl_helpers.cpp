@@ -14,7 +14,7 @@
 #include "hccl_helpers.h"
 #include "hcl_utils.h"
 #include "hccl_types.h"            // for hcclResult_t, hcclBusy, hcclInternalError, hccl...
-#include "synapse_common_types.h"  // for synAllResourcesTaken, synBusy, syn...
+#include "synapse_common_types.h"  // for synStatus
 
 hcclResult_t to_hccl_result(const hcclResult_t status)
 {
@@ -101,7 +101,6 @@ std::string to_string(const synStatus status)
     }
 }
 
-// TODO (No JIRA Ticker): Improve.
 hcclResult_t to_hccl_result(const synStatus status)
 {
     switch (status)
@@ -240,7 +239,7 @@ size_t hccl_data_type_elem_size(hcclDataType_t data_type)
         case hcclNumTypes:
             break;
     }
-    VERIFY(false, "Cannot convert '{}' to synDataType.", to_string(data_type));
+    VERIFY(false, "Cannot convert '{}' to hcclDataType_t.", to_string(data_type));
     return 0;
 }
 
@@ -295,39 +294,5 @@ const char* get_error_string(hcclResult_t result)
             return "Problem with HCCL initialization occurred.";
         default:
             return "An unknown or an invalid error";
-    }
-}
-
-synDataType to_synapse_data_type(hcclDataType_t data_type)
-{
-    switch (data_type)
-    {
-        case hcclInt8:
-            // case hcclChar:
-            return syn_type_int8;
-        case hcclUint8:
-            return syn_type_uint8;
-        case hcclInt32:
-            // case hcclInt:
-            return syn_type_int32;
-        case hcclUint32:
-            return syn_type_uint32;
-        case hcclFloat16:
-            // case hcclHalf:
-            return syn_type_fp16;
-        case hcclFloat32:
-            // case hcclFloat:
-            return syn_type_float;
-        case hcclBfloat16:
-            return syn_type_bf16;
-
-        case hcclInt64:
-        case hcclUint64:
-        case hcclFloat64:
-        // case hcclDouble:
-        case hcclNumTypes:
-        default:
-            VERIFY(false, "Cannot convert '{}' to synDataType.", to_string(data_type));
-            return {};
     }
 }

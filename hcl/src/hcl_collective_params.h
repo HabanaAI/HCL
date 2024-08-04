@@ -60,20 +60,20 @@ struct HclCollectiveParams
 
     virtual ~HclCollectiveParams() = default;
 
-    HCL_CollectiveOp m_collectiveOp           = eHCLReduce;  // TODO make const
+    HCL_CollectiveOp m_collectiveOp           = eHCLReduce;
     HCL_CollectiveOp m_currentOp              = eHCLReduce;
-    synStreamHandle  m_streamHandle           = 0;  // TODO make const
+    synStreamHandle  m_streamHandle           = 0;
     uint64_t         m_sendBufferAddr         = 0;
     uint64_t         m_recvBufferAddr         = 0;
     uint64_t         m_count                  = 0;
     hcclDataType_t   m_dataType               = hcclFloat32;
-    uint64_t         m_intermediateBufferAddr = 0;  // TODO make const
-    HCL_Comm         m_comm;                        // TODO make const
+    uint64_t         m_intermediateBufferAddr = 0;
+    HCL_Comm         m_comm;
     uint8_t          m_apiId           = HCL_DEFAULT_API_ID;
-    uint32_t         m_userFlags       = 0;         // TODO make const
+    uint32_t         m_userFlags       = 0;
     hcclRedOp_t      m_reduceOp        = hcclOpNone;
-    HCL_Rank         m_root            = HCL_INVALID_RANK;  // TODO make const
-    uint64_t         m_remainder_count = 0;                 // TODO make const
+    HCL_Rank         m_root            = HCL_INVALID_RANK;
+    uint64_t         m_remainder_count = 0;
 
     HclDynamicCommunicator& m_dynamicComm;
 };

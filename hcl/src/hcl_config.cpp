@@ -25,7 +25,7 @@
 #include "hcl_log_manager.h"                  // for LOG_INFO, LOG_ERR, LOG_CRITICAL
 #include "synapse_api_types.h"                // for synDeviceId
 #include "platform/gen2_arch_common/types.h"  // for MAX_NICS_GEN2ARCH
-#include "synapse_api.h"                      // for synDeviceGetInfo
+#include "synapse_api.h"                      // for synDeviceGetInfoV2
 #include "synapse_common_types.h"             // for synStatus
 
 using json = nlohmannV340::json;
@@ -50,8 +50,7 @@ void hclGlobalConfigLog()
              "Weak order:                            [{}]: {}\n"
              "QP congestion window:                  [{}]: {}\n"
              "QP congestion control enable:          [{}]: {}\n"
-             "Scale out ports:                       [{}]: {}\n"
-             "Use edma command v3 for gaudi3:        [{}]: {}\n",
+             "Scale out ports:                       [{}]: {}\n",
              getAlignedString(GCFG_USE_CPU_AFFINITY.primaryName(), 32),
              GCFG_USE_CPU_AFFINITY.getValueStr(),
              getAlignedString(GCFG_WEAK_ORDER.primaryName(), 32),
@@ -61,36 +60,14 @@ void hclGlobalConfigLog()
              getAlignedString(GCFG_CONGESTION_CONTROL_ENABLE.primaryName(), 32),
              GCFG_CONGESTION_CONTROL_ENABLE.getValueStr(),
              getAlignedString(GCFG_SCALE_OUT_PORTS_MASK.primaryName(), 32),
-             GCFG_SCALE_OUT_PORTS_MASK.getValueStr(),
-             getAlignedString(GCFG_HCL_USE_EDMA_COMMAND_V3.primaryName(), 32),
-             GCFG_HCL_USE_EDMA_COMMAND_V3.getValueStr());
-}
-
-// stream operator for hl_server_type
-std::ostream& operator<<(std::ostream& out, const hl_server_type t)
-{
-    static std::map<hl_server_type, std::string> hlServerTypeStrings;
-    if (hlServerTypeStrings.size() == 0)
-    {
-#define INSERT_ELEMENT(p) hlServerTypeStrings[p] = #p
-        INSERT_ELEMENT(HL_SERVER_TYPE_UNKNOWN);
-        INSERT_ELEMENT(HL_SERVER_GAUDI_HLS1);
-        INSERT_ELEMENT(HL_SERVER_GAUDI_HLS1H);
-        INSERT_ELEMENT(HL_SERVER_GAUDI_TYPE1);
-        INSERT_ELEMENT(HL_SERVER_GAUDI_TYPE2);
-        INSERT_ELEMENT(HL_SERVER_GAUDI2_HLS2);
-        INSERT_ELEMENT(HL_SERVER_GAUDI2_TYPE1);
-        INSERT_ELEMENT(HL_SERVER_GAUDI3_HLS3_FULL_OAM_3PORTS_SCALE_OUT);
-#undef INSERT_ELEMENT
-    }
-    return out << hlServerTypeStrings[t];
+             GCFG_SCALE_OUT_PORTS_MASK.getValueStr());
 }
 
 bool HclDeviceConfig::determineHclType()
 {
     struct hlthunk_hw_ip_info hw_ip;
     hlthunk_get_hw_ip_info(m_fd, &hw_ip);
-    hl_server_type server_type = (hl_server_type)hw_ip.server_type;
+    const hl_server_type server_type = (hl_server_type)hw_ip.server_type;
 
     LOG_HCL_INFO(HCL, "Received server type from driver: {} ({})", server_type, (int)server_type);
 
@@ -124,9 +101,9 @@ bool HclDeviceConfig::determineHclType()
         case HL_SERVER_GAUDI3_HLS3_FULL_OAM_3PORTS_SCALE_OUT:
             configTypeFromServer = HLS3;
             break;
-        // case HL_SERVER_GAUDI3_HLS3PCIE:
-        // configTypeFromServer = HLS3PCIE;
-        // break;
+        case HL_SERVER_GAUDI3_HL338:
+            configTypeFromServer = HL338;
+            break;
         default:
             LOG_HCL_CRITICAL(HCL, "Got unknown server_type ({}) from driver", hw_ip.server_type);
             configTypeFromServer = UNKNOWN;
@@ -143,9 +120,9 @@ HclDeviceConfig::HclDeviceConfig(const synDeviceId deviceId) : m_deviceId(device
 {
     if (deviceId != NO_DEVICE_ID)
     {
-        synDeviceInfo deviceInfo = {};
+        synDeviceInfoV2 deviceInfo = {};
 
-        VERIFY(synSuccess == synDeviceGetInfo(deviceId, &deviceInfo));
+        VERIFY(synSuccess == synDeviceGetInfoV2(deviceId, &deviceInfo));
         m_fd              = deviceInfo.fd;
         m_deviceType      = deviceInfo.deviceType;
         std::string accel = getHLDevice(m_fd);
@@ -199,7 +176,7 @@ bool HclDeviceConfig::validateHclType()
             }
             break;
         case HLS3:
-        case HLS3PCIE:
+        case HL338:
             if (!IS_DEVICE_GAUDI3(m_deviceType))
             {
                 LOG_HCL_CRITICAL(HCL, "Invalid HCL_TYPE value ({}) for Gaudi3", configType);
@@ -338,8 +315,7 @@ bool HclDeviceConfig::parseDeviceJsonConfig(json& config)
     {
         m_disabledPorts = config["DISABLED_PORTS"].get<std::set<unsigned>>();
 
-        if (GCFG_BOX_TYPE.value() == "HLS2" || GCFG_BOX_TYPE.value() == "HLS3" ||
-            GCFG_BOX_TYPE.value() == "HLS3PCIE")
+        if (GCFG_BOX_TYPE.value() == "HLS2" || GCFG_BOX_TYPE.value() == "HLS3" || GCFG_BOX_TYPE.value() == "HL338")
         {
             struct hlthunk_nic_get_ports_masks_out ports_masks;
             uint64_t                               disabled_nics_mask;
@@ -391,64 +367,9 @@ bool HclDeviceConfig::_parseDeviceConfig(std::string path)
     }
 
     json config;
+    LOG_HCL_INFO(HCL, "Calling parseDeviceJsonConfig");
 
-    try
-    {
-        // if provided embedded JSON configuration string, use it
-        if (GCFG_HCL_EMBEDDED_CONF.isSetFromUserConfig())
-        {
-            config = GCFG_HCL_EMBEDDED_CONF.value();
-        }
-        else if (path.empty())
-        {
-            LOG_HCL_DEBUG(HCL, "JSON Config File path is empty. Using default settings");
-        }
-        else
-        {
-            if (isFileExist("synapse/" + path))
-            {
-                path = "synapse/" + path;
-            }
-            else if (isFileExist(getEnvStr("SYNAPSE_ROOT") + "/" + path))
-            {
-                path = getEnvStr("SYNAPSE_ROOT") + "/" + path;
-            }
-
-            std::ifstream file(path);
-
-            // input config file not found
-            if (!file.good())
-            {
-                LOG_HCL_CRITICAL(HCL, "JSON Config File ({}) not found", path.c_str());
-                return false;
-            }
-
-            file >> config;
-        }
-
-        LOG_HCL_INFO(HCL, "Calling parseDeviceJsonConfig for {}", path);
-        if (parseDeviceJsonConfig(config) == false)
-        {
-            return false;
-        }
-    }
-    catch (std::exception& e)
-    {
-        LOG_HCL_ERR(HCL, "Invalid json file {}, set from user {}, error {}",
-                    path.c_str(), GCFG_HCL_EMBEDDED_CONF.isSetFromUserConfig(), e.what());
-        return false;
-    }
-
-    if ((HclConfigType)GCFG_BOX_TYPE_ID.value() == OCP1)
-    {
-        m_ocp1Mapping = true;
-
-        /* HLS1 and OCP1 only differ in NIC mapping, so from this point OCP1 can become HLS1 */
-        GCFG_BOX_TYPE.setValue(m_boxTypeIdToStr[HLS1]);
-        GCFG_BOX_TYPE_ID.setValue(HLS1);
-    }
-
-    return true;
+    return parseDeviceJsonConfig(config);
 }
 
 void HclDeviceConfig::determineDisabledNicsForLoopbackTests()

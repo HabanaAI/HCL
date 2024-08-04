@@ -14,7 +14,7 @@
 #define HLLOG_COMBINE_(a, b) a##b
 #define HLLOG_COMBINE(a, b)  HLLOG_COMBINE_(a, b)
 
-#define HLLOG_INLINE_API_NAMESPACE_ v1_7_inline
+#define HLLOG_INLINE_API_NAMESPACE_ v1_8_inline
 #ifndef HLLOG_DISABLE_FMT_COMPILE
 #define HLLOG_INLINE_API_NAMESPACE HLLOG_COMBINE(HLLOG_INLINE_API_NAMESPACE_, _fmt_compile)
 #else
@@ -31,6 +31,7 @@
 #define HLLOG_LEVEL_ERROR    4
 #define HLLOG_LEVEL_CRITICAL 5
 #define HLLOG_LEVEL_OFF      6
+#define HLLOG_LEVEL_INVALID  255
 
 #define HLLOG_DEFAULT_LAZY_QUEUE_SIZE 2048
 
@@ -162,6 +163,14 @@ HLLOG_API void refreshInternalSinkCache();
 HLLOG_API void setLoggingLevelByMask(std::string_view loggerNameMask, int newLevel);
 
 /**
+ * @brief  getLoggingLevelByName get level for a logger from all modules by name
+ *
+ * @param loggerName - a string name of a logger
+ * @return logging level of a logger or HLLOG_LEVEL_INVALID if the logger not found
+ */
+HLLOG_API int getLoggingLevelByName(std::string_view loggerName);
+
+/**
  * @brief  setLoggingLevel set minimal enabled message level for logging into a logger
  *
  * @param logger
@@ -265,12 +274,20 @@ HLLOG_API ResourceGuard addConsole(LoggerSPtr const& logger);
 /**
  * @brief log log a message into a logger with logLevel
  * @param logger
- * @param logLevel
+ * @param logLevel message log level
+ * @param forcePrint force printing regardless of the logger logging level
  * @param msg  message
  * @param file filename of the log message source code
  * @param line line number of the log message source code
  * @param forcePrintFileLine force printing file and line. if false - according to logger params
  */
+HLLOG_API void log(LoggerSPtr const& logger,
+                   int               logLevel,
+                   bool              forcePrint,
+                   std::string_view  msg,
+                   std::string_view  file = std::string_view(),
+                   int               line = 0,
+                   bool              forcePrintFileLine = false);
 HLLOG_API void log(LoggerSPtr const& logger,
                    int               logLevel,
                    std::string_view  msg,
@@ -399,13 +416,15 @@ struct VersionInfo
 HLLOG_API VersionInfo getVersion();
 
 using SignalHandlerV2 = std::function<void(int signal, const char* signalStr, bool isSevere)>;
-HLLOG_API ResourceGuard registerSignalHandler(SignalHandlerV2 signalHandler);
-
-// for compatibility only. use the SignalHandlerV2 overload
-using SignalHandler = std::function<void(int signal, const char* signalStr)>;
-HLLOG_API ResourceGuard registerSignalHandler(SignalHandler signalHandler);
+HLLOG_API ResourceGuard registerSignalHandler(SignalHandlerV2 signalHandler, std::string_view moduleName);
 
 using FlushHandler = std::function<void()>;
-HLLOG_API ResourceGuard registerFlushHandler(FlushHandler flushHandler);
+HLLOG_API ResourceGuard registerFlushHandler(FlushHandler flushHandler, std::string_view moduleName);
+
+[[deprecated("use an overload with moduleName")]] HLLOG_API ResourceGuard registerSignalHandler(SignalHandlerV2 signalHandler);
+[[deprecated("use an overload with moduleName")]] HLLOG_API ResourceGuard registerFlushHandler(FlushHandler flushHandler);
+using SignalHandler = std::function<void(int signal, const char* signalStr)>;
+[[deprecated("use V2 overload")]] HLLOG_API ResourceGuard registerSignalHandler(SignalHandler signalHandler);
+
 };  // namespace vXX
 }  // namespace hl_logger

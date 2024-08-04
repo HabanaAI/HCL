@@ -1388,6 +1388,23 @@ synStatus SYN_API_CALL synNodeSetRoundingMode(  const synGraphHandle    graphHan
 //!
 /*!
  ***************************************************************************************************
+ * @brief   Configure node's execution order
+ *
+ *
+ * @param   graphHandle          [in] The Synapse graph in which the node was created
+ * @param   nodeId               [in] node unique id, as received from synNodeCreateWithId
+ * @param   userProgrammability  [in] configs desired by the user
+ *
+ * @return                  Status of the operation
+ ***************************************************************************************************
+ */
+synStatus SYN_API_CALL synNodeSetUserProgrammability(const synGraphHandle          graphHandle,
+                                                     const synNodeId               nodeId,
+                                                     const synUserProgrammability* userProgrammability);
+
+//!
+/*!
+ ***************************************************************************************************
  * @brief   Gets Node RoundingMode implementation state per MME node
  *
  *
@@ -2895,6 +2912,20 @@ synStatus SYN_API_CALL synNodeGetUserParams( const synGraphHandle   graphHandle,
  ***************************************************************************************************
  */
 synStatus SYN_API_CALL synStatusGetBriefDescription(synStatus status, char* statusDescription, size_t len);
+
+//!
+/*!
+ ***************************************************************************************************
+ * @brief Dumps system state and information (for debug) and terminates process
+ *
+ * @param msg   [in] Caller message, will appear in the logs
+ * @param flags [in] For future options (currently should be set to 0)
+ *
+ * @return          This function usually doesn't return. It will return if called before 'synInit'
+ *                  or if no device is acquired
+ ***************************************************************************************************
+ */
+synStatus SYN_API_CALL synDumpStateAndTerminate(const char* msg, uint64_t flags);
 
 #ifdef __cplusplus
 }

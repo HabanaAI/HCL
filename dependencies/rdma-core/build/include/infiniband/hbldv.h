@@ -175,6 +175,7 @@ enum hbldv_encap_type {
  * @HBLDV_COLL_SCHED_RSRC_T_EDMA: Resource holding all the pages of EDMA on each of the compute
  *                                         dies.
  * @HBLDV_COLL_SCHED_RSRC_T_NIC_USR_FIFO_UMR: 4 NIC user-FIFO UMRs per NIC HW macro.
+ * @HBLDV_COLL_SCHED_RSRC_T_NIC_SM_UMR: 1 Sync-Manager UMR containing the CQ CIs.
  * @HBLDV_COLL_SCHED_RSRC_T_MAX: Number of values in enum.
  */
 enum hbldv_coll_sched_resource_type {
@@ -190,6 +191,7 @@ enum hbldv_coll_sched_resource_type {
 	HBLDV_COLL_SCHED_RSRC_T_PDMA,
 	HBLDV_COLL_SCHED_RSRC_T_EDMA,
 	HBLDV_COLL_SCHED_RSRC_T_NIC_USR_FIFO_UMR,
+	HBLDV_COLL_SCHED_RSRC_T_NMS_SM_UMR,
 	HBLDV_COLL_SCHED_RSRC_T_MAX,
 };
 
@@ -206,11 +208,11 @@ enum hbldv_device_attr_caps {
 /**
  * struct hbldv_ucontext_attr - HBL user context attributes.
  * @ports_mask: Mask of the relevant ports for this context (should be 1-based).
- * @core_fd: core device file descriptor.
+ * @core_fd: Core device file descriptor.
  */
 struct hbldv_ucontext_attr {
 	uint64_t ports_mask;
-	uint32_t core_fd;
+	int core_fd;
 };
 
 /**
@@ -520,13 +522,15 @@ struct hbldv_coll_sched_resources {
 };
 
 /**
- * struct hbldv_device_attr - Devie specific attributes.
+ * struct hbldv_device_attr - Device specific attributes.
  * @caps: Capabilities mask.
  * @ports_mask: Mask of the relevant ports for this context (should be 1-based).
+ * @ext_ports_mask: Mask of relevant external ports for this context.
  */
 struct hbldv_device_attr {
 	uint64_t caps;
 	uint64_t ports_mask;
+	uint64_t ext_ports_mask;
 };
 
 bool hbldv_is_supported(struct ibv_device *device);

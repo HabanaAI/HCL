@@ -22,8 +22,7 @@ void SignalsCalculator::initialize(CommonState& commonState)
     m_costs[(unsigned)SignalEvent::EDMA_CAST_DOWN_FOR_SCALEOUT] = minimumEdmaGroupSize;
     m_costs[(unsigned)SignalEvent::EDMA_MEMCOPY]                = workDistributionGroupSize;
     m_costs[(unsigned)SignalEvent::EDMA_MEMCOPY_FOR_SCALEOUT]   = workDistributionGroupSize;
-    m_costs[(unsigned)SignalEvent::EDMA_MEMSET] =
-        GCFG_HCL_USE_EDMA_COMMAND_V3.value() ? workDistributionGroupSize : minimumEdmaGroupSize;
+    m_costs[(unsigned)SignalEvent::EDMA_MEMSET]                 = workDistributionGroupSize;
     m_costs[(unsigned)SignalEvent::EDMA_CAST_UP]        = workDistributionGroupSize;
     m_costs[(unsigned)SignalEvent::EDMA_BATCH]          = workDistributionGroupSize;
     m_costs[(unsigned)SignalEvent::EDMA_BATCH_SCALEOUT] = workDistributionGroupSize;
@@ -40,8 +39,7 @@ void SignalsCalculator::initialize(CommonState& commonState)
     m_costs[(unsigned)SignalEvent::HNIC_SCALEOUT_SEND] = 1;
     m_costs[(unsigned)SignalEvent::HNIC_SCALEOUT_RECV] = 1;
     m_costs[(unsigned)SignalEvent::HNIC_PDMA]          = 1;
-    m_costs[(unsigned)SignalEvent::RR_SIGNAL_TO_LONGTERM] =
-        GCFG_HCL_USE_EDMA_COMMAND_V3.value() ? workDistributionGroupSize : 1;
+    m_costs[(unsigned)SignalEvent::RR_SIGNAL_TO_LONGTERM] = workDistributionGroupSize;
     m_costs[(unsigned)SignalEvent::RR_SIGNAL_TO_CG]       = 1;
 }
 

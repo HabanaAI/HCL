@@ -34,10 +34,7 @@
 #include "libfabric/hl_ofi_component.h"  // for ofi_component_t
 #include "hcl_log_manager.h"             // for LOG_ERR, LOG_DEBUG
 #include "ofi_communicator.h"            // for ofi_communicator
-#include "interfaces/hccl_syn_stream.h"  // for synapse_stream_wrap
-#include "synapse_api.h"                 // for synHostFree, synEventC...
-#include "synapse_api_types.h"           // for InternalStreamHandle
-#include "synapse_common_types.h"        // for synSuccess, synStatus
+#include "synapse_common_types.h"        // for synStatus
 #include "hcl_math_utils.h"
 #include "platform/gaudi2/hcl_device.h"  // for HclDeviceGaudi2
 
@@ -277,12 +274,6 @@ hcclResult_t hccl_communicator::initialize(const internal_unique_id_t* internal_
 
     LOG_HCL_INFO(HCL_COORD, "Rank Communicator handshake1 done");
 
-    // Warning: This deviceId is hardcoded to 0 for the current single device
-    // per process case. We need to change this later when one process supports
-    // multi devices.
-    const uint32_t device_id = 0;
-    VERIFY(synEventCreate(&m_pdmaEventHandle, device_id, 0) == synSuccess, "synEventCreate failed");
-
     // Param initialization after first handshake
     int rank      = m_rank;
     int commSize  = m_commSize;
@@ -353,6 +344,9 @@ hcclResult_t hccl_communicator::initialize(const internal_unique_id_t* internal_
     if (rc != hcclSuccess) return rc;
     LOG_HCL_INFO(HCL_COORD, "Rank Communicator init done");
 
+    // initial internal data structures for new communicator
+    hccl_device().initComm(hclCommId);
+
     return rc;
 }
 
@@ -412,13 +406,6 @@ bool hccl_communicator::destroy()
     hccl_device()->destroyComm(*m_comm, false);
 
     m_coordClient->destroy();
-
-    synStatus status = synEventDestroy(m_pdmaEventHandle);
-    if (status != synSuccess)
-    {
-        LOG_HCL_ERR(HCL, "Failed to destroy PDMA stream event");
-        return false;
-    }
 
     return true;
 }
@@ -511,7 +498,6 @@ int hccl_communicator::user_rank() const
 hcclResult_t hccl_communicator::get_async_error(hcclResult_t* async_error)
 {
     RETURN_ON_NULL_ARG(async_error);
-    // TODO: When it is not a success?
     *async_error = hcclSuccess;
     return hcclSuccess;
 }

@@ -98,5 +98,6 @@ struct hccl_functions_pointers
     hcclResult_t (*pfn_hcclSynchronizeAllStreams)();
     hcclResult_t (*pfn_hcclDFA)(DfaStatus& dfaStatus, void (*dfaLogFunc)(int, const char*));
     hcclResult_t (*pfn_hcclDfaUpdateState)(DfaPhase dfaPhase);
+    hcclResult_t (*pfn_hcclGetVersionString)(char* pVersion, const unsigned len);
     hcclResult_t (*pfn_hcclCommFinalize)(hcclComm_t comm);
 };

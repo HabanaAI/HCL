@@ -5,18 +5,27 @@ project(hcl LANGUAGES CXX C)
 set(TARGET_NAME_SO hcl)
 
 set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${NOAVX512}")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx2")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC -Wall -Werror")
-set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG -fopenmp -fno-omit-frame-pointer -g1")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${NOAVX512} -mavx -mavx2 -pipe -fPIC -Wall -Werror -Wno-sign-compare -O3 -DNDEBUG -fopenmp -fno-omit-frame-pointer -g1")
 set(LIBRARY_OUTPUT_PATH "${CMAKE_BINARY_DIR}/lib")
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/")
+
+function (separate_debug_symbols target)
+    set(TARGET_NAME $<TARGET_FILE:${target}>)
+    add_custom_command(TARGET ${target} POST_BUILD
+        COMMAND strip ${TARGET_NAME} --only-keep-debug -o ${TARGET_NAME}.debug
+        COMMAND strip ${TARGET_NAME} --strip-unneeded
+        COMMAND objcopy --add-gnu-debuglink=${TARGET_NAME}.debug ${TARGET_NAME}
+        COMMAND ${CMAKE_COMMAND} -E create_symlink
+        "${TARGET_NAME}.debug" "$ENV{BUILD_ROOT_LATEST}/$<TARGET_FILE_NAME:${target}>.debug"
+        COMMENT "Separating debug symbols of ${target}")
+endfunction()
 
 include_directories(
     $ENV{HCL_SRC_PKG_DIR}
     $ENV{HCL_SRC_PKG_DIR}/dependencies
     $ENV{HCL_SRC_PKG_DIR}/dependencies/scal
+    /usr/include/drm
+    /usr/include/libdrm
     $ENV{HCL_SRC_PKG_DIR}/dependencies/3rd-parties/
     $ENV{HCL_SRC_PKG_DIR}/dependencies/3rd-parties/hwloc-2.10.0/include/
     $ENV{HCL_SRC_PKG_DIR}/dependencies/3rd-parties/json/single_include/
@@ -81,7 +90,13 @@ foreach(dir ${SRC_DIRS})
 endforeach()
 
 add_library(${TARGET_NAME_SO} SHARED ${SRCS})
-set_target_properties(${TARGET_NAME_SO} PROPERTIES CXX_VISIBILITY_PRESET hidden)
+
+file(MAKE_DIRECTORY /usr/lib/habanalabs)
+set_target_properties(${TARGET_NAME_SO} PROPERTIES
+    CXX_VISIBILITY_PRESET hidden
+    LIBRARY_OUTPUT_DIRECTORY /usr/lib/habanalabs
+    ARCHIVE_OUTPUT_DIRECTORY /usr/lib/habanalabs
+)
 
 target_link_libraries(
     ${TARGET_NAME_SO}
@@ -91,3 +106,5 @@ target_link_libraries(
     $ENV{HCL_LIB_DIR}/libhwloc_embedded.a
     $ENV{HCL_LIB_DIR}/libglpk.a
 )
+
+separate_debug_symbols(${TARGET_NAME_SO})

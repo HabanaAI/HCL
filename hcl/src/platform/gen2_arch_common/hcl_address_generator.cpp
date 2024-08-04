@@ -38,7 +38,7 @@ uint64_t HclAddressGenerator::generateScaleUpRecvAddress(CommonState&     common
             addr = currentBoxRecvAddress;
             break;
         case eHCLAll2All:
-            if (boxNumInfo.m_boxNum == commonState.m_dynamicComm.getMyPod())
+            if (boxNumInfo.m_boxNum == commonState.m_dynamicComm.getMyScaleupGroup())
             {
                 addr = currentBoxRecvAddress;
             }
@@ -94,7 +94,7 @@ uint64_t HclAddressGenerator::generateScaleUpSendAddress(CommonState&     common
         case eHCLAllGather:
             if (commonState.m_collectiveOp == eHCLAllGather)
             {
-                if (boxNumInfo.m_boxNum == commonState.m_dynamicComm.getMyPod())
+                if (boxNumInfo.m_boxNum == commonState.m_dynamicComm.getMyScaleupGroup())
                 {
                     addr = commonState.getSendAddress(sliceIter);
                 }
@@ -123,7 +123,7 @@ uint64_t HclAddressGenerator::generateScaleUpSendAddress(CommonState&     common
             }
             break;
         case eHCLGather:
-            if (boxNumInfo.m_boxNum != commonState.m_dynamicComm.getMyPod())
+            if (boxNumInfo.m_boxNum != commonState.m_dynamicComm.getMyScaleupGroup())
             {
                 addr = commonState.getIntermediateBuffer(REDUCE_RR_POOL);
             }
@@ -131,7 +131,7 @@ uint64_t HclAddressGenerator::generateScaleUpSendAddress(CommonState&     common
             {
                 addr = commonState.getSendAddress(sliceIter);
             }
-            else if (!commonState.m_isMultiPod)
+            else if (!commonState.m_isMultiScaleupGroup)
             {
                 addr = commonState.getIntermediateBuffer(SCALEUP_RR_AND_ALL2ALL_POOL);
             }
@@ -178,7 +178,7 @@ uint64_t HclAddressGenerator::generateScaleOutSendAddress(CommonState&     commo
     uint64_t currentBoxSendAddress = commonState.getSendAddress(sliceIter) + boxNumInfo.m_boxNum *
                                                                                  commonState.m_boxStrideCount *
                                                                                  commonState.m_dataTypeSizeInBytes;
-    uint64_t myBoxRecvAddress = commonState.getRecvAddress(sliceIter) + commonState.m_dynamicComm.getMyPod() *
+    uint64_t myBoxRecvAddress = commonState.getRecvAddress(sliceIter) + commonState.m_dynamicComm.getMyScaleupGroup() *
                                                                             commonState.m_boxStrideCount *
                                                                             commonState.m_dataTypeSizeInBytes;
 
@@ -188,7 +188,7 @@ uint64_t HclAddressGenerator::generateScaleOutSendAddress(CommonState&     commo
     {
         case eHCLReduceScatter:
         case eHCLAll2All:
-            if (commonState.m_dynamicComm.getPodSize() != 1)
+            if (commonState.m_dynamicComm.getScaleupGroupSize() != 1)
             {
                 addr = commonState.getIntermediateBuffer(SCALEUP_RR_AND_ALL2ALL_POOL);
             }
@@ -333,7 +333,7 @@ uint64_t HclAddressGenerator::generateMemcpySrcAddress(CommonState& commonState,
                                                        bool         isReductionStream,
                                                        bool         isGDRMemcpy)
 {
-    if ((isReproReduction && !GCFG_HCL_USE_EDMA_COMMAND_V3.value()) || isGDRMemcpy)
+    if (isGDRMemcpy)
     {
         return generateReproducibleIntermediateAddress(commonState, isForScaleOut, isGDRMemcpy, 0);
     }
@@ -344,126 +344,40 @@ uint64_t HclAddressGenerator::generateMemcpySrcAddress(CommonState& commonState,
 
     uint64_t addr = 0;
 
-    if (GCFG_HCL_USE_EDMA_COMMAND_V3.value())
+    switch (commonState.m_currentOp)
     {
-        switch (commonState.m_currentOp)
-        {
-            case eHCLReduceScatter:
-                if (isForScaleOut)
-                {
-                    addr = commonState.getIntermediateBuffer(SCALEOUT_RR_POOL);
-                }
-                else
-                {
-                    addr = currentBoxSendAddress + offset;
-                }
-                break;
-            case eHCLAllGather:
-            case eHCLGather:
-            case eHCLSimpleBroadcast:
-                addr = commonState.getSendAddress(sliceIter);
-                break;
-            case eHCLAll2All:
-                addr = currentBoxSendAddress + offset;
-                break;
-            case eHCLScatter:
-                addr = currentBoxSendAddress;
-                if (commonState.m_collectiveOp != eHCLSinglePeerBroadcast)
-                {
-                    addr += offset;
-                }
-                break;
-            case eHCLReduce:
-            case eHCLAllReduce:
-            case eHCLSinglePeerBroadcast:
-            case eHCLBroadcast:
-            case eHCLNoCollective:
-            case eHCLCollectiveLastValue:
-                VERIFY(false, "wrong current op {} at generateMemcpySrcAddress", commonState.m_currentOp);
-        }
-    }
-    else // EDMA_V2 - will be deleted once V2 is dropped
-    {
-        if (m_commands.isCastDown(dmaType))
-        {
-            if (commonState.m_collectiveOp == eHCLReduce)
+        case eHCLReduceScatter:
+            if (isForScaleOut)
             {
                 addr = commonState.getIntermediateBuffer(SCALEOUT_RR_POOL);
             }
-        }
-        else if (commonState.m_collectiveOp == eHCLAllGather || commonState.m_collectiveOp == eHCLSimpleBroadcast ||
-                 commonState.m_collectiveOp == eHCLSinglePeerBroadcast)
-        {
+            else
+            {
+                addr = currentBoxSendAddress + offset;
+            }
+            break;
+        case eHCLAllGather:
+        case eHCLGather:
+        case eHCLSimpleBroadcast:
             addr = commonState.getSendAddress(sliceIter);
-        }
-        else if (commonState.m_collectiveOp == eHCLBroadcast)
-        {
-            addr = commonState.getSendAddress(sliceIter) + offset;
-        }
-        else if (commonState.m_collectiveOp == eHCLReduce)
-        {
-            if (isReductionStream)
+            break;
+        case eHCLAll2All:
+            addr = currentBoxSendAddress + offset;
+            break;
+        case eHCLScatter:
+            addr = currentBoxSendAddress;
+            if (commonState.m_collectiveOp != eHCLSinglePeerBroadcast)
             {
-                if (commonState.m_dynamicComm.getMyPod() == boxNumInfo.m_boxNum)
-                {
-                    addr = commonState.getIntermediateBuffer(SCALEUP_RR_AND_ALL2ALL_POOL);
-                }
-                else
-                {
-                    addr = commonState.getIntermediateBuffer(SCALEOUT_RR_POOL);
-                }
-            }
-            else
-            {
-                addr = currentBoxSendAddress;
-                if (!commonState.isRoot() || !reductionSignalToCg)
-                {
-                    addr += offset;
-                }
-            }
-        }
-        else
-        {
-            if (reductionSignalToCg)
-            {
-                if (commonState.m_isReductionCollective)
-                {
-                    addr = commonState.m_isMultiPod ? commonState.getIntermediateBuffer(SCALEOUT_RR_POOL)
-                                                    : commonState.getIntermediateBuffer(SCALEUP_RR_AND_ALL2ALL_POOL);
-                }
-            }
-            else
-            {
-                addr = currentBoxSendAddress;
-            }
-        }
-
-        bool dontAddSrcOffset;
-        bool isCastDownNonReproducible = m_commands.isCastDown(dmaType) && !isReproReduction;
-        switch (commonState.m_collectiveOp)
-        {
-            case eHCLReduceScatter:
-                dontAddSrcOffset = isCastDownNonReproducible || isRRLast || reductionSignalToCg;
-
-                addr += dontAddSrcOffset ? 0 : offset;
-                break;
-
-            case eHCLAllReduce:
-                dontAddSrcOffset =
-                    (isCastDownNonReproducible || (reductionSignalToCg && !isReproReduction) ||
-                     (isReproReduction &&
-                      (isRRLast || useSibo)));
-
-                addr += dontAddSrcOffset ? 0 : offset;
-                break;
-
-            case eHCLAll2All:
                 addr += offset;
-                break;
-
-            default:
-                break;
-        }
+            }
+            break;
+        case eHCLReduce:
+        case eHCLAllReduce:
+        case eHCLSinglePeerBroadcast:
+        case eHCLBroadcast:
+        case eHCLNoCollective:
+        case eHCLCollectiveLastValue:
+            VERIFY(false, "wrong current op {} at generateMemcpySrcAddress", commonState.m_currentOp);
     }
 
     return addr;
@@ -483,7 +397,7 @@ uint64_t HclAddressGenerator::generateMemcpyDstAddress(CommonState& commonState,
                                                        bool         isReductionStream,
                                                        bool         isGDRMemcpy)
 {
-    if ((isReproReduction && !GCFG_HCL_USE_EDMA_COMMAND_V3.value()) || isGDRMemcpy)
+    if (isGDRMemcpy)
     {
         unsigned bufferOffset = 0;
         if (isGDRMemcpy)
@@ -492,7 +406,7 @@ uint64_t HclAddressGenerator::generateMemcpyDstAddress(CommonState& commonState,
         }
         else
         {
-            bufferOffset = useSibo ? 0 : commonState.m_dynamicComm.getRankInPod();
+            bufferOffset = useSibo ? 0 : commonState.m_dynamicComm.getRankInScaleupGroup();
         }
         return generateReproducibleIntermediateAddress(commonState, isForScaleout, false, bufferOffset);
     }
@@ -501,262 +415,97 @@ uint64_t HclAddressGenerator::generateMemcpyDstAddress(CommonState& commonState,
                                                                                  commonState.m_boxStrideCount *
                                                                                  commonState.m_dataTypeSizeInBytes;
 
-    uint64_t myBoxRecvAddress = commonState.getRecvAddress(sliceIter) + commonState.m_dynamicComm.getMyPod() *
+    uint64_t myBoxRecvAddress = commonState.getRecvAddress(sliceIter) + commonState.m_dynamicComm.getMyScaleupGroup() *
                                                                             commonState.m_boxStrideCount *
                                                                             commonState.m_dataTypeSizeInBytes;
 
     uint64_t addr = 0;
 
-    if (GCFG_HCL_USE_EDMA_COMMAND_V3.value())
+    switch (commonState.m_currentOp)
     {
-        switch (commonState.m_currentOp)
-        {
-            case eHCLReduceScatter:
-                if (!commonState.m_isMultiPod)
+        case eHCLReduceScatter:
+            if (!commonState.m_isMultiScaleupGroup)
+            {
+                if (commonState.m_collectiveOp == eHCLReduce && !commonState.isRoot())
                 {
-                    if (commonState.m_collectiveOp == eHCLReduce && !commonState.isRoot())
-                    {
-                        addr = commonState.getIntermediateBuffer(SCALEUP_RR_AND_ALL2ALL_POOL);
-                    }
-                    else
-                    {
-                        addr = currentBoxRecvAddress;
-                        if (commonState.m_collectiveOp != eHCLReduceScatter)
-                        {
-                            addr += offset;
-                        }
-                    }
-                }
-                // multipod
-                else if (!isForScaleout)
-                {
-                    if (boxNumInfo.m_boxNum == commonState.m_dynamicComm.getMyPod())
-                    {
-                        addr = commonState.getIntermediateBuffer(SCALEOUT_RR_POOL);
-                    }
-                    else
-                    {
-                        addr = commonState.getIntermediateBuffer(SCALEUP_RR_AND_ALL2ALL_POOL);
-                    }
-                }
-                else // scaleout
-                {
-                    if (commonState.m_collectiveOp == eHCLReduce && !commonState.isRoot())
-                    {
-                        if (commonState.m_16BitReduction)
-                        {
-                            addr = commonState.getIntermediateBuffer(REDUCE_RR_POOL);
-                        }
-                        else
-                        {
-                            addr = commonState.getIntermediateBuffer(SCALEOUT_RR_POOL);
-                        }
-                    }
-                    else if (commonState.m_collectiveOp == eHCLReduceScatter)
-                    {
-                        addr = commonState.getRecvAddress(sliceIter);
-                    }
-                    else // AR or Reduce root
-                    {
-                        addr = myBoxRecvAddress + offset;
-                    }
-                }
-                break;
-            case eHCLGather:
-            case eHCLAllGather:
-                addr = currentBoxRecvAddress + offset;
-                break;
-            case eHCLAll2All:
-                if (boxNumInfo.m_boxNum == commonState.m_dynamicComm.getMyPod())
-                {
-                    addr = currentBoxRecvAddress + offset;
+                    addr = commonState.getIntermediateBuffer(SCALEUP_RR_AND_ALL2ALL_POOL);
                 }
                 else
                 {
-                    addr = commonState.getIntermediateBuffer(SCALEUP_RR_AND_ALL2ALL_POOL) + offset;
-                }
-                break;
-            case eHCLScatter:
-                addr = commonState.getRecvAddress(sliceIter);
-                if (commonState.m_collectiveOp != eHCLSinglePeerBroadcast)
-                {
-                    addr += offset;
-                }
-                break;
-            case eHCLSimpleBroadcast:
-                addr = commonState.getRecvAddress(sliceIter);
-                break;
-
-            case eHCLReduce:
-            case eHCLAllReduce:
-            case eHCLSinglePeerBroadcast:
-            case eHCLBroadcast:
-            case eHCLNoCollective:
-            case eHCLCollectiveLastValue:
-                VERIFY(false, "wrong current op {} at generateMemcpyDstAddress", commonState.m_currentOp);
-        }
-    }
-    else // EDMA V2 - will be deleted when V2 is dropped
-    {
-        if (m_commands.isMemCpy(dmaType) || commonState.m_isReductionCollective)
-        {
-            if (boxNumInfo.m_boxNum == commonState.m_dynamicComm.getMyPod())
-            {
-                if (commonState.m_collectiveOp == eHCLAllReduce || commonState.m_collectiveOp == eHCLReduceScatter)
-                {
-                    if (reductionSignalToCg && !commonState.m_isMultiPod)
-                    {
-                        if (commonState.m_collectiveOp == eHCLAllReduce)
-                        {
-                            addr = currentBoxRecvAddress;
-                        }
-                        else
-                        {
-                            addr = commonState.getRecvAddress(sliceIter);
-                        }
-                    }
-                    else
-                    {
-                        addr = generateIntermediateAddress(commonState, SCALEOUT_RR_POOL, 0);
-                    }
-                }
-                else if (commonState.m_collectiveOp == eHCLBroadcast)
-                {
-                    addr = commonState.getRecvAddress(sliceIter) + offset;
-                }
-                else if (commonState.m_collectiveOp == eHCLSimpleBroadcast ||
-                         commonState.m_collectiveOp == eHCLSinglePeerBroadcast)
-                {
-                    addr = commonState.getRecvAddress(sliceIter);
-                }
-                else if (commonState.m_collectiveOp == eHCLReduce)
-                {
-                    if (isReductionStream && (!useSibo || commonState.isRoot() || commonState.m_isMultiPod))
-                    {
-                        if (commonState.m_isMultiPod || !commonState.isRoot())
-                        {
-                            addr = generateIntermediateAddress(commonState, SCALEOUT_RR_POOL, 0);
-                        }
-                        else
-                        {
-                            addr = myBoxRecvAddress;
-                            if (commonState.isRoot() && reductionSignalToCg)
-                            {
-                                addr += offset;
-                            }
-                        }
-                    }
-                    else if (commonState.m_dynamicComm.getPodSize() == 1)  // if peers only copy to scaleout RR pool
-                    {
-                        addr = generateIntermediateAddress(commonState, SCALEOUT_RR_POOL, 0);
-                    }
-                    else
-                    {
-                        addr = commonState.getIntermediateBuffer(SCALEUP_RR_AND_ALL2ALL_POOL);
-                    }
-                }
-                else  // if (commonState.m_collectiveOp == eHCLAll2All || commonState.m_collectiveOp == eHCLAllGather)
-                {
                     addr = currentBoxRecvAddress;
+                    if (commonState.m_collectiveOp != eHCLReduceScatter)
+                    {
+                        addr += offset;
+                    }
                 }
             }
-            else  // not my pod
+            // multiScaleupGroup
+            else if (!isForScaleout)
             {
-                if (reductionSignalToCg)
-                {
-                    if (commonState.m_collectiveOp == eHCLAllReduce)
-                    {
-                        addr = myBoxRecvAddress + offset;
-                    }
-                    else if (commonState.m_collectiveOp == eHCLReduce)
-                    {
-                        if (commonState.isRoot())
-                        {
-                            addr = myBoxRecvAddress;
-                            if (!useSibo)
-                            {
-                                addr += offset;
-                            }
-                        }
-                        else  // !root
-                        {
-                            addr = commonState.getIntermediateBuffer(REDUCE_RR_POOL);
-                        }
-                    }
-                    else
-                    {
-                        addr = commonState.getRecvAddress(sliceIter);
-                    }
-                }
-                else if (commonState.m_collectiveOp == eHCLReduce && commonState.isRoot() && isReductionStream)
-                {
-                    addr = myBoxRecvAddress;
-                }
-                else if (commonState.m_collectiveOp == eHCLReduce && isForScaleout)
+                if (boxNumInfo.m_boxNum == commonState.m_dynamicComm.getMyScaleupGroup())
                 {
                     addr = commonState.getIntermediateBuffer(SCALEOUT_RR_POOL);
                 }
                 else
                 {
-                    if (commonState.m_isReductionCollective || commonState.m_collectiveOp == eHCLAll2All)
+                    addr = commonState.getIntermediateBuffer(SCALEUP_RR_AND_ALL2ALL_POOL);
+                }
+            }
+            else  // scaleout
+            {
+                if (commonState.m_collectiveOp == eHCLReduce && !commonState.isRoot())
+                {
+                    if (commonState.m_16BitReduction)
                     {
-                        addr = commonState.getIntermediateBuffer(SCALEUP_RR_AND_ALL2ALL_POOL);
+                        addr = commonState.getIntermediateBuffer(REDUCE_RR_POOL);
+                    }
+                    else
+                    {
+                        addr = commonState.getIntermediateBuffer(SCALEOUT_RR_POOL);
                     }
                 }
-            }
-        }
-        else if (m_commands.isCastDown(dmaType) && commonState.m_collectiveOp == eHCLReduce)
-        {
-            if (commonState.isRoot() && (!commonState.m_isMultiPod || reductionSignalToCg))
-            {
-                addr = myBoxRecvAddress;
-                if (reductionSignalToCg)
+                else if (commonState.m_collectiveOp == eHCLReduceScatter)
                 {
-                    addr += offset;
+                    addr = commonState.getRecvAddress(sliceIter);
+                }
+                else  // AR or Reduce root
+                {
+                    addr = myBoxRecvAddress + offset;
                 }
             }
-        }
-        else if (m_commands.isCastDown(dmaType) && commonState.m_isMultiPod && reductionSignalToCg)
-        {
-            if (commonState.m_collectiveOp == eHCLAllReduce)
+            break;
+        case eHCLGather:
+        case eHCLAllGather:
+            addr = currentBoxRecvAddress + offset;
+            break;
+        case eHCLAll2All:
+            if (boxNumInfo.m_boxNum == commonState.m_dynamicComm.getMyScaleupGroup())
             {
-                addr = myBoxRecvAddress + offset;
+                addr = currentBoxRecvAddress + offset;
             }
             else
             {
-                addr = commonState.getRecvAddress(sliceIter);
+                addr = commonState.getIntermediateBuffer(SCALEUP_RR_AND_ALL2ALL_POOL) + offset;
             }
-        }
-        else
-        {
-            addr = currentBoxRecvAddress;
-        }
-
-        bool dontAddDstOffset;
-        bool isCastUpNonReproducible   = m_commands.isCastUp(dmaType) && !isReproReduction;
-        bool isCastDownNonReproducible = m_commands.isCastDown(dmaType) && !isReproReduction;
-        switch (commonState.m_collectiveOp)
-        {
-            case eHCLAllGather:
-            case eHCLGather:
+            break;
+        case eHCLScatter:
+            addr = commonState.getRecvAddress(sliceIter);
+            if (commonState.m_collectiveOp != eHCLSinglePeerBroadcast)
+            {
                 addr += offset;
-                break;
+            }
+            break;
+        case eHCLSimpleBroadcast:
+            addr = commonState.getRecvAddress(sliceIter);
+            break;
 
-            case eHCLAllReduce:
-                dontAddDstOffset = isCastUpNonReproducible || commonState.m_isMultiPod ||
-                                   (!reductionSignalToCg && !isCastDownNonReproducible && !isReproReduction) ||
-                                   (isReproReduction &&
-                                    (useSibo || (!useSibo && !isRRLast)));
-                addr += dontAddDstOffset ? 0 : offset;
-                break;
-
-            case eHCLAll2All:
-                addr += offset;
-                break;
-
-            default:
-                break;
-        }
+        case eHCLReduce:
+        case eHCLAllReduce:
+        case eHCLSinglePeerBroadcast:
+        case eHCLBroadcast:
+        case eHCLNoCollective:
+        case eHCLCollectiveLastValue:
+            VERIFY(false, "wrong current op {} at generateMemcpyDstAddress", commonState.m_currentOp);
     }
 
     return addr;

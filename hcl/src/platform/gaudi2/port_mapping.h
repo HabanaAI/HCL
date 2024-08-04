@@ -25,7 +25,6 @@ public:
     Gaudi2DevicePortMapping(int fd);
     Gaudi2DevicePortMapping(int fd, const Gen2ArchPortMappingConfig& portMappingConfig);
     virtual void assignDefaultMapping() override;
-    unsigned     getMaxNumScaleOutPorts() const override;
     unsigned     getDefaultScaleOutPortByIndex(unsigned idx) const override;
-    virtual void assignCustomMapping(int fd, const Gen2ArchPortMappingConfig& portMappingConfig) override;
+    virtual void assignCustomMapping(const Gen2ArchPortMappingConfig& portMappingConfig) override;
 };

@@ -2,6 +2,8 @@
 
 #include "platform/gen2_arch_common/port_mapping_config.h"  // for Gen2ArchNicsDeviceSingleConfig
 
+// clang-format off
+
 extern const Gen2ArchNicsDeviceSingleConfig g_hls3pcie_card_location_0_mapping;
 extern const Gen2ArchNicsDeviceSingleConfig g_hls3pcie_card_location_1_mapping;
 extern const Gen2ArchNicsDeviceSingleConfig g_hls3pcie_card_location_2_mapping;
@@ -10,3 +12,5 @@ extern const Gen2ArchNicsDeviceSingleConfig g_hls3pcie_card_location_4_mapping;
 extern const Gen2ArchNicsDeviceSingleConfig g_hls3pcie_card_location_5_mapping;
 extern const Gen2ArchNicsDeviceSingleConfig g_hls3pcie_card_location_6_mapping;
 extern const Gen2ArchNicsDeviceSingleConfig g_hls3pcie_card_location_7_mapping;
+
+// clang-format on

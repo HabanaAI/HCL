@@ -256,7 +256,8 @@ enum scheduler_type_t {
 enum {
 	SYNC_SCHEME_FENCE_ID = 0,
 	B2B_FENCE_ID = 1,
-	QMAN_SYNC_FENCE_ID = 2,
+	QMAN_SYNC_FENCE_ID = 1,
+	EXT_SIGNAL_FENCE_ID = 2,
 	MCID_ROLLOVER_FENCE_ID = 3
 };
 
@@ -330,6 +331,11 @@ enum sched_cmpt_sync_scheme_bitmap {
  * Long DBG SOB Monitor count per engine, needs a long monitor
  */
 #define SCHED_CMPT_ENG_SYNC_SCHEME_DBG_MON_COUNT	4
+
+/**<
+ * Long EXT SIGNAL SOB Monitor count per engine, needs a long monitor
+ */
+#define SCHED_CMPT_ENG_EXT_SIG_MON_COUNT	4
 
 /**<
  * B2B Monitor count per engine

@@ -15,12 +15,6 @@
 class HclAddressGenerator;
 class DeviceBufferManager;
 
-struct SyncObjectDescriptor
-{
-    sob_info sob;
-    unsigned value;
-};
-
 class BoxNumInfo
 {
 public:
@@ -56,7 +50,7 @@ public:
                                         uint64_t         rootBox)                                             = 0;
     virtual uint64_t getBoxCount(uint64_t nonRemainderBoxCount,
                                  uint64_t numBoxes,
-                                 uint64_t podSize,
+                                 uint64_t ScaleupGroupSize,
                                  uint64_t boxIndex,
                                  uint64_t scaleUpCount,
                                  uint64_t remainderCount) = 0;
@@ -64,10 +58,10 @@ public:
                                       uint64_t numBoxes,
                                       uint64_t boxCount,
                                       uint64_t boxIndex,
-                                      uint64_t myRankInPod,
+                                      uint64_t myRankInScaleupGroup,
                                       uint64_t scaleUpCount,
                                       uint64_t remainderCount,
-                                      bool lastRankInPod)   = 0;
+                                      bool lastRankInScaleupGroup)   = 0;
     virtual uint64_t getDiv(uint64_t a, uint64_t b) = 0;
     virtual uint64_t getRemainderCount(uint64_t totalCount, uint64_t scaleUpCount, uint64_t commSize) = 0;
     virtual bool     isValidSlicing(uint32_t originalBufferCount,
@@ -146,7 +140,7 @@ public:
 
     bool     m_inPlace                     = false;
     bool     m_16BitReduction              = false;
-    bool     m_isMultiPod                  = false;
+    bool     m_isMultiScaleupGroup         = false;
     bool     m_hasBufferSize               = false;
     bool     m_isReductionCollective       = false;
     bool     m_isSlicing                   = false;
@@ -200,15 +194,13 @@ public:
     void initializeSignalsCalculator();
 
     bool     isEdgeIteration(BoxNumInfo& boxNumInfo) const;
+    bool     isEdgeIteration() const;
     unsigned calcBoxIterRecv(BoxNumInfo& boxNumInfo) const;
 
     unsigned getBroadcastScatterOpBoxIterations() const;
-    inline uint64_t getCUID() { return m_cuid; }
+    uint64_t calculateCUID(bool isFirstBox, bool isLastBox);
 
 private:
-    uint64_t calculateCUID();
-
-    uint64_t           m_cuid = 0;  // Stands for 'Collective Unique ID'.
     HclConfigType      m_boxType;
     const uint32_t     m_maxNumScaleUpPortsPerConnection;
     SignalsCalculator* m_signalsCalculator;
@@ -216,8 +208,7 @@ private:
 
 struct SliceExecutionOutput
 {
-    uint64_t m_deviceCount = 0;  // TODO - needs to be uint32_t, since we mult by data type size and call
-                                 // serializePdmaCommand which accepts uint32_t
+    uint64_t m_deviceCount   = 0;
     uint64_t m_strideCount   = 0;
     uint64_t m_cellCount     = 0;
     uint64_t m_deviceAddress = 0;

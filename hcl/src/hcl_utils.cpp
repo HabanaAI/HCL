@@ -65,7 +65,7 @@ void free_mem_mapped_to_device(void* hostAddr, int length, uint64_t deviceHandle
 void getHclVersion(char* pVersion, const unsigned len)
 {
     const std::string version =
-        fmt::format("{}.{}.{}-{}", HL_DRIVER_MAJOR, HL_DRIVER_MINOR, HL_DRIVER_PATCHLEVEL, HCL_VERSION_HEAD);
+        fmt::format("{}.{}.{}", HL_DRIVER_MAJOR, HL_DRIVER_MINOR, HL_DRIVER_PATCHLEVEL);
 
     std::strncpy(pVersion, version.c_str(), len);
     if (version.length() >= len)

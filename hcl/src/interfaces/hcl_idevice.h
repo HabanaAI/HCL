@@ -25,7 +25,6 @@ class HclEvent;
 class UniqueSortedVector;
 class ofi_t;
 
-class synapse_stream_wrap;
 class OfiPlugin;
 class HcclHostBufferManager;
 
@@ -48,7 +47,7 @@ public:
      */
     virtual hcclResult_t destroy(bool force = false);
 
-    // called by device manager after device has been created and
+    // called by communicator after device has been created and
     // and performed basic setup. put extended initialization/setup code here
     virtual hcclResult_t onNewCommStart(HCL_Comm comm, uint32_t commSize, HclConfig& config);
 
@@ -60,13 +59,12 @@ public:
     virtual hlthunk_device_name getDeviceName() = 0;
 
     /**
-     * get this rank DeviceID
+     * get this rank Rank ID
      */
     virtual HCL_Rank getMyRank(HCL_Comm comm);
 
     /**
-     * get DeviceIDs set of the global communicator
-     * TODO: rename to getDevices [SW-18246]
+     * get Rank IDs set of the global communicator
      */
     virtual const UniqueSortedVector& getRanks(HCL_Comm comm);
 
@@ -90,20 +88,20 @@ public:
     virtual HclDynamicCommunicator& getComm(HCL_Comm comm);
 
     /**
-     * get logical Rank IDs of devices in the same pod in comm
+     * get logical Rank IDs of devices in the same ScaleupGroup in comm
      * not including this ranks
      */
     virtual void getInnerRanks(const HCL_Comm comm, UniqueSortedVector& innerRanks);
 
     /**
-     * get logical Rank IDs of peers in other pods in comm
+     * get logical Rank IDs of peers in other ScaleupGroups in comm
      * not including this ranks
      */
     virtual void getOuterRanks(const HCL_Comm comm, UniqueSortedVector& outerRanks);
 
     /**
-     * get logical Rank IDs of peers in other pods in comm
-     * and logical Rank IDs of devices in the same pod in comm
+     * get logical Rank IDs of peers in other ScaleupGroups in comm
+     * and logical Rank IDs of devices in the same ScaleupGroup in comm
      * not including this ranks
      */
     virtual void getPeerRanks(const HCL_Comm comm, UniqueSortedVector& syncRanks);
@@ -183,9 +181,9 @@ public:
 
     virtual bool isDramAddressValid(uint64_t addr) const = 0;
 
-    virtual bool isCommunicatorInPod(HCL_Comm comm);
+    virtual bool isCommunicatorInScaleupGroup(HCL_Comm comm);
 
-    virtual bool isCommunicatorPodPeers(HCL_Comm comm);
+    virtual bool isCommunicatorScaleupGroupPeers(HCL_Comm comm);
 
     virtual bool isCommunicatorHierarchical(HCL_Comm comm);
 
@@ -193,7 +191,7 @@ public:
 
     virtual int getNumActiveComms() const;
 
-    virtual int getPodSize(HCL_Comm comm);
+    virtual int getScaleupGroupSize(HCL_Comm comm);
 
     virtual unsigned getSenderWqeTableSize()   = 0;
     virtual unsigned getReceiverWqeTableSize() = 0;
@@ -209,10 +207,9 @@ public:
 
     virtual spHclNic allocateNic(uint32_t nic, uint32_t max_qps) { return std::make_shared<IHclNic>(this, nic); }
 
-    virtual uint32_t     createQp(uint32_t port, uint8_t qpId);
-    virtual hcclResult_t setupQps(HCL_Comm comm, HCL_Rank rank, uint32_t stream, uint32_t port, uint32_t qpn, uint8_t qpSet);
-    virtual void         closeQps(HCL_Comm comm, const UniqueSortedVector& ranks);
-    virtual void         destroyQp(uint32_t port, uint32_t qpn);
+    virtual uint32_t createQp(uint32_t port, uint8_t qpId) = 0;
+    virtual hcclResult_t setupQps(HCL_Comm comm, HCL_Rank rank, uint32_t stream, uint32_t port, uint32_t qpn, uint8_t qpSet) = 0;
+    virtual void destroyQp(uint32_t port, uint32_t qpn) = 0;
 
     virtual uint64_t getDRAMSize() { return 0; };
     virtual uint64_t getDRAMBaseAddr() { return 0; };
@@ -223,21 +220,7 @@ public:
     HclDeviceConfig   m_deviceConfig;
 
 protected:
-    virtual void updateRequesterContext(hlthunk_requester_conn_ctx& req_ctx,
-                                        HCL_Comm                    comm,
-                                        uint8_t                     nic,
-                                        HCL_Rank                    remoteRank,
-                                        uint32_t                    qpn,
-                                        uint8_t                     qpSet);
-    virtual void updateResponderContext(hlthunk_responder_conn_ctx& res_ctx,
-                                        HCL_Comm                    comm,
-                                        uint8_t                     nic,
-                                        HCL_Rank                    remoteRank,
-                                        uint32_t                    qpn,
-                                        uint8_t                     qpSet);
-
     virtual uint32_t allocateConnection(uint32_t port, HCL_Rank rank, HCL_Comm comm, uint8_t qpId, uint8_t qpSet = 0);
-    virtual void     deleteCommConnections(HCL_Comm comm);
     virtual void     setGaudiDirect() {};
 
     void setHal(hcl::HalPtr ptr);
@@ -248,6 +231,7 @@ protected:
     void fillMacAddresses(HCL_Comm comm);
     void getMacInfo();
     void readMacInfoDriver();
+    void getMacAddressInfo();
     bool readMacInfoFromFile(const char* macAddrInfoFilePath);
 
     class macaddr_t

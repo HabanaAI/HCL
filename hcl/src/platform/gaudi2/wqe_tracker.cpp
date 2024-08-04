@@ -1,4 +1,5 @@
 #include "platform/gaudi2/wqe_tracker.h"
+#include "hccl_device.h"
 #include "hcl_types.h"
 #include "hcl_dynamic_communicator.h"  // for HclDynamicCommunicator
 #include "hcl_utils.h"                 // for VERIFY
@@ -7,17 +8,12 @@ const unsigned DEFAULT_BOX_NUM = 8;
 
 WqeTrackerGaudi2::WqeTrackerGaudi2()
 {
+    // allocate initial data for communicators
+    // don't allocate per communicator since it's size is unknown
     for (unsigned qpType = 0; qpType < (unsigned)QpType::QPTypeSize; ++qpType)
     {
         m_wqePerConnection[qpType].resize(DEFAULT_COMMUNICATORS_SIZE);
         m_wqeWraparoundBits[qpType].resize(DEFAULT_COMMUNICATORS_SIZE);
-
-        unsigned vecSize = qpType < (int) QpType::ScaleOutAllGather ? DEFAULT_BOX_SIZE : DEFAULT_BOX_NUM;
-        for (unsigned commIdx = 0; commIdx < DEFAULT_COMMUNICATORS_SIZE; ++commIdx)
-        {
-            m_wqePerConnection[qpType][commIdx].resize(vecSize, 0);
-            m_wqeWraparoundBits[qpType][commIdx].resize(vecSize, {false, false});
-        }
     }
 }
 
@@ -26,41 +22,6 @@ void WqeTrackerGaudi2::incWqe(const HCL_Comm commId, const unsigned rank, const 
     unsigned qpTypeIdx = (unsigned)qpType;
     VERIFY(qpTypeIdx < (unsigned)QpType::QPTypeSize);
     VERIFY((int) qpType >= (int) QpType::ScaleOutAllGather || rank < DEFAULT_BOX_SIZE);
-
-    // TODO: move resize code to CommInitRank
-    if (unlikely(commId >= m_wqePerConnection[qpTypeIdx].size()))
-    {
-        unsigned prevSize = m_wqePerConnection[qpTypeIdx].size();
-        VERIFY(prevSize == m_wqeWraparoundBits[qpTypeIdx].size());
-        LOG_HCL_DEBUG(HCL,
-                      "Resizing m_wqePerConnection/m_wqeWraparoundBits for new comm({}) from({}) by({})",
-                      commId,
-                      prevSize,
-                      DEFAULT_COMMUNICATORS_SIZE);
-        m_wqePerConnection[qpTypeIdx].resize(prevSize + DEFAULT_COMMUNICATORS_SIZE);
-        m_wqeWraparoundBits[qpTypeIdx].resize(prevSize + DEFAULT_COMMUNICATORS_SIZE);
-
-        // TODO: resize scale-out QPs to #of boxes and not #of ranks?
-        unsigned vecSize = (int) qpType < (int) QpType::ScaleOutAllGather ? DEFAULT_BOX_SIZE : DEFAULT_BOX_NUM;
-        for (unsigned i = prevSize; i < m_wqePerConnection[qpTypeIdx].size(); ++i)
-        {
-            m_wqePerConnection[qpTypeIdx][i].resize(vecSize, 0);
-            m_wqeWraparoundBits[qpTypeIdx][i].resize(vecSize, {false, false});
-        }
-    }
-
-    // TODO: merge with above code
-    // TODO: resize scale-out QPs to #of boxes and not #of ranks?
-    if (unlikely(m_wqePerConnection[qpTypeIdx][commId].size() <= rank))
-    {
-        unsigned newSize = m_wqePerConnection[qpTypeIdx][commId].size();
-        while (newSize <= rank)
-        {
-            newSize *= 2;
-        }
-        m_wqePerConnection[qpTypeIdx][commId].resize(newSize, 0);
-        m_wqeWraparoundBits[qpTypeIdx][commId].resize(newSize, {false, false});
-    }
 
     if (((++m_wqePerConnection[qpTypeIdx][commId][rank]) & (m_recvWqeEntriesNum - 1)) == 0)
     {
@@ -77,6 +38,53 @@ void WqeTrackerGaudi2::incWqe(const HCL_Comm commId, const unsigned rank, const 
             default:
                 assert(false);
         }
+    }
+}
+
+/**
+ * @brief allocate data for communicators on commInitRank
+ * allocate data for new communicators if needed
+ * allocate data for new communicator based on its size
+ * @param commId - new communicator
+ */
+void WqeTrackerGaudi2::resizeDB(const HCL_Comm commId)
+{
+    if (commId >= m_wqePerConnection[0].size())
+    {
+        const size_t prevSize = m_wqePerConnection[0].size();
+        for (unsigned qpType = 0; qpType < (unsigned)QpType::QPTypeSize; ++qpType)
+        {
+            VERIFY(prevSize == m_wqePerConnection[qpType].size());
+            VERIFY(prevSize == m_wqeWraparoundBits[qpType].size());
+            LOG_HCL_DEBUG(HCL,
+                          "Resizing m_wqePerConnection/m_wqeWraparoundBits[{}] for new comm({}) from({}) by({})",
+                          qpType,
+                          commId,
+                          prevSize,
+                          DEFAULT_COMMUNICATORS_SIZE);
+            m_wqePerConnection[qpType].resize(prevSize + DEFAULT_COMMUNICATORS_SIZE);
+            m_wqeWraparoundBits[qpType].resize(prevSize + DEFAULT_COMMUNICATORS_SIZE);
+        }
+    }
+
+    // allocate space for new communicator data
+    const int commSize    = hccl_device()->getCommSize(commId);
+    const int scaleupSize = hccl_device()->getScaleupGroupSize(commId);
+    const int nodes       = commSize / scaleupSize;
+    LOG_HCL_DEBUG(HCL,
+                  "allocate wqe data for comm({}), size({}), scaleupSize({}), nodes({})",
+                  commId,
+                  commSize,
+                  scaleupSize,
+                  nodes);
+    for (unsigned qpType = 0; qpType < (unsigned)QpType::QPTypeSize; ++qpType)
+    {
+        VERIFY(m_wqePerConnection[qpType][commId].size() == 0, "wqe data already allocated qptype({})", qpType);
+        VERIFY(m_wqeWraparoundBits[qpType][commId].size() == 0, "wqe data already allocated qptype({})", qpType);
+        // resize scale-out QPs to #of boxes
+        const unsigned vecSize = (int)qpType < (int)QpType::ScaleOutAllGather ? DEFAULT_BOX_SIZE : nodes;
+        m_wqePerConnection[qpType][commId].resize(vecSize, 0);
+        m_wqeWraparoundBits[qpType][commId].resize(vecSize, {false, false});
     }
 }
 

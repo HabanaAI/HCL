@@ -37,6 +37,8 @@ std::unique_ptr<hccl_coordinator> hccl_coordinator::create(bool use_global_comm_
     {
         ip        = get_global_comm_ip();
         hccl_port = get_global_comm_port();
+        // check if address is on this host
+        VERIFY(ip_is_local(ip), "provided ip({}) is not on local host", ip);
     }
     else
     {
@@ -316,8 +318,7 @@ void hccl_coordinator::dispatch_msg(int socket, msg_header_t& hdr, std::vector<u
         }
         case SYNC_BETWEEN_RANKS:
         {
-            process_sync_between_ranks_msg(socket,
-                                           *(reinterpret_cast<hccl_bootstrap_general_payload_t*>(payload.data())));
+            process_sync_between_ranks_msg(*(reinterpret_cast<hccl_bootstrap_general_payload_t*>(payload.data())));
             break;
         }
         case DATA_BETWEEN_RANKS:
@@ -327,7 +328,7 @@ void hccl_coordinator::dispatch_msg(int socket, msg_header_t& hdr, std::vector<u
         }
         case BOOTSTRAP_COMM_DESTROY:
         {
-            process_comm_destroy_msg(socket, *(reinterpret_cast<hccl_bootstrap_general_payload_t*>(payload.data())));
+            process_comm_destroy_msg(*(reinterpret_cast<hccl_bootstrap_general_payload_t*>(payload.data())));
             break;
         }
         case COLLECTIVE_LOG:
@@ -337,20 +338,17 @@ void hccl_coordinator::dispatch_msg(int socket, msg_header_t& hdr, std::vector<u
         }
         default:
         {
-            /* TODO - Add assert */
+            VERIFY(false, "Unknown header id={}", hdr.id);
             break;
         }
     }
 }
 
-void hccl_coordinator::process_sync_between_ranks_msg(int                               socket /* TODO - Remove */,
-                                                      hccl_bootstrap_general_payload_t& payload)
+void hccl_coordinator::process_sync_between_ranks_msg(hccl_bootstrap_general_payload_t& payload)
 {
-    (void)socket;
     if (sync_ranks_.find(payload.rank) != sync_ranks_.end())
     {
-        /* TODO - handle as error*/
-        LOG_HCL_WARN(HCL_COORD, "Rank {} was already finalized", payload.rank);
+        VERIFY(false, "Rank {} was already finalized", payload.rank);
     }
 
     if (sync_ranks_.size() == 0)
@@ -407,14 +405,11 @@ bool hccl_coordinator::graceful_close_bootstrap_socket(int bootstrap_socket)
     return true;
 }
 
-void hccl_coordinator::process_comm_destroy_msg(int                               socket /* TODO - Remove */,
-                                                hccl_bootstrap_general_payload_t& payload)
+void hccl_coordinator::process_comm_destroy_msg(hccl_bootstrap_general_payload_t& payload)
 {
-    (void)socket;
     if (sync_ranks_.find(payload.rank) != sync_ranks_.end())
     {
-        /* TODO - handle as error*/
-        LOG_HCL_WARN(HCL_COORD, "Rank {} was already finalized", payload.rank);
+        VERIFY(false, "Rank {} was already finalized", payload.rank);
     }
 
     LOG_HCL_DEBUG(HCL_COORD, "received indication from rank={}", payload.rank);
@@ -529,8 +524,7 @@ void hccl_coordinator::processCommInitHandshake1(int socket, RankInfoHeader& pay
 
     if (sync_ranks_.find(payload.hcclRank) != sync_ranks_.end())
     {
-        /* TODO - handle as error*/
-        LOG_HCL_WARN(HCL_COORD, "Rank {} was already finalized", payload.hcclRank);
+        VERIFY(false, "Rank {} was already finalized", payload.hcclRank);
     }
 
     if (sync_ranks_.size() == 0)
@@ -625,8 +619,7 @@ void hccl_coordinator::processCommInitHandshake2(int socket, std::vector<uint8_t
 
     if (sync_ranks_.find(buffer.localInfo.header.hcclRank) != sync_ranks_.end())
     {
-        /* TODO - handle as error*/
-        LOG_HCL_WARN(HCL_COORD, "Rank {} was already finalized", buffer.localInfo.header.hcclRank);
+        VERIFY(false, "Rank {} was already finalized", buffer.localInfo.header.hcclRank);
     }
 
     if (sync_ranks_.size() == 0)
@@ -740,7 +733,7 @@ void hccl_coordinator::processCollectiveLogMsg(const CollectiveLogMessage& msg)
 {
     std::chrono::milliseconds             ms(msg.timestamp);
     std::chrono::system_clock::time_point from_ms(ms);
-    // TODO: fix format, talk to Alex V
+
     LOG_DEBUG(HCL_COORD,
              "[{:%H:%M:%S}.{:>03}] Rank({}) called ({}, {}, {}, {}, {}, {})",
              from_ms, ms.count() % 1000000ull,

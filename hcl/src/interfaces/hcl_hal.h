@@ -30,7 +30,7 @@ public:
     virtual uint32_t getMaxEDMAs() const              = 0;
 
     virtual uint32_t getDefaultBoxSize() const       = 0;
-    virtual uint32_t getDefaultPodSize() const       = 0;
+    virtual uint32_t getDefaultScaleupGroupSize() const       = 0;
 
     virtual uint64_t getFlushPCIeReg() const            = 0;
 

@@ -6,6 +6,7 @@
 #include "hccl_internal_defs.h"                   // for hcclHandle, hcclHan...
 #include "hcl_types.h"                            // for RankInfo, HostNicInfo
 #include "hcl_utils.h"                            // for LOG_HCL_ERR, LOG_HC...
+#include "hcl_dynamic_communicator.h"             // for HclDynamicCommunicator
 #include "interfaces/hcl_unique_sorted_vector.h"  // for UniqueSortedVector
 #include "libfabric/libfabric_common.h"           // for post_recv, post_send
 #include "libfabric/mr_mapping.h"                 // for MRMapping
@@ -20,11 +21,11 @@ bool ofi_communicator::initializeCommunicator(int                       hcclRank
                                               int                       nranks,
                                               const UniqueSortedVector& peers,
                                               IHclDevice*               hclDevice,
-                                              RankInfo&                 rankInfo)
+                                              RankInfo&                 rankInfo,
+                                              const uint16_t            qpSetCount)
 {
-    LOG_HCL_TRACE(HCL, "hcclRank={}, nranks={}, peers=[ {} ]", hcclRank, nranks, peers);
+    LOG_HCL_TRACE(HCL, "hcclRank={}, nranks={}, peers=[ {} ], qpSetCount={}", hcclRank, nranks, peers, qpSetCount);
     m_myRankInfo = &rankInfo;
-    int status;
     if (peers.size() == 0)
     {
         LOG_HCL_DEBUG(HCL, "Rank {} has no peers, skipping OFI communicator initialization", hcclRank);
@@ -39,21 +40,30 @@ bool ofi_communicator::initializeCommunicator(int                       hcclRank
     m_ofi_        = hclDevice->getOfiHandle();
     m_ofiDeviceId = hclDevice->getOfiDeviceId();
     m_device_     = hclDevice;
+    m_qpSetCount  = qpSetCount;
     my_rank_      = hcclRank;
 
     for (const HCL_Rank peer : peers)
     {
-        for (unsigned hostConnIdx = 0; hostConnIdx < getNumConnectionPerRank(); hostConnIdx++)
+        for (uint16_t qpSetIndex = 0; qpSetIndex < m_qpSetCount; ++qpSetIndex)
         {
-            char buff[CTRL_BUF_SIZE] = {0};
-            status = m_ofi_->listen(m_ofiDeviceId, &buff, &m_peerRankToConnectionInfo[peer][hostConnIdx].listenComm);
-
-            if (status)
+            for (unsigned hostConnIdx = 0; hostConnIdx < getNumConnectionPerRank(); hostConnIdx++)
             {
-                LOG_HCL_ERR(HCL, "listen returned failure from rank {} to rank {}", my_rank_, peer);
-                return false;
+                char buff[CTRL_BUF_SIZE] = {0};
+                int  status              = m_ofi_->listen(m_ofiDeviceId,
+                                            &buff,
+                                            &m_peerRankToConnectionInfo[peer][qpSetIndex][hostConnIdx].listenComm,
+                                            hostConnIdx,
+                                            qpSetIndex);
+                if (status)
+                {
+                    LOG_HCL_ERR(HCL, "listen returned failure from rank {} to rank {}", my_rank_, peer);
+                    return false;
+                }
+                std::memcpy(rankInfo.remoteInfo[peer].hostNicConns.server[qpSetIndex][hostConnIdx].buff,
+                            buff,
+                            CTRL_BUF_SIZE);
             }
-            std::memcpy(rankInfo.remoteInfo[peer].hostNicConns.server[hostConnIdx].buff, buff, CTRL_BUF_SIZE);
         }
     }
 
@@ -64,57 +74,63 @@ bool ofi_communicator::initializeCommunicator(int                       hcclRank
 
 bool ofi_communicator::updateConnections(const HCL_Rank outerRank, const HostNicConnectInfo& hnicsInfoBuf)
 {
-    for (unsigned hostConnIdx = 0; hostConnIdx < getNumConnectionPerRank(); hostConnIdx++)
+    for (uint16_t qpSetIndex = 0; qpSetIndex < m_qpSetCount; ++qpSetIndex)
     {
-        // TODO: we convert const ptr to non-const because connect() requires it although it does not modify it.
-        // Once connect() signature is fixed we remove the const_cast().
+        for (unsigned hostConnIdx = 0; hostConnIdx < getNumConnectionPerRank(); hostConnIdx++)
+        {
+            const HostNicConnOpaque& nonConstHnicsInfo = hnicsInfoBuf.server[qpSetIndex][hostConnIdx];
+            int                      status            = 0;
 
-        HostNicConnOpaque& nonConstHnicsInfo = const_cast<HostNicConnOpaque&>(hnicsInfoBuf.server[hostConnIdx]);
-        int                status;
+            if (my_rank_ < outerRank)
+            {
+                status = m_ofi_->connect(
+                    m_ofiDeviceId,
+                    &(nonConstHnicsInfo.buff),
+                    &m_peerRankToConnectionInfo[outerRank][qpSetIndex][hostConnIdx].sendComm,
+                    m_myRankInfo->remoteInfo[outerRank].hostNicConns.server[qpSetIndex][hostConnIdx].buff,
+                    hostConnIdx,
+                    qpSetIndex);
+                if (status)
+                {
+                    LOG_HCL_ERR(HCL, "connect returned failure from rank {} to rank {}", my_rank_, outerRank);
+                    return false;
+                }
+            }
+            else
+            {
+                status = m_ofi_->accept(m_peerRankToConnectionInfo[outerRank][qpSetIndex][hostConnIdx].listenComm,
+                                        &m_peerRankToConnectionInfo[outerRank][qpSetIndex][hostConnIdx].recvComm);
+                if (status)
+                {
+                    LOG_HCL_ERR(HCL, "accept returned failure from rank {} to rank {}", my_rank_, outerRank);
+                    return false;
+                }
+            }
 
-        if (my_rank_ < outerRank)
-        {
-            status = m_ofi_->connect(m_ofiDeviceId,
-                                     (void*)&(nonConstHnicsInfo.buff),
-                                     &m_peerRankToConnectionInfo[outerRank][hostConnIdx].sendComm,
-                                     m_myRankInfo->remoteInfo[outerRank].hostNicConns.server[hostConnIdx].buff);
-            if (status)
+            if (my_rank_ > outerRank)
             {
-                LOG_HCL_ERR(HCL, "connect returned failure from rank {} to rank {}", my_rank_, outerRank);
-                return false;
+                status = m_ofi_->connect(
+                    m_ofiDeviceId,
+                    &(nonConstHnicsInfo.buff),
+                    &m_peerRankToConnectionInfo[outerRank][qpSetIndex][hostConnIdx].sendComm,
+                    m_myRankInfo->remoteInfo[outerRank].hostNicConns.server[qpSetIndex][hostConnIdx].buff,
+                    hostConnIdx,
+                    qpSetIndex);
+                if (status)
+                {
+                    LOG_HCL_ERR(HCL, "connect returned failure from rank {} to rank {}", my_rank_, outerRank);
+                    return false;
+                }
             }
-        }
-        else
-        {
-            status = m_ofi_->accept(m_peerRankToConnectionInfo[outerRank][hostConnIdx].listenComm,
-                                    &m_peerRankToConnectionInfo[outerRank][hostConnIdx].recvComm);
-            if (status)
+            else
             {
-                LOG_HCL_ERR(HCL, "accept returned failure from rank {} to rank {}", my_rank_, outerRank);
-                return false;
-            }
-        }
-
-        if (my_rank_ > outerRank)
-        {
-            status = m_ofi_->connect(m_ofiDeviceId,
-                                     (void*)&(nonConstHnicsInfo.buff),
-                                     &m_peerRankToConnectionInfo[outerRank][hostConnIdx].sendComm,
-                                     m_myRankInfo->remoteInfo[outerRank].hostNicConns.server[hostConnIdx].buff);
-            if (status)
-            {
-                LOG_HCL_ERR(HCL, "connect returned failure from rank {} to rank {}", my_rank_, outerRank);
-                return false;
-            }
-        }
-        else
-        {
-            status = m_ofi_->accept(m_peerRankToConnectionInfo[outerRank][hostConnIdx].listenComm,
-                                    &m_peerRankToConnectionInfo[outerRank][hostConnIdx].recvComm);
-            if (status)
-            {
-                LOG_HCL_ERR(HCL, "accept returned failure from rank {} to rank {}", my_rank_, outerRank);
-                return false;
+                status = m_ofi_->accept(m_peerRankToConnectionInfo[outerRank][qpSetIndex][hostConnIdx].listenComm,
+                                        &m_peerRankToConnectionInfo[outerRank][qpSetIndex][hostConnIdx].recvComm);
+                if (status)
+                {
+                    LOG_HCL_ERR(HCL, "accept returned failure from rank {} to rank {}", my_rank_, outerRank);
+                    return false;
+                }
             }
         }
     }
@@ -127,7 +143,8 @@ hcclResult_t ofi_communicator::sendAsync(void*                  sendbuff,
                                          int                    peer,
                                          hcclHandle*            handle,
                                          unsigned               hostConnIdx,
-                                         OfiCompCallbackParams& compParams)
+                                         OfiCompCallbackParams& compParams,
+                                         uint16_t               qpSetIndex)
 {
     HCL_FUNC_INSTRUMENTATION(DEBUG_STATS_ALL);
 
@@ -137,7 +154,7 @@ hcclResult_t ofi_communicator::sendAsync(void*                  sendbuff,
         return hcclLibfabricError;
     }
 
-    int status = post_send(m_peerRankToConnectionInfo[peer][hostConnIdx].sendComm,
+    int status = post_send(m_peerRankToConnectionInfo[peer][qpSetIndex][hostConnIdx].sendComm,
                            sendbuff,
                            size,
                            &handle->ofi.req,
@@ -161,7 +178,8 @@ hcclResult_t ofi_communicator::recvAsync(void*                  recvbuff,
                                          int                    peer,
                                          hcclHandle*            handle,
                                          unsigned               hostConnIdx,
-                                         OfiCompCallbackParams& compParams)
+                                         OfiCompCallbackParams& compParams,
+                                         uint16_t               qpSetIndex)
 {
     HCL_FUNC_INSTRUMENTATION(DEBUG_STATS_ALL);
 
@@ -171,7 +189,7 @@ hcclResult_t ofi_communicator::recvAsync(void*                  recvbuff,
         return hcclLibfabricError;
     }
 
-    int status = post_recv(m_peerRankToConnectionInfo[peer][hostConnIdx].recvComm,
+    int status = post_recv(m_peerRankToConnectionInfo[peer][qpSetIndex][hostConnIdx].recvComm,
                            recvbuff,
                            size,
                            &handle->ofi.req,
@@ -184,7 +202,7 @@ hcclResult_t ofi_communicator::recvAsync(void*                  recvbuff,
     }
 
     handle->isOfiReq       = true;
-    handle->ofi.ofiComm    = m_peerRankToConnectionInfo[peer][hostConnIdx].recvComm;
+    handle->ofi.ofiComm    = m_peerRankToConnectionInfo[peer][qpSetIndex][hostConnIdx].recvComm;
     handle->ofi.recvBuffer = recvbuff;
     handle->ofi.size       = size;
 
@@ -214,19 +232,23 @@ bool ofi_communicator::destroy()
 {
     for (const auto& peerRankConnections : m_peerRankToConnectionInfo)
     {
-        for (const auto& hnicConn : peerRankConnections)
+        for (uint32_t i = 0; i < m_qpSetCount; ++i)
         {
-            if (hnicConn.listenComm)
+            const auto& qpSet = peerRankConnections[i];
+            for (const auto& hnicConn : qpSet)
             {
-                m_ofi_->close(hnicConn.listenComm);
-            }
-            if (hnicConn.sendComm)
-            {
-                m_ofi_->close(hnicConn.sendComm);
-            }
-            if (hnicConn.recvComm)
-            {
-                m_ofi_->close(hnicConn.recvComm);
+                if (hnicConn.listenComm)
+                {
+                    m_ofi_->close(hnicConn.listenComm);
+                }
+                if (hnicConn.sendComm)
+                {
+                    m_ofi_->close(hnicConn.sendComm);
+                }
+                if (hnicConn.recvComm)
+                {
+                    m_ofi_->close(hnicConn.recvComm);
+                }
             }
         }
     }

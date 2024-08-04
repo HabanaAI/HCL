@@ -1,11 +1,20 @@
 #pragma once
 
+#include "llvm/small_vector.h"  // for SmallVector
 #include "infra/scal/gen2_arch_common/scal_stream.h"
 #include "platform/gen2_arch_common/types.h"
 #include "hcl_api_types.h"
 
 struct HclDynamicCommunicator;
+struct LBWBurstAddressData
+{
+    uint32_t address;
+    uint32_t data;
+};
 
+constexpr int maxAddressDataBurstSize = 32;
+
+typedef llvm_vecsmall::SmallVector<LBWBurstAddressData, maxAddressDataBurstSize> LBWBurstDestData_t;
 struct DmaCmdParams
 {
     DmaCmdParams() {}
@@ -32,7 +41,8 @@ struct DmaCmdParams
                           bool             useCasting,
                           bool             isGDRMemcpy,
                           uint32_t         poolId,
-                          bool             isBFloat)
+                          bool             isBFloat,
+                          bool             isFirstWrite)
     : m_schedIdx(schedIdx),
       m_dmaType(dmaType),
       m_soAddressLSB(soAddressLSB),
@@ -55,7 +65,8 @@ struct DmaCmdParams
       m_useCasting(useCasting),
       m_isGDRMemcpy(isGDRMemcpy),
       m_poolId(poolId),
-      m_isBFloat(isBFloat)
+      m_isBFloat(isBFloat),
+      m_isFirstWrite(isFirstWrite)
     {
     }
 
@@ -82,6 +93,7 @@ struct DmaCmdParams
     bool             m_isGDRMemcpy;
     uint32_t         m_poolId;
     bool             m_isBFloat;
+    bool             m_isFirstWrite;
 };
 
 struct ScaleUpCollectiveOp
@@ -170,7 +182,7 @@ struct ScaleUpCollectiveOp
 
 struct ScaleOutCollectiveOp
 {
-    explicit ScaleOutCollectiveOp(uint16_t         myPod,
+    explicit ScaleOutCollectiveOp(uint16_t         myScaleupGroup,
                                   const int        remoteRankToRsi,
                                   HCL_Comm         comm,
                                   HCL_CollectiveOp collectiveOp,
@@ -191,7 +203,7 @@ struct ScaleOutCollectiveOp
                                   bool             waitForRndvAcks,
                                   bool             doReduction,
                                   uint8_t          qpSet)
-    : m_myPod(myPod),
+    : m_myScaleupGroup(myScaleupGroup),
       m_remoteRankToRsi(remoteRankToRsi),
       m_comm(comm),
       m_collectiveOp(collectiveOp),
@@ -217,7 +229,7 @@ struct ScaleOutCollectiveOp
 
     ScaleOutCollectiveOp() {}
 
-    uint16_t         m_myPod;
+    uint16_t         m_myScaleupGroup;
     int              m_remoteRankToRsi;
     HCL_Comm         m_comm;
     HCL_CollectiveOp m_collectiveOp;

@@ -1,7 +1,6 @@
 #include "platform/gaudi2/commands/hcl_commands.h"
 
 #include <cstdint>  // for uint32_t, uint64_t
-#include <map>      // for map
 #include <vector>   // for vector
 #include "hcl_api_types.h"
 #include "hcl_utils.h"                               // for VERIFY
@@ -17,7 +16,6 @@
 #include "sched_pkts.h"                              // for g2fw
 #include "platform/gen2_arch_common/send_recv_aggregator.h"  // for SendRecvEntry
 #include "platform/gaudi2/nic_passthrough_handler.h"         // for pRecordWithMetadata
-#include "platform/gen2_arch_common/hcl_collective_routines.h"  // for RR_BUFFER_GRANULARITY_SCALEOUT
 
 namespace hcl
 {
@@ -130,70 +128,42 @@ static uint32_t calculateRsi(const int remoteRankToRsi, HCL_CollectiveOp collect
 void HclCommandsGaudi2::serializeDmaCommand(hcl::ScalStreamBase& scalStream, DmaCmdParams& cmd)
 {
     LOG_HCL_TRACE(HCL, "SOAddress1(0x{:x}), SOAddress2(0x{:x})", cmd.m_soAddressLSB, cmd.m_soAddressLSB2);
-    uint64_t sendDataSize = cmd.m_chunkCount * dataTypeSizeInBytes(cmd.m_dataType) *
-                            ((isCastDown(cmd.m_dmaType) && !GCFG_HCL_USE_EDMA_COMMAND_V3.value()) ? 2 : 1);
-    bool isReduction = cmd.m_collectiveOp == eHCLReduceScatter || cmd.m_collectiveOp == eHCLAllReduce ||
-                       cmd.m_collectiveOp == eHCLReduce;
+    uint64_t sendDataSize    = cmd.m_chunkCount * dataTypeSizeInBytes(cmd.m_dataType);
     bool     is16BitMemcpy   = isDataTypeTwoBytes(cmd.m_dataType);
     bool     useReductionInd = ((is16BitMemcpy && cmd.m_useCasting) || cmd.m_isGDRMemcpy);
 
-    if (GCFG_HCL_USE_EDMA_COMMAND_V3.value())
+    hcclRedOp_t reductionOp = cmd.m_reduceOp;
+    uint32_t    tempDmaType;
+    if (cmd.m_useSibo)
     {
-        hcclRedOp_t reductionOp = cmd.m_reduceOp;
-        uint32_t tempDmaType;
-        if (cmd.m_useSibo)
-        {
-            tempDmaType = g2fw::NIC_EDMA_CMD_SIBO_OPS_V3;
-        }
-        else
-        {
-            tempDmaType = g2fw::NIC_EDMA_CMD_LIN_OPS_V3;
-            reductionOp = hcclSum;
-        }
-        SchedArcCommandsGaudi2::serializeDmaCommandV3(scalStream,
-                                                      cmd.m_schedIdx,
-                                                      tempDmaType,
-                                                      cmd.m_soAddressLSB,
-                                                      sendDataSize,
-                                                      cmd.m_recvBaseAddress,
-                                                      cmd.m_sendBaseAddress,
-                                                      reductionOp,
-                                                      cmd.m_streamCtxtId,
-                                                      cmd.m_dataType,
-                                                      cmd.m_poolId,
-                                                      cmd.m_isForScaleout,
-                                                      cmd.m_useCasting,
-                                                      cmd.m_numberOfRanks,
-                                                      cmd.m_numberOfReproBuffers,
-                                                      cmd.m_indexOfReproBuffer,
-                                                      is16BitMemcpy,
-                                                      cmd.m_soAddressLSB2,
-                                                      cmd.m_isBFloat,
-						      useReductionInd);
+        tempDmaType = g2fw::NIC_EDMA_CMD_SIBO_OPS_V3;
     }
-    else  // v2
+    else
     {
-        SchedArcCommandsGaudi2::serializeDmaCommandV2(scalStream,
-                                                      cmd.m_schedIdx,
-                                                      cmd.m_dmaType,
-                                                      cmd.m_soAddressLSB,
-                                                      cmd.m_soAddressLSB2,
-                                                      sendDataSize,
-                                                      cmd.m_recvBaseAddress,
-                                                      cmd.m_sendBaseAddress,
-                                                      cmd.m_reduceOp,
-                                                      isReduction,
-                                                      cmd.m_reductionSignalToCg,
-                                                      cmd.m_dataType,
-                                                      cmd.m_poolId,
-                                                      cmd.m_isReproReduction,
-                                                      cmd.m_useSibo,
-                                                      cmd.m_numberOfRanks,
-                                                      cmd.m_numberOfReproBuffers,
-                                                      cmd.m_indexOfReproBuffer,
-                                                      cmd.m_isReproReduction && isDataTypeTwoBytes(cmd.m_dataType),
-                                                      cmd.m_isGDRMemcpy);
+        tempDmaType = g2fw::NIC_EDMA_CMD_LIN_OPS_V3;
+        // reductionOp swap to Sum is necessary for the 1st memcopy if casting is performed
+        reductionOp = (cmd.m_useCasting && !cmd.m_isGDRMemcpy) ? hcclSum : cmd.m_reduceOp;
     }
+    SchedArcCommandsGaudi2::serializeDmaCommand(scalStream,
+                                                cmd.m_schedIdx,
+                                                tempDmaType,
+                                                cmd.m_soAddressLSB,
+                                                sendDataSize,
+                                                cmd.m_recvBaseAddress,
+                                                cmd.m_sendBaseAddress,
+                                                reductionOp,
+                                                cmd.m_streamCtxtId,
+                                                cmd.m_dataType,
+                                                cmd.m_poolId,
+                                                cmd.m_isForScaleout,
+                                                cmd.m_useCasting,
+                                                cmd.m_numberOfRanks,
+                                                cmd.m_numberOfReproBuffers,
+                                                cmd.m_indexOfReproBuffer,
+                                                is16BitMemcpy,
+                                                cmd.m_soAddressLSB2,
+                                                cmd.m_isBFloat,
+                                                useReductionInd);
 }
 
 void HclCommandsGaudi2::serializeGlobalDmaCommand(hcl::ScalStreamBase&                  scalStream,
@@ -202,29 +172,13 @@ void HclCommandsGaudi2::serializeGlobalDmaCommand(hcl::ScalStreamBase&          
                                                   uint32_t                              fwStrideSize,
                                                   uint64_t                              fwBaseAddress)
 {
-    if (GCFG_HCL_USE_EDMA_COMMAND_V3.value())
-    {
-        SchedArcCommandsGaudi2::serializeGlobalDmaCommandV3(
-            scalStream,
-            soAddressLSB,
-            sibAddressesAndSizes,
-            fwStrideSize,
-            fwBaseAddress,
-            ScalNetworkGarbageCollectorAndReductionGroups::SCAL_EDMA_NETWORK_GC_REDUCTION_GROUP0);
-    }
-    else
-    {
-        SchedArcCommandsGaudi2::serializeGlobalDmaCommandV2(
-            scalStream,
-            soAddressLSB,
-            sibAddressesAndSizes,
-            ScalNetworkGarbageCollectorAndReductionGroups::SCAL_EDMA_NETWORK_GC_REDUCTION_GROUP0);
-        SchedArcCommandsGaudi2::serializeGlobalDmaCommandV2(
-            scalStream,
-            soAddressLSB,
-            sibAddressesAndSizes,
-            ScalNetworkGarbageCollectorAndReductionGroups::SCAL_EDMA_NETWORK_GC_REDUCTION_GROUP1);
-    }
+    SchedArcCommandsGaudi2::serializeGlobalDmaCommand(
+        scalStream,
+        soAddressLSB,
+        sibAddressesAndSizes,
+        fwStrideSize,
+        fwBaseAddress,
+        ScalNetworkGarbageCollectorAndReductionGroups::SCAL_EDMA_NETWORK_GC_REDUCTION_GROUP0);
 }
 
 void HclCommandsGaudi2::serializeMemsetCommand(hcl::ScalStreamBase& scalStream,
@@ -240,52 +194,36 @@ void HclCommandsGaudi2::serializeMemsetCommand(hcl::ScalStreamBase& scalStream,
                                                bool                 isForScaleout,
                                                uint32_t             numberOfRanks,
                                                uint32_t             numberOfReproBuffers,
-                                               unsigned             indexOfReproBuffer)
+                                               unsigned             indexOfReproBuffer,
+                                               uint32_t             memsetValue)
 {
-    if (GCFG_HCL_USE_EDMA_COMMAND_V3.value())
+    uint32_t tempDmaType;
+    if (useSibo)
     {
-        uint32_t tempDmaType;
-        if (useSibo)
-        {
-            tempDmaType = g2fw::NIC_EDMA_CMD_SIBO_MEMSET_V3;
-        }
-        else
-        {
-            tempDmaType = g2fw::NIC_EDMA_CMD_LIN_MEMSET_V3;
-        }
-
-        SchedArcCommandsGaudi2::serializeDmaCommandV3(scalStream,
-                                                      schedIdx,
-                                                      tempDmaType,
-                                                      soAddressLSB,
-                                                      sizeInBytes,
-                                                      addr,
-                                                      addr,
-                                                      reduceOp,
-                                                      streamCtxtID,
-                                                      dataType,
-                                                      poolId,
-                                                      isForScaleout,
-                                                      false,
-                                                      numberOfRanks,
-                                                      numberOfReproBuffers,
-                                                      indexOfReproBuffer);
+        tempDmaType = g2fw::NIC_EDMA_CMD_SIBO_MEMSET_V3;
     }
     else
     {
-        SchedArcCommandsGaudi2::serializeDmaCommandV2(scalStream,
-                                                      schedIdx,
-                                                      g2fw::NIC_EDMA_CMD_CAST_DOWN_CLEAR,
-                                                      0,
-                                                      soAddressLSB,
-                                                      sizeInBytes,
-                                                      addr,
-                                                      addr,
-                                                      reduceOp,
-                                                      false,
-                                                      false,
-                                                      dataType);
+        tempDmaType = g2fw::NIC_EDMA_CMD_LIN_MEMSET_V3_2;
     }
+
+    SchedArcCommandsGaudi2::serializeDmaCommand(scalStream,
+                                                schedIdx,
+                                                tempDmaType,
+                                                soAddressLSB,
+                                                sizeInBytes,
+                                                addr,
+                                                addr,
+                                                reduceOp,
+                                                streamCtxtID,
+                                                dataType,
+                                                poolId,
+                                                isForScaleout,
+                                                false,
+                                                numberOfRanks,
+                                                numberOfReproBuffers,
+                                                indexOfReproBuffer,
+                                                memsetValue);
 }
 
 void HclCommandsGaudi2::serializeInitSequenceCommands(hcl::ScalStreamBase&                  recvStream,
@@ -297,8 +235,7 @@ void HclCommandsGaudi2::serializeInitSequenceCommands(hcl::ScalStreamBase&      
                                                       ContextManager&                       contextManager,
                                                       uint32_t                              fwStrideSize,
                                                       uint64_t                              fwBaseAddress,
-                                                      uint8_t                               apiId,
-                                                      unsigned                              edmaEngineWorkDistributionSize)
+                                                      uint8_t                               apiId)
 {
     HclCommandsGaudi2  commands;
     HclGraphSyncGaudi2 graphSync(0, commands);
@@ -307,10 +244,7 @@ void HclCommandsGaudi2::serializeInitSequenceCommands(hcl::ScalStreamBase&      
     // 3 signals (1 for each engine (V3)) for global dma command +
     // 3 signals for each memset of buffers (1 for each engine (V3))
     // *global DMA command does not signal to CG if not V3.
-    unsigned numberOfSignals =
-        contextManager.m_portMapping.getNumScaleUpPorts() +
-        (GCFG_HCL_USE_EDMA_COMMAND_V3.value() ? edmaEngineWorkDistributionSize : 0) +
-        sibAddressesAndSizes.size() * (GCFG_HCL_USE_EDMA_COMMAND_V3.value() ? edmaEngineWorkDistributionSize : 1);
+    unsigned numberOfSignals = contextManager.m_portMapping.getNumScaleUpPorts() + sibAddressesAndSizes.size();
 
     if (contextManager.m_portMapping.isUpateScaleOutGlobalContextRequired())
     {
@@ -356,22 +290,17 @@ void HclCommandsGaudi2::serializeInitSequenceCommands(hcl::ScalStreamBase&      
     // {stream 0 {SO_RR_POOL=pool 0, SU_RR_POOL+REDUCE_POOl=pool 1},
     // {stream 1 {SO_RR_POOL=pool 0, SU_RR_POOL+REDUCE_POOl=pool 1},
     // {stream 2 {SO_RR_POOL=pool 0, SU_RR_POOL+REDUCE_POOl=pool 1}}
-    for (size_t index = 0; index < sibAddressesAndSizes.size(); index++)
+    for (auto& addrAndSize : sibAddressesAndSizes)
     {
         serializeMemsetCommand(dmaStream,
                                (unsigned)hcl::SchedulersIndex::dma,
-                               sibAddressesAndSizes[index].sibBaseAddr,
-                               sibAddressesAndSizes[index].sibSize,
+                               addrAndSize.sibBaseAddr,
+                               addrAndSize.sibSize * addrAndSize.sibAmount,
                                soAddressLSB & 0xffffffff,
                                streamCtxtID,
                                hcclFloat32,
                                hcclSum,
-                               true,                        // true for sibo memset
-                               index % MAX_NUM_POOL_SIZES,  // pool index 0/1
-                               false,
-                               sibAddressesAndSizes[index].sibAmount,
-                               sibAddressesAndSizes[index].sibAmount,
-                               index / 2);
+                               false);
     }
 }
 
@@ -401,7 +330,7 @@ void HclCommandsGaudi2::serializeScaleUpCollectiveOp(hcl::ScalStreamBase&   scal
     int                                                numberOfEnabledConnections = 0;
 
     // calculate RRI, and connection params
-    for (int deviceIndex = 0; deviceIndex < HLS2_BOX_SIZE; deviceIndex++)
+    for (unsigned deviceIndex = 0; deviceIndex < HLS2_BOX_SIZE; deviceIndex++)
     {
         UniqueCollectiveContext& uniqueContext = uniqueContexts[deviceIndex];
         uniqueContext.remote_index             = calculateRemoteIndex(scaleupCollectiveOp.m_deviceToRemoteIndex,
@@ -477,7 +406,7 @@ void HclCommandsGaudi2::serializeScaleUpCollectiveOp(hcl::ScalStreamBase&   scal
                 scaleupCollectiveOp.m_hasBufferSize,
                 syncObjectAddressIndex,
                 countDesc.m_cacheLineCount,
-                scaleupCollectiveOp.m_dynamicComm.getRankInPod(),
+                scaleupCollectiveOp.m_dynamicComm.getRankInScaleupGroup(),
                 scaleupCollectiveOp.m_accuIndex,
                 scaleupCollectiveOp.m_rrIndex,
                 scaleupCollectiveOp.m_numOfRanks,
@@ -729,12 +658,20 @@ void HclCommandsGaudi2::serializeLbwWriteCommand(hcl::ScalStreamBase& scalStream
     SchedArcCommandsGaudi2::serializeLbwWriteCommand(scalStream, schedIdx, destination, data, blockUntilCompletion);
 };
 
-void HclCommandsGaudi2::serializeFenceCommand(hcl::ScalStreamBase& scalStream,
-                                              unsigned             schedIdx,
-                                              uint32_t             fenceIndex,
-                                              uint32_t             target)
+void HclCommandsGaudi2::serializeFenceDecCommand(hcl::ScalStreamBase& scalStream,
+                                                 unsigned             schedIdx,
+                                                 uint32_t             fenceIndex,
+                                                 uint32_t             target)
 {
-    SchedArcCommandsGaudi2::serializeFenceCommand(scalStream, schedIdx, fenceIndex, target);
+    SchedArcCommandsGaudi2::serializeFenceDecCommand(scalStream, schedIdx, fenceIndex, target);
+};
+
+void HclCommandsGaudi2::serializeLbwBurstWriteCommand(hcl::ScalStreamBase&      scalStream,
+                                                      unsigned                  schedIdx,
+                                                      const LBWBurstDestData_t& destData,
+                                                      bool                      blockUntilCompletion)
+{
+    SchedArcCommandsGaudi2::serializeLbwBurstWriteCommand(scalStream, schedIdx, destData, blockUntilCompletion);
 };
 
 void HclCommandsGaudi2::serializeFenceIncCommand(hcl::ScalStreamBase& scalStream,
@@ -802,110 +739,6 @@ void HclCommandsGaudi2::serializeUserSendCommand(std::vector<uint32_t>& out,
                                                      isLastInGroup,
                                                      notifyRndvAck,
                                                      waitForRndvAcks);
-}
-
-void HclCommandsGaudi2::memsetIMBs(DeviceBufferManager&              imb,
-                                   hcl::IntermediateBufferContainer* imbContainer,
-                                   SignalsManager*                   signalsManager,
-                                   SliceState&                       sendSliceState,
-                                   SliceState&                       recvSliceState,
-                                   unsigned int                      sizeInBytes,
-                                   hcl::syncInfo                     longSo,
-                                   unsigned                          schedIdx,
-                                   hcl::ScalStream&                  garbageCollectionStream,
-                                   HCL_StreamId                      m_streamId,
-                                   e_devicePoolID                    poolId,
-                                   uint8_t                           streamCtxtID,
-                                   hcclDataType_t                    dataType)
-{
-    // get relevant slice
-    unsigned indexOfReproBuffer = imb.getSliceId(poolId, m_streamId);
-
-    // get correct index by relevant granularity
-    indexOfReproBuffer /= imb.getFactor(poolId);
-
-    if (imb.bufferExpired(poolId))
-    {
-        unsigned bufferSize = imbContainer->getSliceSize(DeviceBufferManager::getPoolSizeIndex(poolId));
-
-        VERIFY(sizeInBytes <= bufferSize,
-               "Unsupported buffer size, sizeInBytes={}, bufferSize={}",
-               sizeInBytes,
-               bufferSize);
-
-        unsigned    memsetLoops   = 1;
-        unsigned    initialOffset = 0;
-        hcclRedOp_t effectiveOp   = sendSliceState.m_reduceOp;
-
-        if (poolId == SCALEOUT_RR_POOL)
-        {
-            if (!GCFG_HCL_USE_EDMA_COMMAND_V3.value())
-            {
-                // memset loops are required for lin memset, used only for v2 commands
-                memsetLoops = std::min(sendSliceState.m_reproScaleoutBuffersAmount, sendSliceState.m_boxIterations);
-            }
-            if (sendSliceState.m_16BitReduction)
-            {
-                if (!GCFG_HCL_USE_EDMA_COMMAND_V3.value())
-                {
-                    // bf16 v2 commands - cdc command cleans first buffer
-                    memsetLoops -= 1;
-                    initialOffset = bufferSize;
-                }
-                sizeInBytes = sizeInBytes << 1;
-            }
-            effectiveOp = hcclSum;
-        }
-
-        LOG_TRACE(HCL_ECR,
-                  "Clear buffer {}, loops {}, size 0x{:x}, long SO {}",
-                  poolId,
-                  memsetLoops,
-                  sizeInBytes,
-                  longSo.targetValue);
-
-        uint32_t currNumberOfRanks;
-        uint32_t currNumberOfReproBuffers;
-
-        if (poolId == REDUCE_RR_POOL)
-        {
-            VERIFY(recvSliceState.m_collectiveOp == eHCLReduce,
-                   "REDUCE_RR_POOL is only used in eHCLReduce collectiveOp, current collectiveOp={}",
-                   recvSliceState.m_collectiveOp);
-            // single chunk from each peer rank on recv / single chunk to cast down after reduce
-            currNumberOfRanks = 1;
-            // single buffer every slice
-            currNumberOfReproBuffers = 1;
-        }
-        else if (poolId == SCALEOUT_RR_POOL)
-        {
-            currNumberOfRanks = std::min(sendSliceState.m_reproScaleoutBuffersAmount, sendSliceState.m_boxIterations);
-            currNumberOfReproBuffers = sendSliceState.m_reproScaleoutBuffersAmount;  // 8 buffers every slice
-        }
-        else
-        {
-            VERIFY(false, "The following pool id={} should not be used in memset.", poolId);
-        }
-
-        for (unsigned i = 0; i < memsetLoops; ++i)
-        {
-            serializeMemsetCommand(garbageCollectionStream,
-                                   schedIdx,
-                                   sendSliceState.getIntermediateBuffer(poolId) + initialOffset +
-                                       i * bufferSize,  // for v3 commands, memsetLoops = 1, i = 0
-                                   sizeInBytes,
-                                   signalsManager->enqueueInternalCompletion(SignalEvent::EDMA_MEMSET),
-                                   streamCtxtID,
-                                   dataType,
-                                   effectiveOp,
-                                   true,  // true for sibo memset v3, false for lin memset
-                                   poolId,
-                                   false,  // isForScaleout
-                                   currNumberOfRanks,
-                                   currNumberOfReproBuffers,
-                                   indexOfReproBuffer);
-        }
-    }
 }
 
 void HclCommandsGaudi2::serializePdmaCommand(hcl::ScalStreamBase& scalStream,

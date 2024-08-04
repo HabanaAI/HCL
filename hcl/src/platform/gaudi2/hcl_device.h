@@ -16,6 +16,7 @@
 #include "infra/scal/gen2_arch_common/scal_manager.h"   // for Gen2ArchScalMa...
 #include "platform/gaudi2/port_mapping.h"               // for Gaudi2DevicePortMapping
 #include "gaudi2_nic.h"
+#include "qp_manager.h"
 
 class ContextManager;
 class Gen2ArchDevicePortMapping;
@@ -52,22 +53,20 @@ public:
 
     virtual spHclNic allocateNic(uint32_t nic, uint32_t max_qps) override
     {
-        if (GCFG_HCL_USE_IBVERBS.value())
-        {
-            return std::make_shared<Gaudi2IBVNic>(this, nic, max_qps, getBackpressureOffset(nic));
-        }
-
         return std::make_shared<Gaudi2Nic>(this, nic, max_qps, getBackpressureOffset(nic));
     }
-    virtual void     setGaudiDirect() override;
+
+    virtual void closeScaleoutQPs(HCL_Comm comm, const UniqueSortedVector& ranks);
 
 protected:
     hcclResult_t openQps(HCL_Comm comm, const UniqueSortedVector& ranks) override;
 
-    void allocateQps(HCL_Comm comm, uint32_t commSize);
+    void allocateCommQPs(HCL_Comm comm, uint32_t commSize);
 
-    ContextManager*         m_contextManager = nullptr;
-    Gaudi2DevicePortMapping m_portMapping;
+    QPManagerScaleUpGaudi2Handle  m_qpManagerScaleUp;
+    QPManagerScaleOutGaudi2Handle m_qpManagerScaleOut;
+    ContextManager*               m_contextManager = nullptr;
+    Gaudi2DevicePortMapping       m_portMapping;
 
 private:
     void          setEdmaEngineGroupSizes() override;

@@ -23,7 +23,7 @@ struct SendRecvApiEntry
     HCL_Rank        remoteRank;
     HCL_Comm        comm;
     uint32_t        hwModuleID;
-    bool            isRankInsidePod;
+    bool            isRankInsideScaleupGroup;
     bool            isValid = false;
     bool            isLast  = false;
 };

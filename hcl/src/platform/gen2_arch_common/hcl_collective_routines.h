@@ -8,7 +8,6 @@
 #include <map>  // for map
 #include <mutex>
 #include <vector>
-#include <set>                                                // for set
 #include "hcl_api_types.h"                                    // for HCL_Comm, HCL_CollectiveOp
 #include "platform/gen2_arch_common/group_calls.h"            // for GroupCallsBuckets, SendRecvVector
 #include "platform/gen2_arch_common/hcl_address_generator.h"  // for HclAddressGenerator
@@ -45,7 +44,6 @@ class ScalStreamBase;
 class CommonState;
 class NonCollectiveState;
 struct SliceState;
-struct SyncObjectDescriptor;
 struct HclCollectiveParams;
 struct SendRecvMemCopyEntry;
 class ScaleoutProvider;
@@ -58,6 +56,7 @@ public:
     HclCollectiveRoutinesGen2Arch(HclDeviceGen2Arch* device, int streamId, WqeTracker* wqeTracker);
     ~HclCollectiveRoutinesGen2Arch();
 
+    void                 onCommInit(const HCL_Comm commId);
     virtual hcclResult_t hclCollectiveCall(HclCollectiveParams& params) override;
     virtual void         hclCollectiveCall(CommonState&     commonState,
                                            unsigned         sliceIter,
@@ -98,8 +97,8 @@ public:
     uint64_t           getCurrentTargetValue() { return m_longSo.targetValue; }
     int                getArchStream() { return m_streamId; }
 
-    void setGroupContext(const bool value);
-    bool getGroupContext() const { return m_groupContext; }
+    void     setGroupContext(const bool value);
+    bool     getGroupContext() const { return m_groupContext; }
 
     WqeWraparoundBits getWraparoundBits(HCL_Comm commId, unsigned rank, QpType qpType);
     DeviceBufferManager& getIntermediateBufferManager() { return m_intermediateBufferManager; }
@@ -171,7 +170,7 @@ protected:
                                 box_devices_t& deviceToRemoteIndex,
                                 bool           isAllGatherQp = false);
 
-    void advanceProg(bool nopOp, CommonState* commonState = nullptr);
+    void advanceProg(bool nopOp, uint64_t cuid, CommonState* commonState = nullptr);
 
     void calculateScaleupSignals(CommonState& commonState,
                                  BoxNumInfo&  boxNumInfo,

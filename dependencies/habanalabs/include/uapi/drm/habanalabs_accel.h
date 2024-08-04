@@ -10,7 +10,11 @@
 
 #include <linux/if_ether.h>
 
+#ifdef __KERNEL__
 #include <drm/drm.h>
+#else
+#include "drm.h"
+#endif
 
 /*
  * Defines that are asic-specific but constitutes as ABI between kernel driver
@@ -1113,9 +1117,9 @@ enum hl_device_status {
  * @HL_SERVER_GAUDI3_HLS3_SINGLEPORT_OAM_FULLSCALE_OUT: HLS3, 10 ports are enabled
  *                                                      7 internal
  *                                                      3 external
- * @HL_SERVER_GAUDI3_HL338: HL338, 4 OAMs, all ports are enabled
+ * @HL_SERVER_GAUDI3_HL338: HL338, 4 OAMs, 22 ports are enabled
  *                          18 internal (6 per card)
- *                          6 external
+ *                          4 external
  */
 enum hl_server_type {
 	HL_SERVER_TYPE_UNKNOWN = 0,
@@ -1597,13 +1601,29 @@ struct hl_info_module_params {
 };
 
 /**
+ * enum hl_link_qual - Quality of a link
+ * HL_LINK_QUAL_POOR: Poor link quality.
+ * HL_LINK_QUAL_GOOD: Good link quality.
+ * HL_LINK_QUAL_EXCELLENT: Excellent link quality.
+ */
+enum hl_link_qual {
+	HL_LINK_QUAL_POOR,
+	HL_LINK_QUAL_GOOD,
+	HL_LINK_QUAL_EXCELLENT,
+};
+
+/**
  * struct hl_info_habana_link_state - Get Habana link state.
  * @up: Boolean for indicating if the link is up.
+ * @port_open: Boolean for indicating if the port is open.
+ * @link_qual: Quality of link as defined in hl_link_qual.
  * @pad: Padding to 64 bit.
  */
 struct hl_info_habana_link_state {
 	__u8 up;
-	__u8 pad[7];
+	__u8 port_open;
+	__u8 link_qual;
+	__u8 pad[5];
 };
 
 #define HABANA_LINK_CNT_MAX_NUM	256

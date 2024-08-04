@@ -8,6 +8,7 @@
 #include <unordered_map>
 #include <map>
 #include <vector>
+#include "interfaces/hcl_idevice.h"
 
 enum eNicType
 {

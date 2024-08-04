@@ -13,6 +13,7 @@
 #include "hcl_api_types.h"
 #include "infra/scal/gaudi3/arch_stream.h"
 #include "hcl_math_utils.h"
+#include "platform/gen2_arch_common/hcl_packets_utils.h"  // for getCompCfg
 class HclCommandsGen2Arch;  // lines 9-9
 class HclDeviceGen2Arch;    // lines 10-10
 
@@ -45,6 +46,10 @@ void Gaudi3ScalManager::initSimb(HclDeviceGen2Arch* device, uint8_t apiID)
 
     uint64_t fwBaseAddress = device->m_sibContainer->getFwBaseAddr();
     unsigned fwSliceSize   = device->m_sibContainer->getFwSliceSize();
+
+    // Add network_scaleup_init_completion_queue to completion config
+    const unsigned queue_id = m_archStreams.size() * 2;
+    getCompCfg()[queue_id]  = SoBaseAndSize(cgComplex.cgInfo.cgBaseAddr, cgComplex.cgInfo.size);
 
     // Alloc Barrier
     for (auto sched : initCgSchedList)
@@ -166,7 +171,8 @@ void Gaudi3ScalManager::configScaleupQps(HCL_Comm comm, HclDeviceGaudi3* device,
 
 void Gaudi3ScalManager::configQps(HCL_Comm comm, HclDeviceGen2Arch* device)
 {
-    if (device->getComm(comm).isCommunicatorMultiPod() && device->getComm(comm).isCommunicatorPodPeers())
+    if (device->getComm(comm).isCommunicatorMultiScaleupGroup() &&
+        device->getComm(comm).isCommunicatorScaleupGroupPeers())
     {
         LOG_HCL_DEBUG(HCL_SCAL, "comm {} is Scaleout only peers, will not add scaleup QPs", comm);
         return;

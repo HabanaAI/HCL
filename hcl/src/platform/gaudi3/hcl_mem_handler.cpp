@@ -1,6 +1,7 @@
 #include "platform/gaudi3/hcl_mem_handler.h"
 #include "platform/gen2_arch_common/hcl_mem_handler.h"
 #include "platform/gen2_arch_common/hcl_device_controller.h"
+#include "platform/gen2_arch_common/intermediate_buffer_container.h"
 
 HclCollectiveMemHandlerGaudi3::HclCollectiveMemHandlerGaudi3(int                   archStreamId,
                                                              HclAddressGenerator&  addressGenerator,

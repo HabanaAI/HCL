@@ -392,7 +392,7 @@ void HclPublicStreams::dfaLogCommInfo(IHclDevice* iDev, DfaLoggersV3& dfaLoggers
 
                     const RankInfoHeader& remoteRankHeader = hclDynamicCommunicator.getRemoteConnectionHeader(rank);
 
-                    // only 3 nics out of 24 may be connected, check if current nic is connected
+                    // only 3/6 nics out of 24 may be connected, check if current nic is connected
                     for (uint8_t activeNic : iDev->getActiveNics(myRank, rank, 1, comm))
                     {
                         if (activeNic == nic)

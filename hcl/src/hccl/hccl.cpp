@@ -583,6 +583,16 @@ hcclResult_t hcclDfaUpdateState_Original(DfaPhase dfaPhase)
     return hcclSuccess;
 }
 
+hcclResult_t hcclGetVersionString_Original(char* pVersion, const unsigned len)
+{
+    HCCL_TRY
+    RETURN_ON_NULL_ARG(pVersion);
+
+    getHclVersion(pVersion, len);
+    LOG_DEBUG(HCL_API, "HCCL Version String is: {}", pVersion);
+    HCCL_API_EXIT(hcclSuccess)
+}
+
 static struct hccl_functions_pointers default_functions_pointers_table = {
     .pfn_hcclGetVersion                 = hcclGetVersion_Original,
     .pfn_hcclGetUniqueId                = hcclGetUniqueId_Original,
@@ -618,6 +628,7 @@ static struct hccl_functions_pointers default_functions_pointers_table = {
     .pfn_hcclSynchronizeAllStreams      = hcclSynchronizeAllStreams_Original,
     .pfn_hcclDFA                        = hcclDFA_Original,
     .pfn_hcclDfaUpdateState             = hcclDfaUpdateState_Original,
+    .pfn_hcclGetVersionString           = hcclGetVersionString_Original,
     .pfn_hcclCommFinalize               = hcclCommFinalize_Original};
 // functions_pointers_table will maintain the current functions pointers table
 // Initialized to the original functions
@@ -645,7 +656,7 @@ static void HCCL_StartShim(void)
                     s_pfnShimGetFunctions = reinterpret_cast<PFN_ShimGetFunctions>(fn);
                     s_pfnShimFinish       = reinterpret_cast<PFN_ShimFinish>(dlsym(s_shimLibHandle, SHIM_FINISH));
                     /*
-                     * TODO: start/stop profiling is not supported at the moment.
+                     * start/stop profiling is not supported at the moment.
                      * Currently, we call ShimGetFunctions only once in the initialization
                      * To support profiling during execution,
                      * we will have to call it before every (or specific) API call
@@ -1138,6 +1149,12 @@ hcclResult_t HCCL_API_CALL hcclDfaUpdateState(DfaPhase dfaPhase)
 {
     HCL_API_LOG_ENTRY("update Dfa phase to {}", dfaPhase);
     return (*functions_pointers_table->pfn_hcclDfaUpdateState)(dfaPhase);
+}
+
+hcclResult_t HCCL_API_CALL hcclGetVersionString(char* pVersion, const unsigned len)
+{
+    HCL_API_LOG_ENTRY("pVersion={:p}, len={}", pVersion, len);
+    return (*functions_pointers_table->pfn_hcclGetVersionString)(pVersion, len);
 }
 
 }  // namespace HclGen2

@@ -53,6 +53,12 @@ struct sob_info
     uint32_t sobId;
 };
 
+struct SyncObjectDescriptor
+{
+    sob_info sob;
+    unsigned value;
+};
+
 struct MessageAddrToData
 {
     uint32_t addr;

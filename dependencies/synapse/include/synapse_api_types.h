@@ -94,6 +94,17 @@ typedef struct
 
 typedef struct
 {
+    unsigned groupId;
+    unsigned executionOrderedIndex;
+} synUserExecOrder;
+
+typedef struct
+{
+    synUserExecOrder* userExecOrder;
+} synUserProgrammability;
+
+typedef struct
+{
     const char*     tensorName;
     uint64_t        pTensorAddress;
     synTensorType   tensorType;

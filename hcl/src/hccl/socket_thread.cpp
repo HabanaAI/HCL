@@ -37,7 +37,6 @@ void SocketThread::runThread()
             }
             else
             {
-                // Todo: Should never get here, exit if does
                 LOG_HCL_ERR(HCL, "Rank({}) Thread({}) failed to execute job", m_globalRank, m_socketThreadId);
                 return;
             }
@@ -496,7 +495,6 @@ void SocketThreadsManager::initThreads(int nThreads, int globalId)
 
 void SocketThreadsManager::createAsyncThread(int socket, int globalId)
 {
-    /* TODO - verify unused socket */
     SocketThread* thread = new SocketThread(globalId, m_nThreads + m_nAsyncThreads);
     m_nAsyncThreads++;
     m_asyncThreadPool.push_back(thread);
@@ -538,7 +536,6 @@ bool SocketThreadsManager::pushAsyncJob(ConnectionOperations jobType,
                                         uint32_t             sequence,
                                         hcclHandle*          handle)
 {
-    /* TODO - Support multiple async threads */
     return m_asyncThreadPool[0]->pushAsyncJob(jobType, size, address, peer, sequence, handle);
 }
 

@@ -14,7 +14,6 @@
 #include "hcl_types.h"                            // for HclConfigType, BACK...
 #include "interfaces/hcl_unique_sorted_vector.h"  // for UniqueSortedVector
 #include "synapse_api_types.h"                    // for synDeviceId
-#include "synapse_common_types.h"                 // for synDeviceType, synD...
 
 using json = nlohmannV340::json;
 
@@ -93,7 +92,7 @@ public:
                                                              {HLS1H, "HLS1-H"},
                                                              {HLS2, "HLS2"},
                                                              {HLS3, "HLS3"},
-                                                             {HLS3PCIE, "HLS3PCIE"},
+                                                             {HL338, "HL338"},
                                                              {UNKNOWN, "UNKNOWN"}};
 
 private:

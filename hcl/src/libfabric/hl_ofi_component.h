@@ -3,6 +3,9 @@
 #include <cstdint>           // for uint64_t
 #include <cstring>           // for NULL, memset, size_t
 #include <vector>            // for vector
+#include <optional>          // for optional
+#include <utility>           // for forward
+#include <memory>            // for shared_ptr
 #include "rdma/fabric.h"     // for fi_addr_t, fi_context
 #include <rdma/fi_domain.h>  // for fi_hmem_iface
 #include "platform/gen2_arch_common/host_scheduler.h"
@@ -38,17 +41,12 @@ enum ofi_req_direction_t
 
 struct listenComm_t
 {
-    uint64_t tag;  // Invalid on FI_EP_MSG
+    uint64_t tag;
     int      dev;
     bool     accepted;
 
     struct fid_ep* local_ep;
     fi_addr_t      local_ep_addr;
-
-    // FI_EP_MSG only attributes
-    struct fi_info* m_pep_prov;
-    struct fid_pep* m_pep;
-    struct fid_eq*  m_eq;
 };
 
 struct ofiComm_t
@@ -60,15 +58,11 @@ struct ofiComm_t
     fi_addr_t      remote_ep_addr;
     fi_addr_t      local_ep_addr;
     struct fid_ep* local_ep;
-    struct fid_ep* flush_ep;
-    fi_addr_t      flush_ep_addr;
-
-    // FI_EP_MSG only attributes
-    struct fid_eq* m_eq;
 };
 
 struct allConnectionComm_t
 {
+    allConnectionComm_t() : listenComm(nullptr), sendComm(nullptr), recvComm(nullptr) {}
     listenComm_t* listenComm;
     ofiComm_t*    sendComm;
     ofiComm_t*    recvComm;
@@ -122,6 +116,46 @@ public:
     ~ofi_req_t() = default;
 };
 
+int ofi_fi_close(fid_t domain);
+
+template<typename T>
+class FiObject final
+{
+public:
+    FiObject(const T& fiObject) : m_fiObject(fiObject) {}
+
+    ~FiObject()
+    {
+        if (m_fiObject)
+        {
+            ofi_fi_close(&m_fiObject->fid);
+        }
+    }
+
+    FiObject(const FiObject&) = delete;
+
+    FiObject& operator=(const FiObject&) = delete;
+
+    FiObject(FiObject&& other) { *this = std::forward<FiObject<T>>(other); };
+
+    FiObject& operator=(FiObject&& other)
+    {
+        m_fiObject       = other.m_fiObject;
+        other.m_fiObject = nullptr;
+        return *this;
+    };
+
+    const T& get() const { return m_fiObject; }
+    operator T&() { return m_fiObject; }
+    operator T() const { return m_fiObject; }
+
+private:
+    T m_fiObject;
+};
+
+template<typename T>
+using FiObjectPtr = std::shared_ptr<FiObject<T>>;
+
 //
 // Structure of an OFI network component
 //
@@ -134,19 +168,20 @@ public:
 class ofi_component_t
 {
 public:
-    ofi_component_t(int ofiDeviceId, int hw_module_id, struct fi_info* prov, int cpuid);
+    ofi_component_t(int ofiDeviceId, int hw_module_id, struct fi_info* prov, int cpuid, enum fi_cq_format cq_format);
     virtual ~ofi_component_t();
 
     int inc_refcnt() { return ++m_refcnt; }
     int dec_refcnt() { return --m_refcnt; }
     int get_refcnt() const { return m_refcnt; }
 
-    virtual int   create_component() = 0;
-    virtual void* get_cq_buf()       = 0;
+    virtual void* get_cq_buf() = 0;
     virtual int   next_tag(uint64_t* tag) { return 0; }
 
-    virtual int listen(uint64_t tag, void* handle, listenComm_t** listenComm) = 0;
-    virtual int connect(void* handle, ofiComm_t** ofiComm, void* localAddr)   = 0;
+    virtual int
+    listen(uint64_t tag, void* handle, listenComm_t** listenComm, unsigned hostConnIdx, uint16_t qpSetIndex) = 0;
+    virtual int
+    connect(const void* handle, ofiComm_t** ofiComm, void* localAddr, unsigned hostConnIdx, uint16_t qpSetIndex) = 0;
     virtual int accept(listenComm_t* listenComm, ofiComm_t** ofiComm)         = 0;
     virtual int isend(ofiComm_t*             ofiComm,
                       void*                  data,
@@ -166,24 +201,48 @@ public:
     int test(ofi_req_t* req, int* done, size_t* size);
     int _flush(ofiComm_t* ofiComm, uint64_t data, struct fid_mr* mrHandle, ofi_req_t& request);
 
-    int register_mr(void* data, size_t size, fi_hmem_iface fi_hmem_iface, int device_fd, struct fid_mr** mHandle);
+    int        register_mr(void*           data,
+                           size_t          size,
+                           fi_hmem_iface   fi_hmem_iface,
+                           int             device_fd,
+                           struct fid_mr** mHandle,
+                           bool            isFlush = false);
     static int deregister_mr(struct fid_mr* mHandle);
-
-    fid_domain* get_domain();
 
 protected:
     int         ofi_progress();
     int         ofi_flush_progress();
     virtual int process_completions(void* cq_buf, uint64_t num_cqes) = 0;
+    int         process_first_recv_completion(ofi_req_t* req);
 
-    int      m_ofiDeviceID;
-    int      m_cpuid;
-    int      m_refcnt;
-    uint64_t m_cqe_burst;
+protected:
+    static fi_info*                     get_flush_provider();
+    static FiObject<struct fid_fabric*> create_fabric(const struct fi_info* provider);
+    static FiObject<struct fid_domain*> create_domain(struct fi_info* provider, struct fid_fabric* fabric);
+    static FiObject<struct fid_cq*>     create_cq(struct fid_domain* domain, int cpuid, enum fi_cq_format format);
+    static FiObject<struct fid_av*>     create_av(struct fid_domain* domain);
+    static FiObject<struct fid_ep*>
+              create_ep(struct fi_info* provider, struct fid_domain* domain, struct fid_cq* cq, struct fid_av* av);
+    fi_addr_t create_address(struct fid_ep* const ep, struct fid_av* const av);
 
-    struct fi_info*    m_prov;
-    struct fid_fabric* m_fabric;
-    struct fid_domain* m_domain;
-    struct fid_cq*     m_cq;
-    struct fid_cq*     m_flush_cq;
+protected:
+    const int      m_ofiDeviceID;
+    const int      m_cpuid;
+    int            m_refcnt;
+    const uint64_t m_cqe_burst;
+
+protected:
+    struct fi_info*                    m_prov;
+    const FiObject<struct fid_fabric*> m_fabric;
+    const FiObject<struct fid_domain*> m_domain;
+    const FiObject<struct fid_cq*>     m_cq;
+
+private:
+    std::optional<struct fi_info* const>              m_flush_provider;
+    const std::optional<FiObject<struct fid_fabric*>> m_flush_fabric;
+    const std::optional<FiObject<struct fid_domain*>> m_flush_domain;
+    const std::optional<FiObject<struct fid_cq*>>     m_flush_cq;
+    const std::optional<FiObject<struct fid_av*>>     m_flush_av;
+    const std::optional<FiObject<struct fid_ep*>>     m_flush_ep;
+    const std::optional<fi_addr_t>                    m_flush_addr;
 };

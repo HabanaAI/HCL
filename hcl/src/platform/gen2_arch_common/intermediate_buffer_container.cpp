@@ -4,7 +4,7 @@
 #include <cstddef>
 #include "hcl_utils.h"    // for VERIFY
 #include "synapse_api.h"  // for synDeviceFree, synDeviceMalloc
-#include "synapse_common_types.h"
+#include "synapse_common_types.h"  // for synStatus
 
 using namespace hcl;
 

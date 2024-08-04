@@ -82,7 +82,7 @@ void HclCollectiveRoutinesGaudi2::createScaleUpCollectiveOp(hcl::ScalStreamBase&
                                 (scaleUpOpG2.m_dataType == hcclBfloat16 || scaleUpOpG2.m_dataType == hcclFloat16) &&
                                 scaleUpOpG2.m_reproReduction && !scaleUpOpG2.m_isSend)
                                     ? 2
-                                    : 0;  // TODORR change for num_ranks (that needs to send to accu buffer
+                                    : 0;
     scaleUpOpG2.m_poolId = !scaleUpOpG2.m_isSend && scaleUpOpG2.m_reproReduction
                               ? DeviceBufferManager::getPoolSizeIndex(SCALEUP_RR_AND_ALL2ALL_POOL)
                               : 0;
@@ -102,8 +102,10 @@ unsigned HclCollectiveRoutinesGaudi2::countScaleUpSignalsSendRecv(CommonState&  
                                                                   const uint32_t numberOfSends,
                                                                   const uint32_t numberOfRecvs)
 {
-    unsigned numSignals = NUM_SCALEUP_PORTS_PER_CONNECTION * (GEN2ARCH_HLS_BOX_SIZE - 1);
-    if (commonState.m_dynamicComm.getPodSize() == 1)
+    const unsigned numScaleupPortsPerConnection = getDevice()->getHal()->getMaxNumScaleUpPortsPerConnection();
+    const unsigned boxSize = getDevice()->getHal()->getDefaultBoxSize();
+    unsigned numSignals = numScaleupPortsPerConnection * (boxSize - 1);
+    if (commonState.m_dynamicComm.getScaleupGroupSize() == 1)
     {
         numSignals = 0;
     }
@@ -151,25 +153,25 @@ uint64_t RemainderCalculatorGaudi2::getBufferClearSize(HCL_CollectiveOp collecti
 
 uint64_t RemainderCalculatorGaudi2::getBoxCount(uint64_t nonRemainderBoxCount,
                                                 uint64_t numBoxes,
-                                                uint64_t podSize,
+                                                uint64_t ScaleupGroupSize,
                                                 uint64_t boxIndex,
                                                 uint64_t scaleUpCount,
                                                 uint64_t remainderCount)
 {
-    return std::min((int)(scaleUpCount * podSize),
-                    (int)std::max(0, (int)(remainderCount - (boxIndex * podSize * scaleUpCount))));
+    return std::min((int)(scaleUpCount * ScaleupGroupSize),
+                    (int)std::max(0, (int)(remainderCount - (boxIndex * ScaleupGroupSize * scaleUpCount))));
 }
 
 uint64_t RemainderCalculatorGaudi2::getScaleOutCount(uint64_t nonRemainderScaleOutCount,
                                                      uint64_t numBoxes,
                                                      uint64_t boxCount,
                                                      uint64_t boxIndex,
-                                                     uint64_t myRankInPod,
+                                                     uint64_t myRankInScaleupGroup,
                                                      uint64_t scaleUpCount,
                                                      uint64_t remainderCount,
-                                                     bool lastRankInPod)
+                                                     bool lastRankInScaleupGroup)
 {
-    return std::min((int)scaleUpCount, std::max(0, (int)(boxCount - (myRankInPod * scaleUpCount))));
+    return std::min((int)scaleUpCount, std::max(0, (int)(boxCount - (myRankInScaleupGroup * scaleUpCount))));
 }
 
 uint64_t RemainderCalculatorGaudi2::getDiv(uint64_t a, uint64_t b)

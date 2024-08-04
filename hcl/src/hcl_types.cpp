@@ -36,7 +36,7 @@ std::ostream& operator<<(std::ostream& os, const HCL_CollectiveOp& hclCollective
 GaudiNicQPs::NicQPs& GaudiNicQPs::operator[](uint8_t nic)
 {
     // search for nic nic_ap_data entry
-    for (size_t i = 0; i < COMPACT_RANK_INFO_NICS; i++)
+    for (size_t i = 0; i < MAX_COMPACT_RANK_INFO_NICS; i++)
     {
         if (this->qp[i].nic == nic)
         {

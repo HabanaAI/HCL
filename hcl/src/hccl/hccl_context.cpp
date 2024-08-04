@@ -110,7 +110,8 @@ hcclResult_t hccl_context::comm_init_rank(hcclComm_t* comm_handle, unsigned int 
     // log process memory
     LOG_HCL_INFO(HCL, "End - Process memory size {}GB", getProcMemConsInGB());
 
-    LOG_HCL_INFO(HCL,
+    // This log line should NOT change without a corresponding change in hclrec, as changes here might break that.
+    LOG_HCL_INFO(HCL_API,
                  "Rank({}/{}) Created Communicator (hccl({})), on coordinator: {}",
                  rank,
                  nranks,

@@ -103,6 +103,7 @@ inline bool isLoggerInstantiated(TLoggerEnum loggerEnumItem);
  * @brief format and log message into logger
  * @param logger
  * @param logLevel           log level
+ * @param forcePrint         force print regardless of the logger logging level
  * @param forcePrintFileLine print source filename and line
  * @param file               source code filename
  * @param line               source code line
@@ -110,7 +111,12 @@ inline bool isLoggerInstantiated(TLoggerEnum loggerEnumItem);
  * @param args               arguments for formatting
  */
 template<typename TFmtMsg, typename... Args>
-inline void log(LoggerSPtr const & logger, int logLevel, bool forcePrintFileLine, std::string_view file, int line, TFmtMsg fmtMsg, Args&&... args);
+inline void log(LoggerSPtr const & logger, int logLevel, bool forcePrint, bool forcePrintFileLine, std::string_view file, int line, TFmtMsg fmtMsg, Args&&... args);
+template<typename TFmtMsg, typename... Args>
+inline void log(LoggerSPtr const & logger, int logLevel, bool forcePrintFileLine, std::string_view file, int line, TFmtMsg fmtMsg, Args&&... args)
+{
+    log(logger, logLevel, false, forcePrintFileLine, file, line, std::move(fmtMsg), std::forward<Args>(args)...);
+}
 
 /**
  * @brief logStacktrace log stack trace
@@ -404,7 +410,7 @@ HLLOG_END_NAMESPACE
 #define HLLOG_ERR_F(loggerEnumItem, fmtMsg, ...)      HLLOG_TYPED(loggerEnumItem, HLLOG_LEVEL_ERROR, "{}: " fmtMsg, HLLOG_FUNC, ##__VA_ARGS__)
 #define HLLOG_CRITICAL_F(loggerEnumItem, fmtMsg, ...) HLLOG_TYPED(loggerEnumItem, HLLOG_LEVEL_CRITICAL, "{}: " fmtMsg, HLLOG_FUNC, ##__VA_ARGS__)
 
-#define HLLOG_BY_LEVEL_F(loggerEnumItem, level, fmtMsg, ...) HLLOG_TYPED(loggerEnumItem, level, "{}: " fmtMsg, __FUNCTION__, ##__VA_ARGS__)
+#define HLLOG_BY_LEVEL_F(loggerEnumItem, level, fmtMsg, ...) HLLOG_TYPED(loggerEnumItem, level, "{}: " fmtMsg, HLLOG_FUNC, ##__VA_ARGS__)
 
 #define HLLOG_LEVEL_AT_LEAST_TRACE(loggerEnumItem)    (hl_logger::logLevelAtLeast(HLLOG_ENUM_TYPE_NAME::loggerEnumItem, HLLOG_LEVEL_TRACE))
 #define HLLOG_LEVEL_AT_LEAST_DEBUG(loggerEnumItem)    (hl_logger::logLevelAtLeast(HLLOG_ENUM_TYPE_NAME::loggerEnumItem, HLLOG_LEVEL_DEBUG))
@@ -412,6 +418,72 @@ HLLOG_END_NAMESPACE
 #define HLLOG_LEVEL_AT_LEAST_WARN(loggerEnumItem)     (hl_logger::logLevelAtLeast(HLLOG_ENUM_TYPE_NAME::loggerEnumItem, HLLOG_LEVEL_WARN))
 #define HLLOG_LEVEL_AT_LEAST_ERR(loggerEnumItem)      (hl_logger::logLevelAtLeast(HLLOG_ENUM_TYPE_NAME::loggerEnumItem, HLLOG_LEVEL_ERROR))
 #define HLLOG_LEVEL_AT_LEAST_CRITICAL(loggerEnumItem) (hl_logger::logLevelAtLeast(HLLOG_ENUM_TYPE_NAME::loggerEnumItem, HLLOG_LEVEL_CRITICAL))
+
+/**
+ * @brief force log into a logger (loggerEnumItem) with all the parameters. with or without fmtMsg compilation
+ * @param loggerEnumItem     logger enum item
+ * @param logLevel           message log level
+ * @param forcePrintFileLine print source code file and line
+ * @param filename           source code filename
+ * @param line               source code line
+ * @param fmtMsg             fmt-lib format message. must be FMT_COMPILE(fmtMsg) for compile. or fmtMsg if no compilation needed
+ */
+#define HLLOG_TYPED_FULL_PREFIXED_FORCE(loggerEnumItem, logLevel, forcePrintFileLine, filename, line, fmtMsg, ...)     \
+    do{                                                                                                                \
+        hl_logger::log(loggerEnumItem,                                                                                 \
+                       logLevel,                                                                                       \
+                       true,                                                                                           \
+                       forcePrintFileLine,                                                                             \
+                       filename,                                                                                       \
+                       line,                                                                                           \
+                       fmtMsg HLLOG_APPLY_WITH_LEADING_COMMA(HLLOG_DUPLICATE_PARAM, ##__VA_ARGS__));                   \
+        HLLOG_TYPED_LAZY(loggerEnumItem, logLevel, fmtMsg, ##__VA_ARGS__);                                             \
+    }while(false)
+
+/**
+ * @brief force log message with parameters into a logger with a log level
+ *
+ * @param loggerEnumItem user logger enum item
+ * @param loglevel log level
+ * @param fmtMsg   fmt-lib format message
+ * @param ...      parameters of the message
+ *
+ * @code
+ * enum class UserLoggers{LOGGER1, LOGGER2, LOG_MAX};
+ * ...
+ * HLLOG_TYPED(LOGGER1, "hello {}", "world");
+ * @endcode
+ */
+#define HLLOG_TYPED_PREFIXED_FORCE(loggerEnumItem, logLevel, fmtMsg, ...) \
+    HLLOG_TYPED_FULL_PREFIXED_FORCE(loggerEnumItem, logLevel, false, HLLOG_FILENAME, __LINE__, FMT_COMPILE(fmtMsg), ##__VA_ARGS__)
+
+#define HLLOG_TYPED_FORCE(loggerEnumItem, logLevel, fmtMsg, ...) \
+    HLLOG_TYPED_PREFIXED_FORCE(HLLOG_ENUM_TYPE_NAME::loggerEnumItem, logLevel, fmtMsg, ##__VA_ARGS__)
+
+/**
+ * @brief force log message with parameters into a logger with a specific log level
+ *        the message is logged regardless of the logger logging level
+ *
+ * @param loggerEnumItem user logger enum item
+ * @param fmtMsg  fmt-lib format message
+ * @param ...     parameters of the message
+ *
+ *
+ * @code
+ * enum class UserLoggers{LOGGER1, LOGGER2, LOG_MAX};
+ * ...
+ * HLLOG_SET_LOGGING_LEVEL(LOGGER1, HLLOG_LEVEL_ERROR);
+ * HLLOG_TRACE_FORCE(LOGGER1, "hello {}", "world"); // the message is logged regardless of LOGGER1 error logging level
+ * @endcode
+ */
+#define HLLOG_TRACE_FORCE(loggerEnumItem, fmtMsg, ...)    HLLOG_TYPED_FORCE(loggerEnumItem, HLLOG_LEVEL_TRACE, fmtMsg, ##__VA_ARGS__)
+#define HLLOG_DEBUG_FORCE(loggerEnumItem, fmtMsg, ...)    HLLOG_TYPED_FORCE(loggerEnumItem, HLLOG_LEVEL_DEBUG, fmtMsg, ##__VA_ARGS__)
+#define HLLOG_INFO_FORCE(loggerEnumItem, fmtMsg, ...)     HLLOG_TYPED_FORCE(loggerEnumItem, HLLOG_LEVEL_INFO,  fmtMsg, ##__VA_ARGS__)
+#define HLLOG_WARN_FORCE(loggerEnumItem, fmtMsg, ...)     HLLOG_TYPED_FORCE(loggerEnumItem, HLLOG_LEVEL_WARN,  fmtMsg, ##__VA_ARGS__)
+#define HLLOG_ERR_FORCE(loggerEnumItem, fmtMsg, ...)      HLLOG_TYPED_FORCE(loggerEnumItem, HLLOG_LEVEL_ERROR, fmtMsg, ##__VA_ARGS__)
+#define HLLOG_CRITICAL_FORCE(loggerEnumItem, fmtMsg, ...) HLLOG_TYPED_FORCE(loggerEnumItem, HLLOG_LEVEL_CRITICAL, fmtMsg, ##__VA_ARGS__)
+
+#define HLLOG_BY_LEVEL_FORCE(loggerEnumItem, level, fmtMsg, ...) HLLOG_TYPED_FORCE(loggerEnumItem, level, fmtMsg, ##__VA_ARGS__)
 
 /**
  *  @brief set logging level for a logger

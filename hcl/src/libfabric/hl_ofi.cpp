@@ -19,7 +19,6 @@
 #include "rdma/fi_errno.h"               // for FI_ENODATA
 #include "hl_ofi_component.h"            // for ofi_component_t, ofiComm_t, list...
 #include "hl_ofi_rdm_component.h"        // for ofi_rdm_component_t
-#include "hl_ofi_msg_component.h"        // for ofi_msg_component_t
 #include "hl_ofi_param.h"                // for hl_ofi_exclude_tcp_if
 #include "hl_topo.h"
 #include <sys/utsname.h>  // for getting kernel version
@@ -383,10 +382,18 @@ bool ofi_t::exclude_verbs_provider(const char* const name,
                                    const uint64_t    mem_tag_format,
                                    const uint64_t    expected_mem_tag_format)
 {
-    if (addr_format != FI_SOCKADDR_IN)
+    if (GCFG_HCL_HNIC_IPV6.value() && addr_format != FI_SOCKADDR_IN6)
     {
         LOG_HCL_DEBUG(HCL_OFI,
-                      "Filtering out domain {} due to addr_format mismatch: Expected FI_SOCKADDR_IN, received {}",
+                      "Filtering out domain {} due to addr_format mismatch: Expected FI_SOCKADDR_IN6, received {}",
+                      std::string(name),
+                      ofi_plugin->w_fi_tostr(&addr_format, FI_TYPE_ADDR_FORMAT));
+        return true;
+    }
+    else if (addr_format != FI_SOCKADDR_IN && addr_format != FI_SOCKADDR_IN6)
+    {
+        LOG_HCL_DEBUG(HCL_OFI,
+                      "Filtering out domain {} due to addr_format mismatch: Expected FI_SOCKADDR_IN | FI_SOCKADDR_IN6, received {}",
                       std::string(name),
                       ofi_plugin->w_fi_tostr(&addr_format, FI_TYPE_ADDR_FORMAT));
         return true;
@@ -403,7 +410,7 @@ bool ofi_t::exclude_verbs_provider(const char* const name,
     return false;
 }
 
-static void get_hints(struct fi_info* hints, bool gaudi_direct)
+void get_hints(struct fi_info* const hints, const bool gaudi_direct)
 {
     if (gaudi_direct)
     {
@@ -416,15 +423,8 @@ static void get_hints(struct fi_info* hints, bool gaudi_direct)
         hints->domain_attr->mr_mode = FI_MR_LOCAL;
     }
 
-    if (GCFG_HCL_HNIC_RDM.value())
-    {
-        hints->caps |= FI_TAGGED;
-        hints->ep_attr->type = FI_EP_RDM;
-    }
-    else
-    {
-        hints->ep_attr->type = FI_EP_MSG;
-    }
+    hints->caps |= FI_TAGGED;
+    hints->ep_attr->type = FI_EP_RDM;
 
     // Set MR mode bits to indicate FI_MR_BASIC registration with local memory buffers
     // Will need to change if device memory can be accessed
@@ -689,7 +689,7 @@ int ofi_t::init(int device_fd)
 
     try
     {
-        m_components.resize(m_nOFIDevices, NULL);
+        m_components.resize(m_nOFIDevices, nullptr);
     }
     catch (...)
     {
@@ -700,7 +700,7 @@ int ofi_t::init(int device_fd)
     return ret;
 }
 
-int ofi_t::listen(int ofiDevice, void* handle, listenComm_t** listenComm)
+int ofi_t::listen(int ofiDevice, void* handle, listenComm_t** listenComm, unsigned hostConnIdx, uint16_t qpSetIndex)
 {
     int      ret;
     uint64_t tag = 0;
@@ -730,7 +730,7 @@ int ofi_t::listen(int ofiDevice, void* handle, listenComm_t** listenComm)
         return hcclLibfabricError;
     }
 
-    ret = m_components[ofiDevice]->listen(tag, handle, listenComm);
+    ret = m_components[ofiDevice]->listen(tag, handle, listenComm, hostConnIdx, qpSetIndex);
     if (ret)
     {
         return hcclLibfabricError;
@@ -739,7 +739,12 @@ int ofi_t::listen(int ofiDevice, void* handle, listenComm_t** listenComm)
     return hcclSuccess;
 }
 
-int ofi_t::connect(int ofiDevice, void* handle, ofiComm_t** ofiComm, void* localAddr)
+int ofi_t::connect(int         ofiDevice,
+                   const void* handle,
+                   ofiComm_t** ofiComm,
+                   void*       localAddr,
+                   unsigned    hostConnIdx,
+                   uint16_t    qpSetIndex)
 {
     int ret;
 
@@ -760,7 +765,7 @@ int ofi_t::connect(int ofiDevice, void* handle, ofiComm_t** ofiComm, void* local
         return hcclLibfabricError;
     }
 
-    ret = m_components[ofiDevice]->connect(handle, ofiComm, localAddr);
+    ret = m_components[ofiDevice]->connect(handle, ofiComm, localAddr, hostConnIdx, qpSetIndex);
     if (ret)
     {
         return hcclLibfabricError;
@@ -906,7 +911,6 @@ int ofi_t::close(listenComm_t* listenComm)
 
 int ofi_t::initOfiComponent(int ofiDevice)
 {
-    int             ret;
     struct fi_info* prov = NULL;
     prov                 = get_nic_info(ofiDevice);
     if (OFI_UNLIKELY(prov == NULL))
@@ -927,34 +931,17 @@ int ofi_t::initOfiComponent(int ofiDevice)
         cpuid = get_cpuid_in_numa(numa_node);
     }
 
-    if (GCFG_HCL_HNIC_RDM.value())
+    try
     {
         m_components[ofiDevice] = new ofi_rdm_component_t(ofiDevice, m_hw_module_id, prov, cpuid);
-    }
-    else
-    {
-        m_components[ofiDevice] = new ofi_msg_component_t(ofiDevice, m_hw_module_id, prov, cpuid);
-    }
-
-    if (OFI_UNLIKELY(m_components[ofiDevice] == NULL))
-    {
-        LOG_HCL_ERR(HCL_OFI, "Memory allocation failed for OFI component");
-        if (m_components[ofiDevice] != NULL)
+        if (nullptr == m_components[ofiDevice])
         {
-            delete m_components[ofiDevice];
-            m_components[ofiDevice] = NULL;
+            LOG_HCL_ERR(HCL_OFI, "Memory allocation failed for OFI component");
+            return hcclLibfabricError;
         }
-        return hcclLibfabricError;
     }
-
-    ret = m_components[ofiDevice]->create_component();
-    if (ret != 0)
+    catch (const hcl::HclException& e)
     {
-        if (m_components[ofiDevice] != NULL)
-        {
-            delete m_components[ofiDevice];
-            m_components[ofiDevice] = NULL;
-        }
         return hcclLibfabricError;
     }
 
@@ -971,7 +958,7 @@ int ofi_t::initOfiComponent(int ofiDevice)
                      prov->nic->device_attr->device_id);
     }
     m_is_initialized = true;
-    return ret;
+    return hcclSuccess;
 }
 
 int ofi_t::acquireOfiComponent(int ofiDevice)
@@ -1022,6 +1009,7 @@ int ofi_t::get_ofi_provider(int device_fd, bool gaudi_direct)
     std::unordered_set<std::string> unique_domain_names;
     uint64_t                        expected_mem_tag_format = 0;
     provider_priority               provider_priority       = provider_priority::NONE;
+    bool                            foundIPv4               = false;
 
     LOG_HCL_DEBUG(HCL_OFI,
                   "gaudi pci address = {}, numa node = {}",
@@ -1074,7 +1062,10 @@ int ofi_t::get_ofi_provider(int device_fd, bool gaudi_direct)
             {
                 continue;
             }
-
+            if (!foundIPv4 && curr->addr_format == FI_SOCKADDR_IN && !GCFG_HCL_HNIC_IPV6.value())
+            {
+                foundIPv4 = true;
+            }
             const PCIE_Device verbs_pcie_dev = get_pci_info(get_verbs_pci_ep_addr(curr->domain_attr->name));
             LOG_HCL_DEBUG(HCL_OFI,
                           "current verbs pci addr: {}, current verbs numa: {}",
@@ -1122,6 +1113,7 @@ int ofi_t::get_ofi_provider(int device_fd, bool gaudi_direct)
         LOG_HCL_INFO(HCL_OFI, "Gaudi-direct is enabled, provider {}.", providerName);
     }
 
+    // filter-out duplicate domains & prioritize IPv4 over IPv6
     for (const auto& domain : unique_domain_names)
     {
         bool foundFirstMatch = false;
@@ -1132,9 +1124,15 @@ int ofi_t::get_ofi_provider(int device_fd, bool gaudi_direct)
                 itr++;
                 continue;
             }
-            char* devName = (*itr)->nic->device_attr->name;
+            char*    devName    = (*itr)->nic->device_attr->name;
+            uint32_t addrFormat = (*itr)->addr_format;
+            if (foundIPv4 && addrFormat == FI_SOCKADDR_IN6)
+            {
+                itr = providers.erase(itr);
+            }
+
             // found domain name match
-            if (domain == devName)
+            else if (domain == devName)
             {
                 // only one occurrence of domain name should be left in the list
                 if (foundFirstMatch)
@@ -1181,20 +1179,23 @@ int ofi_t::get_ofi_provider(int device_fd, bool gaudi_direct)
                              m_gaudi_pci_dev.full_path);
 
         int index = 1;
-        for (struct fi_info* currInfo : providers)
+        for (const struct fi_info* currInfo : providers)
         {
             PCIE_Device pcie_dev;
             size_t      active_mtu = 0;
+            std::unordered_map<const struct fi_info*, std::string> provider_interfaces;
             if (isVerbs())
             {
                 pcie_dev   = get_pci_info(get_verbs_pci_ep_addr(currInfo->domain_attr->name));
                 active_mtu = currInfo->nic->link_attr->mtu;
+                provider_interfaces = hl_topo::getProviderInterface(providers);
             }
             LOG_HCL_INFO(HCL_OFI,
-                         "{}/{}: {} {}{}{}",
+                         "{}/{}: {}{} {}{}{}",
                          index++,
                          num_provs,
                          currInfo->domain_attr->name,
+                         (isVerbs() ? " [" + provider_interfaces.at(currInfo) + "]" : ""),
                          pcie_dev.full_path,
                          isVerbs() ? " active_mtu=" + std::to_string(active_mtu) : "",
                          ((currInfo == m_providers[m_ofi_device]) ? " (Selected)" : ""));

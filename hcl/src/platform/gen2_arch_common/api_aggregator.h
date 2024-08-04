@@ -7,7 +7,6 @@
 #include "group_calls.h"                             // for GroupCalls
 #include "hcl_api_entry.h"                           // for SendRecvMemCopyE...
 #include "infra/scal/gen2_arch_common/scal_names.h"  // for SchedulersIndex
-#include "synapse_common_types.h"                    // for synDataType
 #include "infra/futex.h"                             // for Futex
 #include "hcl_collective_params.h"
 

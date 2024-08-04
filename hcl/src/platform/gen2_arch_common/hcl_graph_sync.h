@@ -148,7 +148,7 @@ protected:
                                       const uint8_t  mask,
                                       const unsigned soIdxNoMask,
                                       int            i,
-                                      bool           useEqual = false)                                            = 0;
+                                      bool           useEqual)                                                    = 0;
     virtual uint32_t     createSchedMonExpFence(unsigned fenceIdx)                                      = 0;
     virtual void         createSetupMonMessages(hcl::ScalStream& scalStream,
                                                 uint64_t         address,

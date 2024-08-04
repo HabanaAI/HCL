@@ -76,9 +76,10 @@ struct OfiCompCallbackParams
 struct host_sched_cmd_scale_out_nic_op
 {
     uint32_t opcode : 4;
+    uint16_t qpSetIndex : 4;
+    uint32_t __unused : 8;
     uint32_t rank : 16; // HCL_Rank
     static_assert(sizeof(HCL_Rank) == sizeof(uint16_t), "Rank size must be 16 bits");
-    uint32_t __unused : 12;
     uint64_t address;
     uint64_t size;
     HCL_Comm comm;  // uint32_t
@@ -89,10 +90,11 @@ struct host_sched_cmd_scale_out_nic_op
 struct host_sched_cmd_scale_out_with_fence_nic_op
 {
     uint32_t opcode : 4;
+    uint32_t qpSetIndex : 4;
+    uint32_t askForCredit : 1;
+    uint32_t __unused : 7;
     uint32_t rank : 16;  // HCL_Rank
     static_assert(sizeof(HCL_Rank) == sizeof(uint16_t), "Rank size must be 16 bits");
-    uint32_t askForCredit : 1;
-    uint32_t __unused : 11;
     uint64_t address;
     uint64_t size;
     HCL_Comm comm;  // uint32_t

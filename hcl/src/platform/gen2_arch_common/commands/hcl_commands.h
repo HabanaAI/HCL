@@ -1,9 +1,7 @@
 #pragma once
 
 #include "infra/scal/gen2_arch_common/scal_stream.h"
-#include "platform/gen2_arch_common/device_buffer_manager.h"
 #include "platform/gen2_arch_common/intermediate_buffer_container.h"
-#include "platform/gen2_arch_common/signals/manager.h"
 #include "hcl_utils.h"
 #include "platform/gen2_arch_common/commands/hcl_commands_types.h"
 #include "internal/hcl_profiler_api.h"
@@ -54,7 +52,8 @@ public:
                                         bool                 isForScaleout        = false,
                                         uint32_t             numberOfRanks        = 0,
                                         uint32_t             numberOfReproBuffers = 0,
-                                        uint32_t             indexOfReproBuffer   = 0) = 0;
+                                        uint32_t             indexOfReproBuffer   = 0,
+                                        uint32_t             memsetValue          = 0) = 0;
 
     virtual void serializeAllocBarrierCommand(hcl::ScalStreamBase& scalStream,
                                               unsigned             schedIdx,
@@ -67,10 +66,15 @@ public:
                                           uint32_t             data,
                                           bool                 blockUntilCompletion = false) = 0;
 
-    virtual void serializeFenceCommand(hcl::ScalStreamBase& scalStream,
-                                       unsigned             schedIdx,
-                                       uint32_t             fenceIndex,
-                                       uint32_t             target = 1) = 0;
+    virtual void serializeLbwBurstWriteCommand(hcl::ScalStreamBase&      scalStream,
+                                               unsigned                  schedIdx,
+                                               const LBWBurstDestData_t& destData,
+                                               bool                      blockUntilCompletion = false) = 0;
+
+    virtual void serializeFenceDecCommand(hcl::ScalStreamBase& scalStream,
+                                          unsigned             schedIdx,
+                                          uint32_t             fenceIndex,
+                                          uint32_t             target = 1) = 0;
 
     /**
      * @brief Update FW with the SIMB base address and stride size, to allow batch reduction via EDMA.
@@ -91,20 +95,6 @@ public:
     virtual void serializeFenceIncCommand(hcl::ScalStreamBase& scalStream, unsigned schedIdx, uint32_t fenceIndex) = 0;
 
     virtual void serializeNopCommand(hcl::ScalStreamBase& scalStream, unsigned schedIdx, uint32_t padding) = 0;
-
-    virtual void memsetIMBs(DeviceBufferManager&              imb,
-                            hcl::IntermediateBufferContainer* imbContainer,
-                            SignalsManager*                   signalsManager,
-                            SliceState&                       sendSliceState,
-                            SliceState&                       recvSliceState,
-                            unsigned int                      sizeInBytes,
-                            hcl::syncInfo                     longSo,
-                            unsigned                          schedIdx,
-                            hcl::ScalStream&                  garbageCollectionStream,
-                            HCL_StreamId                      m_streamId,
-                            e_devicePoolID                    poolId,
-                            uint8_t                           streamCtxtID,
-                            hcclDataType_t                    dataType) = 0;
 
     virtual void serializePdmaCommand(hcl::ScalStreamBase& scalStream,
                                       unsigned             schedIdx,

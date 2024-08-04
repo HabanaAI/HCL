@@ -303,7 +303,8 @@ bool HostScheduler::processScaleOutWithFenceCommand(HostStream* hostStream)
                                                                     rank,
                                                                     &handle,
                                                                     hostStream->getUarchStreamIdx(),
-                                                                    scaleOutCommand->compParams);
+                                                                    scaleOutCommand->compParams,
+                                                                    scaleOutCommand->qpSetIndex);
     }
     else
     {
@@ -312,7 +313,8 @@ bool HostScheduler::processScaleOutWithFenceCommand(HostStream* hostStream)
                                                                     rank,
                                                                     &handle,
                                                                     hostStream->getUarchStreamIdx(),
-                                                                    scaleOutCommand->compParams);
+                                                                    scaleOutCommand->compParams,
+                                                                    scaleOutCommand->qpSetIndex);
     }
 
     if (status != hcclSuccess)
@@ -363,7 +365,8 @@ bool HostScheduler::processScaleOutCommand(HostStream* hostStream)
                                                                     rank,
                                                                     &handle,
                                                                     hostStream->getUarchStreamIdx(),
-                                                                    scaleOutCommand->compParams);
+                                                                    scaleOutCommand->compParams,
+                                                                    scaleOutCommand->qpSetIndex);
     }
     else
     {
@@ -372,7 +375,8 @@ bool HostScheduler::processScaleOutCommand(HostStream* hostStream)
                                                                     rank,
                                                                     &handle,
                                                                     hostStream->getUarchStreamIdx(),
-                                                                    scaleOutCommand->compParams);
+                                                                    scaleOutCommand->compParams,
+                                                                    scaleOutCommand->qpSetIndex);
     }
 
     if (status != hcclSuccess)

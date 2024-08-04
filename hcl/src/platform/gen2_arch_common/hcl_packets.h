@@ -12,7 +12,8 @@ void serializeHostSendScaleOutCommand(spHostStreamFifo       hostStream,
                                       uint64_t               size,
                                       HCL_Comm               comm,
                                       OfiCompCallbackParams& compParams,
-                                      const uint64_t         srCount);
+                                      const uint64_t         srCount,
+                                      uint16_t               qpSetIndex);
 
 void serializeHostScaleOutCommandWithFence(spHostStreamFifo       hostStream,
                                            bool                   isSend,
@@ -22,7 +23,8 @@ void serializeHostScaleOutCommandWithFence(spHostStreamFifo       hostStream,
                                            HCL_Comm               comm,
                                            unsigned               fenceIdx,
                                            OfiCompCallbackParams& compParams,
-                                           const uint64_t         srCount);
+                                           const uint64_t         srCount,
+                                           uint16_t               qpSetIndex);
 
 void serializeHostWaitForCompletionCommand(spHostStreamFifo hostStream, HCL_Comm comm, const uint64_t srCount);
 

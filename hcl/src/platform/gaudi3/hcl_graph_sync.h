@@ -33,5 +33,5 @@ private:
                                   const uint8_t  mask,
                                   const unsigned soIdxNoMask,
                                   int            i,
-                                  bool           useEqual = false) override;
+                                  bool           useEqual) override;
 };

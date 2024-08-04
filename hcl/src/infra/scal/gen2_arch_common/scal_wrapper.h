@@ -130,7 +130,7 @@ public:
 
     uint64_t getCurrentLongSoValue(scal_comp_group_handle_t cgHandle);
 
-    const std::vector<unsigned> getNicsScaleUpEngines();  // TODO: This function seems irrelevant for G3, maybe move it
+    const std::vector<unsigned> getNicsScaleUpEngines();
     Gen2ArchScalUtils*          m_utils = NULL;
 
 
@@ -154,7 +154,6 @@ private:
      */
     void
     getMemoryPoolInfoV2(scal_pool_handle_t* mpHandle, scal_memory_pool_infoV2* mpInfo, const std::string& name) const;
-    void releaseMemoryPools();  // TODO: Implement
 
     /**
      * @brief Since the schedulers in completion group info is not in any particular order in HCL terms,

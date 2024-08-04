@@ -6,7 +6,7 @@
 
 #include "hcl_api_types.h"                          // for HCL_Comm
 #include "synapse_api_types.h"                      // for synStreamHandle
-#include "synapse_common_types.h"                   // for synDataType, synDev...
+#include "synapse_common_types.h"                   // for synDeviceType
 #include "hccl_types.h"                             // for hcclRedOp_t, hcclResult_t
 #include "platform/gen2_arch_common/api_aggregator.h"  // for ApiAggregatorGen2Arch
 #include "platform/gen2_arch_common/hcl_device.h"       // for HclDeviceGen2Arch
@@ -46,6 +46,7 @@ public:
     virtual ~hccl_device_t() noexcept(false);
 
     virtual hcclResult_t init(uint8_t apiId);
+    virtual void         initComm(const HCL_Comm commId);
     virtual hcclResult_t group(bool start);
     virtual hcclResult_t send_recv_call(int myRank, const SendRecvApiEntry& entry);
     virtual hcclResult_t collective_call(HclCollectiveParams& params);

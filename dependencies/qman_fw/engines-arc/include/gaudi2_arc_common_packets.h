@@ -218,7 +218,8 @@ enum sched_cmpt_sync_scheme_bitmap {
  */
 enum {
 	SYNC_SCHEME_FENCE_ID = 0,
-	B2B_FENCE_ID = 1
+	B2B_FENCE_ID = 1,
+	EXT_SIGNAL_FENCE_ID = 2
 };
 
 /**<
@@ -230,6 +231,11 @@ enum {
  * Long DBG SOB Monitor count per engine, needs a long monitor
  */
 #define SCHED_CMPT_ENG_SYNC_SCHEME_DBG_MON_COUNT	4
+
+/**<
+ * Long EXT SIGNAL SOB Monitor count per engine, needs a long monitor
+ */
+#define SCHED_CMPT_ENG_EXT_SIG_MON_COUNT	4
 
 /**<
  * B2B Monitor count per engine

@@ -25,7 +25,7 @@ NicPassthroughHandler::NicPassthroughHandler(const std::vector<unsigned>&   nicE
     memset(m_dupMasksPerDevice, 0, sizeof(m_dupMasksPerDevice));
     memset(m_dupMasksPerNic, 0, sizeof(m_dupMasksPerNic));
 
-    for (int deviceId = 0; deviceId < HLS2_BOX_SIZE; deviceId++)
+    for (unsigned deviceId = 0; deviceId < HLS2_BOX_SIZE; deviceId++)
     {
         for (unsigned port : portMapping.getAllPorts(deviceId))
         {
@@ -192,7 +192,7 @@ std::array<int, HLS2_BOX_SIZE> NicPassthroughHandler::getCreditsPerDevice(std::v
 
     for (pRecordWithMetadata& record : records)
     {
-        for (int deviceId = 0; deviceId < HLS2_BOX_SIZE; deviceId++)
+        for (unsigned deviceId = 0; deviceId < HLS2_BOX_SIZE; deviceId++)
         {
             if ((record->data.dup_mask & m_dupMasksPerDevice[deviceId]) == 0) continue;
 
@@ -256,7 +256,7 @@ void NicPassthroughHandler::fillInNicNops(std::vector<pRecordWithMetadata>& reco
         LOG_HCL_INFO(HCL, "Adding a NIC NOP for an empty send/recv for collectiveContext({})", collectiveContextIndex);
 
         uint32_t dupMask = 0;
-        for (int deviceId = 0; deviceId < HLS2_BOX_SIZE; deviceId++)
+        for (unsigned deviceId = 0; deviceId < HLS2_BOX_SIZE; deviceId++)
         {
             dupMask |= m_dupMasksPerDevice[deviceId];
         }
@@ -271,9 +271,9 @@ void NicPassthroughHandler::fillInNicNops(std::vector<pRecordWithMetadata>& reco
         return;
     }
 
-    for (int deviceId = 0; deviceId < HLS2_BOX_SIZE; deviceId++)
+    for (unsigned deviceId = 0; deviceId < HLS2_BOX_SIZE; deviceId++)
     {
-        if (deviceId == selfModuleId) continue;
+        if (deviceId == (unsigned) selfModuleId) continue;
 
         int missingCredits = maxCredits - creditsPerDevice[deviceId];
         if (missingCredits > 0)

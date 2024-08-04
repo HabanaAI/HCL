@@ -43,7 +43,7 @@ struct syncInfo
 {
     uint64_t                 long_so_index;
     uint64_t                 targetValue;
-    scal_comp_group_handle_t cp_handle = nullptr;  // TODO:: will add to cgInfo, sync with Nimrod
+    scal_comp_group_handle_t cp_handle = nullptr;
 };
 
 struct InternalHclStreamHandle;

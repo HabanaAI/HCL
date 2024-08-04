@@ -242,7 +242,7 @@ struct hcclOpParams
                  synStreamHandle    stream_handle,
                  uint8_t            apiId,
                  hcclRedOp_t        reduceOp = hcclOpNone,
-                 int                peer     = INT_MAX /* TODO - change to INVALID_HCCL_RANK */,
+                 int                peer     = INT_MAX,
                  int                root     = INT_MAX)
     {
         this->m_op            = op;

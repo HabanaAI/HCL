@@ -383,7 +383,7 @@ void HclDeviceControllerGen2Arch::addBarrierArm(
 
 void HclDeviceControllerGen2Arch::waitForBarrierArm(hcl::ScalStream& scalStream)
 {
-    m_commands->serializeFenceCommand(
+    m_commands->serializeFenceDecCommand(
         scalStream,
         scalStream.getSchedIdx(),
         getFenceIdx(scalStream.getArchStreamIndex(), scalStream.getStreamIndex(), FENCE_BARRIER_IDX));

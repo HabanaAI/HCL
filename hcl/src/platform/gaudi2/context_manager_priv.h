@@ -85,16 +85,5 @@ public:
                                    const Gaudi2DevicePortMapping& portMapping,
                                    HclCommandsGen2Arch&           commands);
     virtual ~CachedCollectiveContextScaleUp() = default;
-    CommunicatorDescriptor m_activeScaleUpQPsTracker;
-};
-
-class CachedCollectiveContextScaleOut : public CachedCollectiveContext
-{
-public:
-    CachedCollectiveContextScaleOut(uint8_t                        collectiveContextIndex,
-                                    const std::vector<unsigned>&   nicEngines,
-                                    const Gaudi2DevicePortMapping& portMapping,
-                                    HclCommandsGen2Arch&           commands);
-    virtual ~CachedCollectiveContextScaleOut() = default;
-    ScaleOutQPsTracker m_activeScaleOutQPsTracker;
+    CommunicatorDescriptor m_activeCommunicatorDescriptor;
 };

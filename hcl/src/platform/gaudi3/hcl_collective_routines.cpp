@@ -57,7 +57,7 @@ void HclCollectiveRoutinesGaudi3::createScaleUpSendRecvOp(hcl::ScalStreamBase& s
                                                           bool                 waitForRndvAcks)
 {
     HclDynamicCommunicator& dynamicComm = m_device->getComm(comm);
-    QPManagerScaleUp&       qpManager   = *(((HclDeviceGaudi3*)m_device)->m_qpManagerScaleUp);
+    QPManagerScaleUpGaudi3& qpManager   = *(((HclDeviceGaudi3*)m_device)->m_qpManagerScaleUp);
     QPUsage                 qpUsage     = qpManager.getBaseQpAndUsage(dynamicComm,
                                                   eHCLNoCollective,
                                                   isSend,
@@ -70,8 +70,6 @@ void HclCollectiveRoutinesGaudi3::createScaleUpSendRecvOp(hcl::ScalStreamBase& s
 
     sob_info sobInfo = ((hcl::Gaudi3HclScalUtils*)(m_utils))->getSOBInfo(soAddress);
 
-    // TODO: This calculation can be done on comm init once.
-    // The port mask can be calculated even if we dont use that rank in Send/Recv.
     for (const SendRecvEntry& entry : sendRecvArray)
     {
         if (entry.isValid)
@@ -111,7 +109,7 @@ void HclCollectiveRoutinesGaudi3::createScaleUpCollectiveOp(hcl::ScalStreamBase&
 {
     ScaleUpCollectiveOpG3    scaleUpOp {scaleUpCollectiveOp};
     Gaudi3DevicePortMapping* portMapping = &getDevice().getPortMappingGaudi3();
-    QPManagerScaleUp&        qpManager   = *(((HclDeviceGaudi3*)m_device)->m_qpManagerScaleUp);
+    QPManagerScaleUpGaudi3&  qpManager   = *(((HclDeviceGaudi3*)m_device)->m_qpManagerScaleUp);
     QPUsage                  qpUsage     = qpManager.getBaseQpAndUsage(scaleUpOp.m_dynamicComm,
                                                   scaleUpOp.m_collectiveOp,
                                                   scaleUpOp.m_isSend,
@@ -141,12 +139,12 @@ void HclCollectiveRoutinesGaudi3::createScaleUpCollectiveOp(hcl::ScalStreamBase&
         scaleUpOp.m_hasBufferSize = false;
     }
 
-    scaleUpOp.m_dcore         = sobInfo.dcore;
-    scaleUpOp.m_ssm           = sobInfo.ssm;
-    scaleUpOp.m_sobId         = sobInfo.sobId;
-    scaleUpOp.m_podSize       = scaleUpOp.m_dynamicComm.getPodSize();
-    scaleUpOp.m_qpn           = qpUsage.qpn;
-    scaleUpOp.m_disregardRank = qpUsage.disregardRank;
+    scaleUpOp.m_dcore            = sobInfo.dcore;
+    scaleUpOp.m_ssm              = sobInfo.ssm;
+    scaleUpOp.m_sobId            = sobInfo.sobId;
+    scaleUpOp.m_ScaleupGroupSize = scaleUpOp.m_dynamicComm.getScaleupGroupSize();
+    scaleUpOp.m_qpn              = qpUsage.qpn;
+    scaleUpOp.m_disregardRank    = qpUsage.disregardRank;
     scaleUpOp.m_ports_mask =
         doPortMaskCalc
             ? portMapping->getDeviceToRemoteIndexPortMask(scaleUpOp.m_dynamicComm, scaleUpOp.m_deviceToRemoteIndex)
@@ -167,7 +165,7 @@ void HclCollectiveRoutinesGaudi3::createScaleOutCollectiveOp(hcl::ScalStreamBase
 {
     ScaleOutCollectiveOpG3   scaleOutOpG3 {scaleOutCollectiveOp};
     Gaudi3DevicePortMapping* portMapping = &getDevice().getPortMappingGaudi3();
-    QPManagerScaleOut&       qpManager     = *(((HclDeviceGaudi3*)m_device)->m_qpManagerScaleOut);
+    QPManagerScaleOutGaudi3& qpManager     = *(((HclDeviceGaudi3*)m_device)->m_qpManagerScaleOut);
     sob_info                 sobInfo       = ((hcl::Gaudi3HclScalUtils*)(m_utils))->getSOBInfo(scaleOutOpG3.m_soAddress);
     auto&                    m_dynamicComm = m_device->getComm(scaleOutOpG3.m_comm);
     QPUsage                  qpUsage       = qpManager.getBaseQpAndUsage(m_dynamicComm,
@@ -183,13 +181,14 @@ void HclCollectiveRoutinesGaudi3::createScaleOutCollectiveOp(hcl::ScalStreamBase
                                                   scaleOutOpG3.m_remoteRank,
                                                   scaleOutOpG3.m_qpSet);
 
-    scaleOutOpG3.m_dcore         = sobInfo.dcore;
-    scaleOutOpG3.m_ssm           = sobInfo.ssm;
-    scaleOutOpG3.m_sobId         = sobInfo.sobId;
-    scaleOutOpG3.m_podSize       = m_dynamicComm.getPodSize();
-    scaleOutOpG3.m_qpn           = qpUsage.qpn;
-    scaleOutOpG3.m_disregardRank = qpUsage.disregardRank, scaleOutOpG3.m_ports_mask = portMapping->getExternalPortsMask();
-    scaleOutOpG3.m_lagSize = portMapping->getNumScaleOutPorts(m_dynamicComm.getSpotlightType());
+    scaleOutOpG3.m_dcore            = sobInfo.dcore;
+    scaleOutOpG3.m_ssm              = sobInfo.ssm;
+    scaleOutOpG3.m_sobId            = sobInfo.sobId;
+    scaleOutOpG3.m_ScaleupGroupSize = m_dynamicComm.getScaleupGroupSize();
+    scaleOutOpG3.m_qpn              = qpUsage.qpn;
+    scaleOutOpG3.m_disregardRank    = qpUsage.disregardRank;
+    scaleOutOpG3.m_ports_mask       = portMapping->getExternalPortsMask();
+    scaleOutOpG3.m_lagSize          = portMapping->getNumScaleOutPorts(m_dynamicComm.getSpotlightType());
 
     m_gaudi3Commands.serializeScaleOutCollectiveOp(scalStream, scaleOutOpG3);
 }
@@ -201,7 +200,7 @@ unsigned HclCollectiveRoutinesGaudi3::countScaleUpSignalsSendRecv(CommonState&  
                                                                   const uint32_t numberOfRecvs)
 {
     unsigned numSignals = getDevice().getHal()->getMaxNumScaleUpPortsPerConnection();
-    if (commonState.m_dynamicComm.getCommSize() == 1 && !commonState.m_isMultiPod)
+    if (commonState.m_dynamicComm.getCommSize() == 1 && !commonState.m_isMultiScaleupGroup)
     {
         numSignals = 0;
     }
@@ -274,7 +273,7 @@ uint64_t RemainderCalculatorGaudi3::getBufferClearSize(HCL_CollectiveOp collecti
 
 uint64_t RemainderCalculatorGaudi3::getBoxCount(uint64_t nonRemainderBoxCount,
                                                 uint64_t numBoxes,
-                                                uint64_t podSize,
+                                                uint64_t ScaleupGroupSize,
                                                 uint64_t boxIndex,
                                                 uint64_t scaleUpCount,
                                                 uint64_t remainderCount)
@@ -290,12 +289,12 @@ uint64_t RemainderCalculatorGaudi3::getScaleOutCount(uint64_t nonRemainderScaleO
                                                      uint64_t numBoxes,
                                                      uint64_t boxCount,
                                                      uint64_t boxIndex,
-                                                     uint64_t myRankInPod,
+                                                     uint64_t myRankInScaleupGroup,
                                                      uint64_t scaleUpCount,
                                                      uint64_t remainderCount,
-                                                     bool lastRankInPod)
+                                                     bool lastRankInScaleupGroup)
 {
-    if (boxIndex == (numBoxes - 1) && lastRankInPod)
+    if (boxIndex == (numBoxes - 1) && lastRankInScaleupGroup)
     {
         return nonRemainderScaleOutCount + remainderCount;
     }

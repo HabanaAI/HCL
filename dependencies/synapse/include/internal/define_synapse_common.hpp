@@ -9,7 +9,16 @@
 
 struct synDeviceLimitationInfo
 {
-    bool    fp32Limited;
+    bool    fp32Limited    = false;
+};
+
+enum synDeviceRevision
+{
+    DEVICE_REVISION_INVALID,
+    DEVICE_REVISION_A,
+    DEVICE_REVISION_B,
+    DEVICE_REVISION_C,
+    DEVICE_REVISION_D
 };
 
 enum DataType

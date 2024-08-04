@@ -27,8 +27,7 @@
 #include "ofi_communicator.h"         // for ofi_communicator
 #include "libfabric/mr_mapping.h"     // for MRMapping
 #include "hcl_log_manager.h"          // for LOG_ERR
-#include "synapse_api.h"              // for synHostFree, synStr...
-#include "synapse_common_types.h"     // for synStatus, synSuccess
+#include "synapse_api_types.h"        // for synStreamHandle
 #include "hcl_dynamic_communicator.h"
 #include "hcl_api_types.h"
 #include "hcl_dynamic_communicator.h"
@@ -50,7 +49,7 @@ hcclResult_t hccl_communicator::hccl_receive(void*           recvbuff,
                             (HCL_Rank)peer,
                             *m_comm,
                             m_comm->m_remoteDevices[peer]->header.hwModuleID,
-                            m_comm->isRankInsidePod(peer)};
+                            m_comm->isRankInsideScaleupGroup(peer)};
 
     return hccl_device().send_recv_call(m_comm->getMyRank(), entry);
 }
@@ -71,7 +70,7 @@ hcclResult_t hccl_communicator::hccl_send(const void*     sendbuff,
                             (HCL_Rank)peer,
                             *m_comm,
                             m_comm->m_remoteDevices[peer]->header.hwModuleID,
-                            m_comm->isRankInsidePod(peer)};
+                            m_comm->isRankInsideScaleupGroup(peer)};
 
     return hccl_device().send_recv_call(m_comm->getMyRank(), entry);
 

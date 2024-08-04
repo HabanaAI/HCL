@@ -210,10 +210,12 @@ struct ModuleLoggerData
     hl_logger::ResourceGuard                       flushHandlerResourceGuard;
     hl_logger::ResourceGuard                       lazyLogsHandlerResourceGuard;
     hl_logger::ResourceGuard                       loggersLevelByMaskHandlerResourceGuard;
+    hl_logger::ResourceGuard                       getLoggersLevelByNameHandlerResourceGuard;
     std::unordered_map<std::string, uint32_t>      maxLoggerNameLenPerFile;
     std::array<uint32_t, nbEnumItems>              lazyQueueSizes;
     std::mutex                                     userLogsQueueCreateMtx;
-    ModuleLoggerData(const char* name);
+    std::string_view                               moduleName;
+    ModuleLoggerData(std::string_view moduleName);
     ~ModuleLoggerData();
 };
 
@@ -221,12 +223,12 @@ template<class TLoggerEnum>
 extern ModuleLoggerData<TLoggerEnum> moduleLoggerData;
 
 template<typename TFmtMsg, typename... Args>
-inline void log(LoggerSPtr const & logger, int logLevel, bool forcePrintFileLine, std::string_view file, int line, TFmtMsg fmtMsg, Args&&... args)
+inline void log(LoggerSPtr const & logger, int logLevel, bool forcePrint, bool forcePrintFileLine, std::string_view file, int line, TFmtMsg fmtMsg, Args&&... args)
 try
 {
     fmt::memory_buffer buf;
     fmt::format_to(std::back_inserter(buf), fmtMsg, std::forward<Args>(args)...);
-    hl_logger::log(logger, logLevel, std::string_view(buf.data(), buf.size()), file, line, forcePrintFileLine);
+    hl_logger::log(logger, logLevel, forcePrint, std::string_view(buf.data(), buf.size()), file, line, forcePrintFileLine);
 }
 catch(std::exception const & e)
 {
@@ -241,10 +243,16 @@ catch(...)
 }
 
 template<class TLoggerEnum, typename TFmtMsg, typename... Args>
-inline void log(TLoggerEnum loggerEnumItem, int logLevel, bool forcePrintFileLine, std::string_view file, int line, TFmtMsg fmtMsg, Args&&... args)
+inline void log(TLoggerEnum loggerEnumItem, int logLevel, bool forcePrint, bool forcePrintFileLine, std::string_view file, int line, TFmtMsg fmtMsg, Args&&... args)
 {
     auto logger = getLogger(loggerEnumItem);
-    log(logger, logLevel, forcePrintFileLine, file, line, fmtMsg, std::forward<Args>(args)...);
+    log(logger, logLevel, forcePrint, forcePrintFileLine, file, line, fmtMsg, std::forward<Args>(args)...);
+}
+
+template<class TLoggerEnum, typename TFmtMsg, typename... Args>
+inline void log(TLoggerEnum loggerEnumItem, int logLevel, bool forcePrintFileLine, std::string_view file, int line, TFmtMsg fmtMsg, Args&&... args)
+{
+    log(loggerEnumItem, logLevel, false, forcePrintFileLine, file, line, fmtMsg, std::forward<Args>(args)...);
 }
 
 template<class TLoggerEnum, typename TFmtMsg, typename... TArgs>
@@ -296,8 +304,10 @@ void onModuleLoggersCrashSignal(TLoggerEnum, int signal, const char * signalStr)
 template <class TLoggerEnum>
 void onModuleLoggersCrashSignal(TLoggerEnum, int signal, const char * signalStr, bool isSevere){}
 template<class TLoggerEnum>
-inline ModuleLoggerData<TLoggerEnum>::ModuleLoggerData(const char *name)
+inline ModuleLoggerData<TLoggerEnum>::ModuleLoggerData(std::string_view moduleName)
+: moduleName(moduleName)
 {
+    HLLOG_INTERNAL_INFO("initialization of module: {}. logging dir: {} logging dir from env: {}", moduleName, hl_logger::getLogsFolderPath(), hl_logger::getLogsFolderPathFromEnv());
     const LogLevelInfo levelsOff{HLLOG_LEVEL_OFF, HLLOG_LEVEL_OFF};
     levels.fill(levelsOff);
     registered.fill(false);
@@ -329,11 +339,11 @@ inline ModuleLoggerData<TLoggerEnum>::ModuleLoggerData(const char *name)
         onModuleLoggersCrashSignal(TLoggerEnum(), signum , sigstr);
         onModuleLoggersCrashSignal(TLoggerEnum(), signum , sigstr, isSevere);
         flushAll<TLoggerEnum>();
-    });
+    }, moduleName);
 
     flushHandlerResourceGuard = registerFlushHandler([](){
         flushAll<TLoggerEnum>();
-    });
+    }, moduleName);
 
     lazyLogsHandlerResourceGuard = internal::registerLazyLogsHandler([this](){
         internal::LazyLogInfoVector lazyLogInfos;
@@ -365,7 +375,7 @@ inline ModuleLoggerData<TLoggerEnum>::ModuleLoggerData(const char *name)
             }
         }
         return lazyLogInfos;
-    });
+    }, moduleName);
 
     loggersLevelByMaskHandlerResourceGuard = internal::registerLoggingLevelByMaskHandler([](std::string_view mask, int newLevel){
         constexpr std::string_view logLevelAll = "LOG_LEVEL_ALL";
@@ -389,12 +399,30 @@ inline ModuleLoggerData<TLoggerEnum>::ModuleLoggerData(const char *name)
                 setLoggingLevel(loggerItem, newLevel);
             }
         });
-    });
+    }, moduleName);
+
+    getLoggersLevelByNameHandlerResourceGuard = internal::registerGetLoggingLevelByNameHandler([](std::string_view loggerName) -> int {
+        int result = HLLOG_LEVEL_INVALID;
+
+        forEachLoggerEnumItem<TLoggerEnum>([loggerName, &result](auto loggerItem) {
+            if (result == HLLOG_LEVEL_INVALID)
+            {
+                auto itemName = getLoggerEnumItemName(loggerItem);
+                if (itemName == loggerName)
+                {
+                    result = getLoggingLevel(loggerItem);
+                }
+            }
+        });
+
+        return result;
+    }, moduleName);
 }
 
 template<class TLoggerEnum>
 inline ModuleLoggerData<TLoggerEnum>::~ModuleLoggerData()
 {
+    HLLOG_INTERNAL_INFO("destruction of module: {}", moduleName);
     onModuleLoggersBeforeDestroy(TLoggerEnum());
     // disable all the logs, preventing access after dtor
     const LogLevelInfo levelsOff{HLLOG_LEVEL_OFF, HLLOG_LEVEL_OFF};
@@ -507,6 +535,8 @@ inline void createLoggerOnDemand(TLoggerEnum loggerEnumItem, hl_logger::LoggerCr
     params.defaultLoggingLevel = defaultLoggingLevel;
     params.defaultLazyLoggingLevel = defaultLoggingLevel;
     updateLazyLoggerRecentLogsQueue(loggerEnumItem, params_);
+    HLLOG_INTERNAL_INFO("loggerName: {} defaultLogLevel: {} defaultLazyLoggingLevel: {}",
+                        getLoggerEnumItemName(loggerEnumItem), params_.defaultLoggingLevel, params_.defaultLazyLoggingLevel);
     moduleLoggerData<TLoggerEnum>.loggerOnDemandCreators[loggerIdx] = [=](){
         hl_logger::LoggerCreateParams params_ = params;
         createLogger(loggerEnumItem, params);

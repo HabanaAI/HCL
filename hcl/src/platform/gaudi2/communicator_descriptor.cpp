@@ -128,53 +128,43 @@ unsigned LRU::getPlaceInLRU(lruPosition_iterator it)
 
 CommunicatorDescriptor::CommunicatorDescriptor(uint8_t collectiveIndex) : m_collectiveContextIndex(collectiveIndex)
 {
-    UNUSED( m_collectiveContextIndex );
-    m_qpsPerNic.resize(DEFAULT_COMMUNICATORS_SIZE);
+    UNUSED(m_collectiveContextIndex);
+    m_remoteDescriptors.resize(DEFAULT_COMMUNICATORS_SIZE);
     m_commDownloaded.resize(DEFAULT_COMMUNICATORS_SIZE, false);
 }
 
-void CommunicatorDescriptor::resizeDBs(HCL_Comm comm)
+void CommunicatorDescriptor::registerComm(HCL_Comm comm)
 {
-    size_t old_size = m_qpsPerNic.size();
-    LOG_HCL_INFO(HCL,
-                 "Resizing m_qpsPerNic/m_commDownloaded for new comm({}) from({}), to({})",
-                 comm,
-                 old_size,
-                 old_size + DEFAULT_COMMUNICATORS_SIZE);
-    VERIFY(m_commDownloaded.size() == old_size,
-           "Invalid QP DB sizes detected: m_qpsPerNic({}), m_commDownloaded({})",
-           m_qpsPerNic.size(),
-           m_commDownloaded.size());
-    m_qpsPerNic.resize(old_size + DEFAULT_COMMUNICATORS_SIZE);
-    m_commDownloaded.resize(old_size + DEFAULT_COMMUNICATORS_SIZE, false);
-}
-
-void CommunicatorDescriptor::registerQPs(HCL_Comm comm, uint8_t nic, unsigned qpi, const QpsVector& qps)
-{
-    if (unlikely(comm >= m_qpsPerNic.size()))
+    if (unlikely(comm >= m_remoteDescriptors.size()))
     {
-        resizeDBs(comm);
+        const size_t oldSize = m_remoteDescriptors.size();
+        const size_t newSize = oldSize + DEFAULT_COMMUNICATORS_SIZE;
+
+        VERIFY(m_commDownloaded.size() == oldSize,
+               "Invalid QP DB sizes detected: m_remoteDescriptors({}), m_commDownloaded({})",
+               m_remoteDescriptors.size(),
+               m_commDownloaded.size());
+
+        LOG_HCL_INFO(HCL,
+                     "Resizing m_remoteDescriptors & m_commDownloaded for new comm({}) from({}), to({})",
+                     comm,
+                     oldSize,
+                     newSize);
+
+        m_remoteDescriptors.resize(oldSize + DEFAULT_COMMUNICATORS_SIZE);
+        m_commDownloaded.resize(oldSize + DEFAULT_COMMUNICATORS_SIZE, false);
         m_lru.resizeDB(comm);
     }
-
-    m_qpsPerNic[comm][nic] = ScaleUpQpInfo(qps[qpi], qpi);
 }
 
-ScaleUpQpInfo* CommunicatorDescriptor::seek(HCL_Comm comm, uint8_t nic)
+g2fw::nic_coll_ctxt_dword_t& CommunicatorDescriptor::getRemoteDescriptor(HCL_Comm comm, uint8_t nic)
 {
-    if (unlikely(comm >= m_qpsPerNic.size()))
-    {
-        resizeDBs(comm);
-        m_lru.resizeDB(comm);
-    }
-
-    return &m_qpsPerNic[comm][nic];
+    return m_remoteDescriptors[comm][nic];
 }
 
-std::pair<unsigned, uint32_t> CommunicatorDescriptor::useQP(HCL_Comm comm, uint8_t nic)
+std::pair<unsigned, uint32_t> CommunicatorDescriptor::useQP(HCL_Comm comm, uint32_t qpn)
 {
-    ScaleUpQpInfo* qp = seek(comm, nic);
-    return std::make_pair(m_lru.use(comm), qp->getQpn());
+    return std::make_pair(m_lru.use(comm), qpn);
 }
 
 unsigned CommunicatorDescriptor::getCommDescIndex(HCL_Comm comm)
@@ -185,79 +175,4 @@ unsigned CommunicatorDescriptor::getCommDescIndex(HCL_Comm comm)
 bool CommunicatorDescriptor::isActive(HCL_Comm comm, uint8_t nic)
 {
     return m_lru.isActive(comm);
-}
-
-g2fw::nic_coll_ctxt_dword_t& CommunicatorDescriptor::getRemoteDescriptor(HCL_Comm comm, uint8_t nic)
-{
-    ScaleUpQpInfo* qp = seek(comm, nic);
-    return qp->getRemoteDescriptor();
-}
-
-uint32_t CommunicatorDescriptor::getQP(HCL_Comm comm, uint8_t nic)
-{
-    ScaleUpQpInfo* qp = seek(comm, nic);
-    return qp->getQpn();
-}
-
-uint32_t CommunicatorDescriptor::getQPi(HCL_Comm comm, uint8_t nic)
-{
-    ScaleUpQpInfo* qp = seek(comm, nic);
-    return qp->getQpi();
-}
-
-ScaleOutQPsTracker::ScaleOutQPsTracker()
-{
-    m_qpInfoDb.resize(DEFAULT_COMMUNICATORS_SIZE);
-}
-
-void ScaleOutQPsTracker::allocatCommQPs(HCL_Comm comm, uint32_t commSize)
-{
-    if (comm >= m_qpInfoDb.size())
-    {
-        LOG_HCL_DEBUG(HCL, "Resizing m_qpInfoDb for new comm({})", comm);
-        m_qpInfoDb.resize(m_qpInfoDb.size() + DEFAULT_COMMUNICATORS_SIZE);
-    }
-
-    if (m_qpInfoDb[comm].size() == 0)
-    {
-        m_qpInfoDb[comm].resize(commSize);
-    }
-    VERIFY(m_qpInfoDb[comm].size() == commSize,
-           "Invalid communicator({}) size({}) detected",
-           comm,
-           m_qpInfoDb[comm].size());
-}
-
-void ScaleOutQPsTracker::registerQPs(HclDynamicCommunicator& dynamicComm,
-                                     uint8_t                 SubNicIndex,
-                                     HCL_Rank                remoteRank,
-                                     unsigned                qpi,
-                                     const QpsVector&        qps)
-{
-    HCL_Comm comm = dynamicComm;
-
-    for (uint8_t qpSet = 0; qpSet < dynamicComm.getMaxScaleOutQpSetsNum(); qpSet++)
-    {
-        unsigned qpIndex                                 = (s_hal.getMaxQPsPerNic() * qpSet) + qpi;
-        m_qpInfoDb[comm][remoteRank][SubNicIndex][qpSet] =
-            ScaleOutQpInfo(qpIndex < qps.size() ? qps[qpIndex] : (uint32_t)-1, qpi);
-        LOG_HCL_DEBUG(HCL,
-                      "qpSet={}, qpIndex={}, m_qpInfoDb[][{}][{}]=({},{})",
-                      qpSet,
-                      qpIndex,
-                      remoteRank,
-                      SubNicIndex,
-                      m_qpInfoDb[comm][remoteRank][SubNicIndex][qpSet].getQpn(),
-                      m_qpInfoDb[comm][remoteRank][SubNicIndex][qpSet].getQpi());
-    }
-}
-
-uint32_t ScaleOutQPsTracker::getRankQpn(HCL_Comm comm, HCL_Rank remoteRank, uint8_t subNicIndex, uint8_t qpSet)
-{
-    return this->m_qpInfoDb[comm][remoteRank][subNicIndex][qpSet].getQpn();
-}
-
-uint32_t ScaleOutQPsTracker::getRankQpi(HCL_Comm comm, HCL_Rank remoteRank, uint8_t subNicIndex, uint8_t qpSet)
-{
-    return this->m_qpInfoDb[comm][remoteRank][subNicIndex][qpSet].getQpi();
 }

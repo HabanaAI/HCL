@@ -6,6 +6,7 @@
 #include "infra/scal/gen2_arch_common/scal_wrapper.h"  // for Gen2ArchScalWr...
 #include "platform/gaudi2/commands/hcl_commands.h"     // for HclCommandsGaudi2
 #include "platform/gaudi2/hcl_device.h"                // for HclDeviceGaudi2
+#include "platform/gen2_arch_common/hcl_packets_utils.h"  // for getCompCfg
 #include "infra/scal/gen2_arch_common/scal_exceptions.h"
 #include "infra/scal/gaudi2/arch_stream.h"
 #include "platform/gen2_arch_common/intermediate_buffer_container.h"
@@ -39,13 +40,11 @@ void Gaudi2ScalManager::serializeInitSequenceCommands(hcl::ScalStreamBase&      
 {
     uint64_t fwBaseAddress = 0;
     unsigned fwSliceSize   = 0;
-    if (GCFG_HCL_USE_EDMA_COMMAND_V3.value())
-    {
-        fwBaseAddress = device->getDeviceConfig().getSramBaseAddress();
-        VERIFY(GCFG_FW_IMB_SIZE.value() <= device->getDeviceConfig().getHclReservedSramSize(),
-               "FW IMB is located on SRAM, cannot be bigger than HCL reserved SRAM size.");
-        fwSliceSize = GCFG_FW_IMB_SIZE.value();
-    }
+
+    fwBaseAddress = device->getDeviceConfig().getSramBaseAddress();
+    VERIFY(GCFG_FW_IMB_SIZE.value() <= device->getDeviceConfig().getHclReservedSramSize(),
+           "FW IMB is located on SRAM, cannot be bigger than HCL reserved SRAM size.");
+    fwSliceSize = GCFG_FW_IMB_SIZE.value();
 
     ((HclCommandsGaudi2&)(((HclDeviceGaudi2*)device)->getGen2ArchCommands()))
         .serializeInitSequenceCommands(recvStream,
@@ -57,8 +56,7 @@ void Gaudi2ScalManager::serializeInitSequenceCommands(hcl::ScalStreamBase&      
                                        ((HclDeviceGaudi2*)device)->getContextManager(),
                                        fwSliceSize,
                                        fwBaseAddress,
-                                       apiId,
-                                       device->getEdmaEngineWorkDistributionSize());
+                                       apiId);
 }
 
 void Gaudi2ScalManager::initGlobalContext(HclDeviceGen2Arch* device, uint8_t apiId)
@@ -66,6 +64,10 @@ void Gaudi2ScalManager::initGlobalContext(HclDeviceGen2Arch* device, uint8_t api
     LOG_HCL_DEBUG(HCL_SCAL, "HCL initializes ScalManager Global Context...");
 
     Gen2ArchScalWrapper::CgComplex cgComplex = m_scalWrapper->getCgInfo("network_scaleup_init_completion_queue");
+
+    // Add network_scaleup_init_completion_queue to completion config
+    const unsigned queue_id = m_archStreams.size() * 2;
+    getCompCfg()[queue_id]  = SoBaseAndSize(cgComplex.cgInfo.cgBaseAddr, cgComplex.cgInfo.size);
 
     hcl::ScalStream& recvStream   = getScalStream(0, (unsigned)SchedulersIndex::recvScaleUp, 0);
     hcl::ScalStream& recvSOStream = getScalStream(0, (unsigned)SchedulersIndex::recvScaleOut, 0);
