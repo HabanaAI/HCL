@@ -11,11 +11,11 @@ public:
                                   HclCommandsGen2Arch&  commands,
                                   HclGraphSyncGen2Arch& graphSync);
 
-    virtual void generateBaseAddressOrRRIdx(SliceState&       sliceState,
-                                            unsigned int&     sliceIter,
-                                            BoxNumInfo&       boxNumInfo,
-                                            HCL_CollectiveOp& currentOp,
-                                            uint64_t&         offset,
-                                            uint64_t&         baseAddress,
-                                            uint32_t&         rrIndex) override;
+    virtual void generateBaseAddressOrSubBuffIdx(SliceState&       sliceState,
+                                                 unsigned int&     sliceIter,
+                                                 BoxNumInfo&       boxNumInfo,
+                                                 HCL_CollectiveOp& currentOp,
+                                                 uint64_t&         offset,
+                                                 uint64_t&         baseAddress,
+                                                 uint32_t&         subBuffIndex) override;
 };

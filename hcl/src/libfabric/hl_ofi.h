@@ -68,10 +68,10 @@ class ofi_component_t;
 class ofi_t final
 {
 public:
-    ofi_t(int hw_module_id);
+    ofi_t(int device_fd, int hw_module_id);
     virtual ~ofi_t();
 
-    int    init(int device_fd);
+    int    init();
     int    nOFIDevices() const { return m_nOFIDevices; }
     size_t getOFIDevice() const { return m_ofi_device; }
     int    listen(int ofiDevice, void* handle, listenComm_t** listenComm, unsigned hostConnIdx, uint16_t qpSetIndex);
@@ -109,42 +109,44 @@ public:
     struct fi_info* get_nic_info(int ofiDevice);
 
 private:
-    int acquireOfiComponent(int ofiDevice);
-    int initOfiComponent(int ofiDevice);
-    int get_ofi_provider(int device_fd, bool gaudi_direct);
+    /**
+     * @brief The order prioritizes the providers. Lower value is better.
+     */
+    enum class CORE_PROVIDER
+    {
+        VERBS = 1,
+        TCP   = 2
+    };
+
+    int                                            acquireOfiComponent(int ofiDevice);
+    int                                            initOfiComponent(int ofiDevice);
+    int                                            get_ofi_provider(bool gaudi_direct);
+    std::map<CORE_PROVIDER, std::vector<fi_info*>> map_by_core_provider(struct fi_info* providers);
 
     /**
      * @brief Signal whether a detected tcp provider should be excluded
      *
-     * @param name name of the provider
-     * @param addr_format address format of the inspected provider (expected: FI_SOCKADDR_IN)
-     * @param mem_tag_format memory tag format of the inspected provider
+     * @param provider provider information
      * @param expected_mem_tag_format expected memory tag format
      * @param unique_interfaces distinct tcp interfaces vector
      * @return true if inspected provider should be eliminated;
      * @return false if inspected provider should be kept
      *
      */
-    bool exclude_tcp_provider(const char* const               name,
-                              const uint32_t                  addr_format,
-                              const uint64_t                  mem_tag_format,
-                              const uint64_t                  expected_mem_tag_format,
-                              const std::vector<std::string>& unique_interfaces);
+    bool                    exclude_tcp_provider(const fi_info* const provider, const uint64_t expected_mem_tag_format);
+    std::optional<fi_info*> get_tcp_provider(const std::vector<fi_info*>& providers);
 
     /**
      * @brief Signal whether a detected verbs provider should be excluded
      *
-     * @param name name of the domain
-     * @param addr_format address format of the inspected provider (expected: FI_SOCKADDR_IN)
-     * @param mem_tag_format memory tag format of the inspected provider
+     * @param provider provider information
      * @param expected_mem_tag_format expected memory tag format
      * @return true if inspected provider should be eliminated;
      * @return false if inspected provider should be kept
      */
-    bool exclude_verbs_provider(const char* const name,
-                                const uint32_t    addr_format,
-                                const uint64_t    mem_tag_format,
-                                const uint64_t    expected_mem_tag_format);
+    bool exclude_verbs_provider(const fi_info* const provider, const uint64_t expected_mem_tag_format);
+    std::optional<fi_info*> get_verb_provider(const std::vector<fi_info*>& providers);
+
     /**
      * @brief Check whether Linux kernel has dmabuf support by reading the kernel symbols file,
      * This is necessary since some customers won't use the official kernel version, supporting dmabuf (5.12), but
@@ -153,7 +155,11 @@ private:
      * @return true if dmabuf is supported
      * @return false otherwise
      */
-    bool checkDMABUFSupport();
+    bool                                checkDMABUFSupport();
+    void                                log_provider(const std::vector<struct fi_info*>& providers,
+                                                     const struct fi_info*               selectedProvider,
+                                                     const std::string&                  description);
+    static std::optional<CORE_PROVIDER> get_core_provider(const std::string& provider_name);
 
 private:
     static bool s_mrLocal;
@@ -161,13 +167,14 @@ private:
     static bool s_gaudiDirect;
     static bool s_verbs;
 
+    const int                     m_device_fd;
     int                           m_hw_module_id;
     int                           m_nOFIDevices;
     size_t                        m_ofi_device;
     pthread_mutex_t               m_ofi_lock;
     bool                          m_is_initialized;
     std::vector<ofi_component_t*> m_components;
-    struct fi_info*               m_fi_getinfo_result = nullptr;
+    struct fi_info*               m_fi_getinfo_result;
     std::vector<struct fi_info*>  m_providers;
     PCIE_Device                   m_gaudi_pci_dev;
 };

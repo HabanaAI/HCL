@@ -100,4 +100,5 @@ struct hccl_functions_pointers
     hcclResult_t (*pfn_hcclDfaUpdateState)(DfaPhase dfaPhase);
     hcclResult_t (*pfn_hcclGetVersionString)(char* pVersion, const unsigned len);
     hcclResult_t (*pfn_hcclCommFinalize)(hcclComm_t comm);
+    hcclResult_t (*pfn_hcclDeviceInit)(void* device, void* context);
 };

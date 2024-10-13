@@ -25,7 +25,7 @@ private:
         SignalWaitEvent* signalWaitDesc;
 
         SignalDescription();
-        SignalDescription(SignalEvent event, bool startConsumed = false);
+        SignalDescription(SignalEvent signalEvent, bool startConsumed = false);
 
         bool wasRegistered() const;
         bool wasSignalled() const;
@@ -43,7 +43,7 @@ private:
         llvm_vecsmall::SmallVector<SignalDescription, 8> signals;
         WaitMethod                                       method;
         WaitPhase                                        currentPhase = 0;
-        unsigned                                         longtermIdx = 0;
+        unsigned                                         longtermIdx  = 0;
 
         unsigned numSignals;
 
@@ -54,7 +54,7 @@ private:
 
         SignalWaitEvent();
         SignalWaitEvent(WaitEvent                                        waitEvent,
-                        llvm_vecsmall::SmallVector<SignalDescription, 8> signals,
+                        llvm_vecsmall::SmallVector<SignalDescription, 8> signalDescs,
                         WaitMethod                                       waitMethod,
                         WaitPhase                                        waitPhase,
                         unsigned                                         longtermSyncObjIdx);
@@ -62,7 +62,7 @@ private:
         SignalWaitEvent& operator=(const SignalWaitEvent& other);
         SignalWaitEvent& operator=(SignalWaitEvent&& other) = default;
 
-        bool wasSignalled() const;  // returns true if this and all 'nextPhaseEvent' have been signalled
+        bool             wasSignalled() const;  // returns true if this and all 'nextPhaseEvent' have been signalled
         FenceCheckResult wasFenced(bool checkPhases = true)
             const;  // true if this and all 'nextPhaseEvent' have 'numExecutedFences == numExpectedFences'
         bool wasCompleted() const;  // returns true if wasSignalled() and wasFenced()
@@ -119,14 +119,14 @@ private:
     {
         std::array<SignalWaitEvent, (unsigned)WaitEvent::WAIT_EVENT_MAX> m_events;
         std::array<llvm_vecsmall::SmallVector<SignalDescription*, 8>, (unsigned)SignalEvent::SIGNAL_EVENT_MAX>
-                                                                                                        m_signals;
-        std::array<std::array<WaitPhaseEntry, WAIT_PHASE_MAX>, (unsigned)WaitMethod::WAIT_METHOD_MAX>   m_methods {};
+                                                                                                      m_signals;
+        std::array<std::array<WaitPhaseEntry, WAIT_PHASE_MAX>, (unsigned)WaitMethod::WAIT_METHOD_MAX> m_methods {};
 
         uint32_t m_requestedEventsBitmap = 0;
 
         std::array<bool, (unsigned)WaitMethod::WAIT_METHOD_MAX> m_methodsToClean {};
 
-        bool m_firstUse    = true;
+        bool m_firstUse        = true;
         bool m_firstCollective = true;
 
         // max number phases based on communicator size
@@ -150,15 +150,15 @@ private:
     bool                                m_usingCache = false;
 
     std::vector<std::array<SyncObjectDescriptor, (unsigned)WaitMethod::WAIT_METHOD_MAX>> m_completionTracker;
-    std::vector<uint64_t> m_cuidTracker;
+    std::vector<uint64_t>                                                                m_cuidTracker;
 
-    HclGraphSyncGen2Arch&     m_graphSync;
+    HclGraphSyncGen2Arch& m_graphSync;
     Gen2ArchScalUtils*    m_utils;
 
-    const unsigned            m_cgSize;
-    unsigned                  m_archStream;
+    const unsigned m_cgSize;
+    unsigned       m_archStream;
 
-    CommonState* m_commonState = nullptr;
+    CommonState* m_commonState   = nullptr;
     int          m_prevIteration = -1;
 
     bool hasWaitEvent(WaitEvent waitEvent) const;

@@ -30,10 +30,3 @@ protected:
 
     std::array<unsigned, (unsigned)SignalEvent::SIGNAL_EVENT_MAX> m_costs;
 };
-
-class SignalsCalculatorFactory
-{
-public:
-    SignalsCalculatorFactory() = default;
-    static SignalsCalculator* create(bool isGaudi3);
-};

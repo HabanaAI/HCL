@@ -15,7 +15,7 @@ public:
     virtual ~HostBufferManager() = default;
 
     uint64_t getCurrentBuffer(const e_hostPoolID poolIdx) override;
-    uint64_t  allocNextBuffer(uint64_t targetValue, const e_hostPoolID poolIdx) override;
+    uint64_t allocNextBuffer(uint64_t targetValue, const e_hostPoolID poolIdx) override;
     uint64_t getCurrentMappedBuffer(const e_hostPoolID poolIdx);
 
 protected:

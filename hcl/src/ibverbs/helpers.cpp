@@ -44,7 +44,7 @@ void ip4addr_to_gid(uint32_t ipv4_addr /*network byte order*/, ibv_gid& gid)
 }
 
 #ifndef IBV_MTU_8192
-    #define IBV_MTU_8192 6
+#define IBV_MTU_8192 6
 #endif /* IBV_MTU_8192 */
 
 ibv_mtu to_ibdev_mtu(int mtu)
@@ -70,7 +70,7 @@ ibv_mtu to_ibdev_mtu(int mtu)
 
 std::string readFile(const std::string& filePath)
 {
-    std::string result;
+    std::string   result;
     std::ifstream file(filePath);
 
     if (file.is_open())
@@ -94,18 +94,16 @@ ibv_gid str2gid(const std::string& sgid)
     std::istringstream iss(sgid);
     iss >> std::hex;
 
-    char colon;
+    char     colon;
     uint16_t value;
 
     for (uint32_t i = 0; i < (sizeof(result) / sizeof(uint16_t)); ++i)
     {
-        if (iss.peek() == ':')
-            iss >> colon;
+        if (iss.peek() == ':') iss >> colon;
 
         iss >> value;
 
-        if (!iss)
-            break;
+        if (!iss) break;
 
         ((uint16_t*)result.raw)[i] = __bswap_16(value);
     }

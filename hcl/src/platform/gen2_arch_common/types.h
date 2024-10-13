@@ -2,25 +2,10 @@
 
 #include <cstdint>
 
-#define MAX_NICS_GEN2ARCH                 (24)
-#define GEN2ARCH_HLS_BOX_SIZE             (8)
-#define MAX_DYNAMIC_PORT_SCHEMES_GEN2ARCH (3)
-#define HCL_INVALID_PORT                  (uint16_t)(-1)  // 0xFFFF
-
-class QpInfo
-{
-public:
-    QpInfo() : qpn(0), qpi(0) {}
-    QpInfo(uint32_t _qpn, uint32_t _qpi) : qpn(_qpn), qpi(_qpi) {}
-
-protected:
-    uint32_t qpn;
-    uint32_t qpi;  // QP index
-
-public:
-    inline uint32_t getQpn() { return qpn; };
-    inline uint32_t getQpi() { return qpi; };
-};
+#define MAX_NICS_GEN2ARCH     (24)
+#define GEN2ARCH_HLS_BOX_SIZE (8)
+#define HCL_INVALID_PORT      (uint16_t)(-1)  // 0xFFFF
+#define HCL_INVALID_FENCE_ID  (uint32_t)(-1)  // 0xFFFFFFFF
 
 enum reduction_datatype_e
 {

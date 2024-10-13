@@ -1,7 +1,7 @@
 #include "mr_mapping.h"
 #include <unistd.h>  // for close
 #include <cstring>   // for strerror
-#include "hccl_device.h"
+#include "platform/gen2_arch_common/hccl_device.h"
 #include "hcl_utils.h"                   // for LOG_HCL_DEBUG, LOG_HCL_ERR
 #include "interfaces/hcl_idevice.h"      // for IHclDevice
 #include "libfabric/hl_ofi.h"            // for OFI_UNLIKELY
@@ -202,20 +202,19 @@ int MRMapping::mapDevMem(uint64_t addr, uint64_t size, uint64_t offset, uint32_t
             LOG_HCL_DEBUG(HCL_OFI, "HCL_GetDeviceFD returned 0 for device FD");
         }
 
-        int hlthunk_fd =
-            hlthunk_device_mapped_memory_export_dmabuf_fd(hccl_device()->getFd(), addr, size, offset, flags);
+        int dmabuf_fd = hlthunk_device_mapped_memory_export_dmabuf_fd(device_fd, addr, size, offset, flags);
 
-        if (hlthunk_fd < 0)
+        if (dmabuf_fd < 0)
         {
             LOG_HCL_ERR(HCL_OFI,
                         "HCL_BufferMap returned invalid FD: [{}] for size [0x{:x}] ({:g}MB), address [0x{:x}], offset "
                         "[0x{:x}], hlthunk_device_mapped_memory_export_dmabuf_fd failed. {}",
-                        hlthunk_fd,
+                        dmabuf_fd,
                         size,
                         B2MB(size),
                         addr,
                         offset,
-                        std::strerror(hlthunk_fd * (-1)));
+                        std::strerror(dmabuf_fd * (-1)));
 
             curr_entry = {0, 0, 0, NULL};
             return hcclLibfabricError;
@@ -226,25 +225,25 @@ int MRMapping::mapDevMem(uint64_t addr, uint64_t size, uint64_t offset, uint32_t
                 HCL,
                 "HCL_BufferMap returned valid FD: [{}] for size [0x{:x}] ({:g}MB), address [0x{:x}], offset [0x{:x}]"
                 "hlthunk_device_mapped_memory_export_dmabuf_fd succeeded.",
-                hlthunk_fd,
+                dmabuf_fd,
                 size,
                 B2MB(size),
                 addr,
                 offset);
         }
 
-        curr_entry.fd        = hlthunk_fd;
+        curr_entry.fd        = dmabuf_fd;
         curr_entry.mr_handle = NULL;
 
         update_buffer_mapping(curr_entry);
 
         struct fid_mr* mr_handle = NULL;
         LOG_HCL_DEBUG(HCL_OFI,
-                      "calling register_mr with address [0x{:x}], size [0x{:x}], device_fd={}",
+                      "calling register_mr with address [0x{:x}], size [0x{:x}], dmabuf_fd={}",
                       curr_entry.addr,
                       size,
-                      device_fd);
-        int ret = ofiComponent->register_mr((void*)curr_entry.addr, size, FI_HMEM_SYNAPSEAI, device_fd, &mr_handle);
+                      dmabuf_fd);
+        int ret = ofiComponent->register_mr((void*)curr_entry.addr, size, FI_HMEM_SYNAPSEAI, curr_entry.fd, &mr_handle);
 
         if (OFI_UNLIKELY(ret != 0))
         {
@@ -300,7 +299,7 @@ hcclResult_t MRMapping::mapFlushBufMem(ofi_component_t* ofiComponent)
     ret = ofiComponent->register_mr((void*)getDramBaseAddr(),
                                     sizeof(int),
                                     FI_HMEM_SYNAPSEAI,
-                                    hccl_device()->getFd(),
+                                    lookup_dma_buf_fd(getDramBaseAddr(), sizeof(int)),
                                     &m_flushMRRemoteHandle,
                                     true);
     if (ret)
@@ -373,13 +372,13 @@ int MRMapping::deregisterMR()
             if (status == 0)
             {
                 LOG_HCL_DEBUG(HCL_OFI,
-                              "MRMapping: deregisteration of mr_handle [{}] went successfully.",
+                              "MRMapping: deregistration of mr_handle [{}] went successfully.",
                               (uint64_t)mapping_entry.mr_handle);
             }
             else
             {
                 LOG_HCL_ERR(HCL_OFI,
-                            "MRMapping: deregisteration of mr_handle [{}] failed.",
+                            "MRMapping: deregistration of mr_handle [{}] failed.",
                             (uint64_t)mapping_entry.mr_handle);
                 return -1;
             }

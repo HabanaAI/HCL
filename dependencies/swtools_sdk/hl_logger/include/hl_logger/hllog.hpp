@@ -67,12 +67,29 @@ template<class TLoggerEnum>
 void setLoggingLevel(TLoggerEnum loggerEnumItem, int newLevel);
 
 /**
+ * @brief  setConsoleLoggingLevel set logging level for console (if console not enabled - no effect)
+ *
+ * @param logger
+ * @param newLevel new logging level
+ */
+template<class TLoggerEnum>
+void setConsoleLoggingLevel(TLoggerEnum loggerEnumItem, int newLevel);
+
+/**
  * @brief get logging level of the logger loggerEnumItem
  * @param loggerEnumItem logger enum item
  * @return current logging level
  */
 template<class TLoggerEnum>
 int getLoggingLevel(TLoggerEnum loggerEnumItem);
+
+/**
+ * @brief get console logging level of the logger loggerEnumItem
+ * @param loggerEnumItem logger enum item
+ * @return current logging level
+ */
+template<class TLoggerEnum>
+int getConsoleLoggingLevel(TLoggerEnum loggerEnumItem);
 
 /**
  * @brief check if log level of a logger is not more than level. so that a message with level will be logged
@@ -168,7 +185,7 @@ HLLOG_API void addFileSink(const TLoggerEnum loggerEnumItem,
                            std::string_view  logFileName,
                            size_t            logFileSize,
                            size_t            logFileAmount,
-                           int               loggingLevel = defaultLoggingLevel);
+                           int               loggingLevel = HLLOG_LEVEL_INVALID);
 
 /**
  * @brief addConsole add a console sinks to a logger

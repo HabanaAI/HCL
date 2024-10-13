@@ -1418,6 +1418,41 @@ synStatus SYN_API_CALL synNodeSetUserProgrammability(const synGraphHandle       
 synStatus SYN_API_CALL synNodeGetRoundingMode(  const synGraphHandle    graphHandle,
                                                 const synNodeId         nodeId,
                                                 synRoundingMode*        pRoundingMode);
+
+//!
+/*!
+ ***************************************************************************************************
+ * @brief   Hint to compiler to optimize node latency. (default is false)
+ *
+ *
+ * @param   graphHandle        [in] The Synapse graph in which the node was created
+ * @param   nodeId             [in] node unique id, as received from synNodeCreateWithId
+ * @param   minimalLatency     [in] value to set; if true compiler should try to execute node
+ *                                  to completion as early as possible
+ *
+ * @return                  Status of the operation
+ ***************************************************************************************************
+ */
+synStatus SYN_API_CALL synNodeSetMinimalLatency(const synGraphHandle graphHandle,
+                                                const synNodeId      nodeId,
+                                                const bool           minimalLatency);
+
+//!
+/*!
+ ***************************************************************************************************
+ * @brief   Gets Node latency configuration
+ *
+ * @param   graphHandle          [in] The Synapse graph in which the node was created
+ * @param   nodeId               [in] node unique id, as received from synNodeCreateWithId
+ * @param   minimalLatency       [out] pointer to where to fill the data
+ *
+ * @return                  Status of the operation
+ ***************************************************************************************************
+ */
+synStatus SYN_API_CALL synNodeGetMinimalLatency(const synGraphHandle graphHandle,
+                                                const synNodeId      nodeId,
+                                                bool*                minimalLatency);
+
 //!
 /*!
  ***************************************************************************************************
@@ -2360,31 +2395,6 @@ synStatus SYN_API_CALL synTensorSetGeometry(synTensor                   tensor,
 //!
 /*!
  ***************************************************************************************************
- *   @brief Sets shape and dimension to tensor.
- *
- *   Set geometry according to geometryType.
- *   Legal values to geometryType: synGeometryMinSizes, synGeometryMaxSizes, synGeometrySizes and,
- *                                 synGeometryDims.
- *   If only one of synGeometryMinSizes or synGeometryMaxSizes is specified, the other is assumed
- *   to be identical (the same as using synGeometrySizes).
- *   synGeometryDims can be used to pass in the rank of the tensor without setting the shape,
- *   asking the compiler to infer them, if possible. In this case, only the dims field of the
- *   synTensorGeometryExt struct will be used, and the sizes field will be ignored.
- *
- *   @param tensor            [in] A previously-created tensor handle.
- *   @param geometry          [in] A pointer to the synTensorGeometryExt struct.
- *   @param geometryType      [in] Specify if Minimum or Maximum sizes.
- *
- *   @return                  The status of the operation
- ***************************************************************************************************
- */
-synStatus SYN_API_CALL synTensorSetGeometryExt(synTensor                   tensor,
-                                               const synTensorGeometryExt* geometry,
-                                               synGeometryType             geometryType);
-
-//!
-/*!
- ***************************************************************************************************
  *   @brief Sets a memory permutation on a tensor.
  *
  *   Set a permutation on a tensor that marks that the given tensor data is stored transposed in
@@ -2607,24 +2617,6 @@ synStatus SYN_API_CALL synTensorGetQuantizationData(synTensor               tens
 synStatus SYN_API_CALL synTensorGetGeometry(const synTensor         tensor,
                                             synTensorGeometry*      geometry,
                                             synGeometryType         geometryType);
-
-//!
-/*!
- ***************************************************************************************************
- *   @brief Query tensor shape and dimension.
- *
- *   Geometry property will be returned in user-allocated buffer.
- *
- *   @param tensor            [in]   A previously-created tensor handle
- *   @param geometry          [out]  A pointer to the synTensorGeometryExt struct
- *   @param geometryType      [in]   Type of the geometry to be queried
- *
- *   @return                  The status of the operation
- ***************************************************************************************************
- */
-synStatus SYN_API_CALL synTensorGetGeometryExt(const synTensor         tensor,
-                                               synTensorGeometryExt*   geometry,
-                                               synGeometryType         geometryType);
 
 //!
 /*!

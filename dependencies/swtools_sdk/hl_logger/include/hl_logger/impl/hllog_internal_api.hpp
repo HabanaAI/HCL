@@ -13,7 +13,7 @@ HLLOG_API void logInternal(int logLevel, std::string_view msg);
 
 #define HLLOG_INTERNAL_LOG(logLevel, fmtMsg, ...)                                                                      \
 do {                                                                                                                   \
-    if (hl_logger::internal::s_internalLogLevel <= logLevel) {                                                         \
+    if (hl_logger::internal::s_internalLogLevel <= logLevel && logLevel < HLLOG_LEVEL_OFF) {                           \
         fmt::memory_buffer buf;                                                                                        \
         fmt::format_to(std::back_inserter(buf), FMT_COMPILE("{}: " fmtMsg) , __FUNCTION__, ##__VA_ARGS__);             \
         hl_logger::internal::logInternal(logLevel, std::string_view(buf.data(), buf.size()));                          \

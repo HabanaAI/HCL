@@ -1,12 +1,12 @@
 #include "infra/scal/gen2_arch_common/scal_names.h"
 #include "platform/gaudi2/hcl_packets.h"
 
-#include <ext/alloc_traits.h>                         // for __alloc_traits<...
-#include <cstring>                                    // for memcpy, size_t
-#include <algorithm>                                  // for max
-#include <cstdint>                                    // for uint32_t, uint16_t
-#include <memory>                                     // for __shared_ptr_ac...
-#include <utility>                                    // for pair, move
+#include <ext/alloc_traits.h>  // for __alloc_traits<...
+#include <cstring>             // for memcpy, size_t
+#include <algorithm>           // for max
+#include <cstdint>             // for uint32_t, uint16_t
+#include <memory>              // for __shared_ptr_ac...
+#include <utility>             // for pair, move
 
 #include "hcl_utils.h"                                // for VERIFY
 #include "infra/scal/gen2_arch_common/scal_names.h"   // for SchedulersIndex
@@ -17,11 +17,10 @@
 #include "platform/gen2_arch_common/types.h"          // for REDUCTION_OP_AD...
 #include "scal.h"                                     // for SCAL_NIC_RECEIV...
 #include "hccl_types.h"                               // for hcclRedOp_t
-#include "define_synapse_common.hpp"                  // for pdma context id
-#include "synapse_profiler_api.hpp"                   // for pdma context id
 #include "platform/gaudi2/nic_passthrough_handler.h"  // for pRecordWithMetadata
 #include "platform/gen2_arch_common/hcl_packets_utils.h"
 #include "hcl_math_utils.h"
+#include "platform/gen2_arch_common/hcl_device_controller.h"
 
 void SchedArcCommandsGaudi2::serializeNopCommand(hcl::ScalStreamBase& scalStream, unsigned schedIdx, uint32_t padding)
 {
@@ -38,14 +37,19 @@ void SchedArcCommandsGaudi2::serializeNopCommand(hcl::ScalStreamBase& scalStream
     command->padding_count = (uint32_t)((padding - sizeof(g2fw::sched_arc_cmd_nop_t)) / sizeof(uint32_t));
 }
 
-void SchedArcCommandsGaudi2::serializeAllocBarrierCommand(hcl::ScalStreamBase& scalStream,
-                                                          unsigned             schedIdx,
-                                                          uint32_t             completionGroupIndex,
-                                                          uint32_t             requiredSobs)
+void SchedArcCommandsGaudi2::serializeAllocBarrierCommand(
+    hcl::ScalStreamBase&                                     scalStream,
+    unsigned                                                 schedIdx,
+    uint32_t                                                 completionGroupIndex,
+    uint32_t                                                 requiredSobs,
+    llvm_vecsmall::SmallVector<uint32_t, MAX_STREAM_TO_INC>* fences)
 {
-    g2fw::sched_arc_cmd_alloc_nic_barrier_t* command = reinterpret_cast<g2fw::sched_arc_cmd_alloc_nic_barrier_t*>(
-        scalStream.getNextPtr(sizeof(g2fw::sched_arc_cmd_alloc_nic_barrier_t)));
-    memset(command, 0, sizeof(g2fw::sched_arc_cmd_alloc_nic_barrier_t));
+    uint32_t fenceCnt = fences == nullptr ? 0 : fences->size();
+    uint32_t cmdSize =
+        sizeof(g2fw::sched_arc_cmd_alloc_nic_barrier_t) + (sizeof(uint32_t) * ((fenceCnt > 0) + (fenceCnt > 4)));
+    g2fw::sched_arc_cmd_alloc_nic_barrier_t* command =
+        reinterpret_cast<g2fw::sched_arc_cmd_alloc_nic_barrier_t*>(scalStream.getNextPtr(cmdSize));
+    memset(command, 0, cmdSize);
 
     static const unsigned opcodes[(unsigned)hcl::SchedulersIndex::count] = {
         g2fw::SCHED_GC_REDUCTION_ARC_CMD_ALLOC_NIC_BARRIER,
@@ -53,19 +57,30 @@ void SchedArcCommandsGaudi2::serializeAllocBarrierCommand(hcl::ScalStreamBase& s
         g2fw::SCHED_SCALEUP_RECV_ARC_CMD_ALLOC_NIC_BARRIER,
         g2fw::SCHED_SCALEOUT_SEND_ARC_CMD_ALLOC_NIC_BARRIER,
         g2fw::SCHED_SCALEOUT_RECV_ARC_CMD_ALLOC_NIC_BARRIER};
-    command->opcode           = opcodes[schedIdx];
-    command->comp_group_index = completionGroupIndex;
-    command->required_sobs    = requiredSobs;
 
-    LOG_TRACE(
-        HCL_SUBMIT,
-        "Packets | serializeAllocBarrierCommand schedIdx:{}, opcode:{}, comp_group_index:{}, required_sobs:{}, "
-        "on stream:{}",
-        schedIdx,
-        command->opcode,
-        (uint32_t)command->comp_group_index,
-        (uint32_t)command->required_sobs,
-        *(scalStream.getStreamName()));
+    SET_FIELD(command->opcode, opcodes[schedIdx]);
+    SET_FIELD(command->comp_group_index, completionGroupIndex);
+    SET_FIELD(command->required_sobs, requiredSobs);
+
+    SET_FIELD(command->cmd_size_bytes, cmdSize);
+    SET_FIELD(command->fence_count, fenceCnt);
+    for (unsigned i = 0; i < fenceCnt; i++)
+    {
+        SET_FIELD(((uint8_t*)command->fence_arr)[i], (*fences)[i]);
+    }
+
+    PRINT_PACKET_TRACE_WITH_COUNTS(scalStream,
+                                   fenceCnt,
+                                   "schedIdx:{}, opcode:{}, comp_group_index:{}, required_sobs:{}",
+                                   schedIdx,
+                                   command->opcode,
+                                   (uint32_t)command->comp_group_index,
+                                   (uint32_t)command->required_sobs);
+
+    for (unsigned i = 0; i < fenceCnt; i++)
+    {
+        LOG_TRACE(HCL_SUBMIT, "Packets | fenceId{}={}", i, (*fences)[i]);
+    }
 }
 
 void SchedArcCommandsGaudi2::serializeFenceDecCommand(hcl::ScalStreamBase& scalStream,
@@ -87,13 +102,12 @@ void SchedArcCommandsGaudi2::serializeFenceDecCommand(hcl::ScalStreamBase& scalS
     command->fence_id = fenceIndex;
     command->target   = target;
 
-    LOG_TRACE(HCL_SUBMIT,
-              "Packets | serializeFenceDecCommand sched:{}, opcode:{}, target:{}, fence_id:{} on stream:{}",
-              schedIdx,
-              command->opcode,
-              (uint32_t)command->target,
-              (uint32_t)command->fence_id,
-              *(scalStream.getStreamName()));
+    PRINT_PACKET_TRACE(scalStream,
+                       "sched:{}, opcode:{}, target:{}, fence_id:{}",
+                       schedIdx,
+                       command->opcode,
+                       (uint32_t)command->target,
+                       (uint32_t)command->fence_id);
 }
 
 void SchedArcCommandsGaudi2::serializeFenceIncCommand(hcl::ScalStreamBase& scalStream,
@@ -113,13 +127,11 @@ void SchedArcCommandsGaudi2::serializeFenceIncCommand(hcl::ScalStreamBase& scalS
         g2fw::SCHED_SCALEOUT_RECV_ARC_CMD_FENCE_INC_IMMEDIATE};
     command->opcode      = opcodes[schedIdx];
     command->fence_index = fenceIndex;
-    LOG_TRACE(
-        HCL_SUBMIT,
-        "Packets | serializeFenceIncCommand schedIdx:{}, opcode:{} ,fence_id:{} on stream:{}",
-        schedIdx,
-        command->opcode,
-        (uint32_t)command->fence_index,
-        *(scalStream.getStreamName()));
+    PRINT_PACKET_TRACE(scalStream,
+                       "(ACP) schedIdx:{}, opcode:{} ,fence_id:{}",
+                       schedIdx,
+                       command->opcode,
+                       (uint32_t)command->fence_index);
 }
 
 void SchedArcCommandsGaudi2::serializeLbwWriteCommand(hcl::ScalStreamBase& scalStream,
@@ -143,17 +155,54 @@ void SchedArcCommandsGaudi2::serializeLbwWriteCommand(hcl::ScalStreamBase& scalS
     command->dst_addr   = destination;
     command->src_data   = data;
 
-    LOG_TRACE(
-        HCL_SUBMIT,
-        "Packets | serializeLbwWriteCommand schedIdx:{}, opcode:{} , block_next:{}, dst_addr:0x{:x}, "
-        "src_data:0x{:x}, wait_for_completion:{} on stream:{}",
-        schedIdx,
-        command->opcode,
-        (uint32_t)command->block_next,
-        (uint64_t)command->dst_addr,
-        (uint64_t)command->src_data,
-        (uint32_t)command->wait_for_completion,
-        *(scalStream.getStreamName()));
+    PRINT_PACKET_TRACE(scalStream,
+                       "schedIdx:{}, opcode:{} , block_next:{}, dst_addr:0x{:x}, "
+                       "src_data:0x{:x}, wait_for_completion:{}",
+                       schedIdx,
+                       command->opcode,
+                       (uint32_t)command->block_next,
+                       (uint64_t)command->dst_addr,
+                       (uint64_t)command->src_data,
+                       (uint32_t)command->wait_for_completion);
+}
+
+void SchedArcCommandsGaudi2::serializeLbwWriteWithFenceDecCommand(hcl::ScalStreamBase& scalStream,
+                                                                  unsigned             schedIdx,
+                                                                  uint32_t             destination,
+                                                                  uint32_t             data,
+                                                                  uint32_t             fenceIndex,
+                                                                  uint32_t             fenceTarget,
+                                                                  bool                 blockUntilCompletion)
+{
+    g2fw::sched_arc_cmd_lbw_write_t* command = reinterpret_cast<g2fw::sched_arc_cmd_lbw_write_t*>(
+        scalStream.getNextPtr(sizeof(g2fw::sched_arc_cmd_lbw_write_t)));
+    memset(command, 0, sizeof(g2fw::sched_arc_cmd_lbw_write_t));
+
+    static const unsigned opcodes[(unsigned)hcl::SchedulersIndex::count] = {
+        g2fw::SCHED_GC_REDUCTION_ARC_CMD_LBW_WRITE,
+        g2fw::SCHED_SCALEUP_SEND_ARC_CMD_LBW_WRITE,
+        g2fw::SCHED_SCALEUP_RECV_ARC_CMD_LBW_WRITE,
+        g2fw::SCHED_SCALEOUT_SEND_ARC_CMD_LBW_WRITE,
+        g2fw::SCHED_SCALEOUT_RECV_ARC_CMD_LBW_WRITE};
+    SET_FIELD(command->opcode, opcodes[schedIdx]);
+    SET_FIELD(command->block_next, blockUntilCompletion);
+    SET_FIELD(command->dst_addr, destination);
+    SET_FIELD(command->src_data, data);
+    SET_FIELD(command->fence, 1);
+    SET_FIELD(command->fence_id, fenceIndex);
+    SET_FIELD(command->target, fenceTarget);
+
+    PRINT_PACKET_TRACE(scalStream,
+                       "schedIdx:{}, opcode:{} , block_next:{}, dst_addr:0x{:x}, "
+                       "src_data:0x{:x}, wait_for_completion:{} fence decrement id:{} to target:{}",
+                       schedIdx,
+                       command->opcode,
+                       (uint32_t)command->block_next,
+                       (uint64_t)command->dst_addr,
+                       (uint64_t)command->src_data,
+                       (uint32_t)command->wait_for_completion,
+                       (uint32_t)command->fence_id,
+                       (uint32_t)command->target);
 }
 
 void SchedArcCommandsGaudi2::serializeLbwBurstWriteCommand(hcl::ScalStreamBase&      scalStream,
@@ -177,7 +226,7 @@ void SchedArcCommandsGaudi2::serializeLbwBurstWriteCommand(hcl::ScalStreamBase& 
     SET_FIELD(command->block_next, blockUntilCompletion);
     SET_FIELD(command->num_lbw_write, destData.size());
 
-    LOG_TRACE(HCL_SUBMIT, "Packets | serializeLbwBurstWriteCommand on stream:{}", *(scalStream.getStreamName()));
+    PRINT_PACKET_TRACE_WITH_COUNTS(scalStream, destData.size(), "");
 
     for (unsigned i = 0; i < destData.size(); i++)
     {
@@ -212,8 +261,8 @@ void SchedArcCommandsGaudi2::serializeDmaCommand(hcl::ScalStreamBase& scalStream
                                                  bool                 isForScaleout,
                                                  bool                 useCasting,
                                                  uint32_t             numberOfRanks,
-                                                 uint32_t             numberOfReproBuffers,
-                                                 uint32_t             indexOfReproBuffer,
+                                                 uint32_t             numberOfSubBuffers,
+                                                 uint32_t             indexOfSubBuffer,
                                                  bool                 is16BitMemcpy,
                                                  uint32_t             secondSoAddress,
                                                  bool                 isBFloat,
@@ -296,15 +345,15 @@ void SchedArcCommandsGaudi2::serializeDmaCommand(hcl::ScalStreamBase& scalStream
     if (dmaType == static_cast<uint32_t>(g2fw::NIC_EDMA_CMD_SIBO_OPS_V3))
     {
         LOG_TRACE(HCL, "SchedArcCommandsGaudi2::serializeDmaCommand First address(0x{:x})", soAddressLSB);
-        auto firstSoIdxBaseIdx        = getSoIdxBaseIdx(soAddressLSB);
+        auto firstSoIdxBaseIdx = getSoIdxBaseIdx(soAddressLSB);
         LOG_TRACE(HCL, "SchedArcCommandsGaudi2::serializeDmaCommand Second address(0x{:x})", secondSoAddress);
-        auto secondSoIdxBaseIdx       = getSoIdxBaseIdx(secondSoAddress);
+        auto                                         secondSoIdxBaseIdx = getSoIdxBaseIdx(secondSoAddress);
         struct g2fw::arc_cmd_nic_edma_sibo_ops_v3_t* edma_ops =
             (struct g2fw::arc_cmd_nic_edma_sibo_ops_v3_t*)&command->sibo_ops_v3;
 
         auto reductionOpCode = getReductionOp(reduceOp);
         SET_FIELD(edma_ops->reduction_op, reductionOpCode);
-        SET_FIELD(edma_ops->sibo_index, (indexOfReproBuffer * numberOfReproBuffers));
+        SET_FIELD(edma_ops->sibo_index, (indexOfSubBuffer * numberOfSubBuffers));
         SET_FIELD(edma_ops->rank_count, (numberOfRanks - 1));
         SET_FIELD(edma_ops->rank_offset_in_sibo, (isForScaleout ? 1 : 0));
         SET_FIELD(edma_ops->pool_id, poolId);
@@ -327,9 +376,9 @@ void SchedArcCommandsGaudi2::serializeDmaCommand(hcl::ScalStreamBase& scalStream
         SET_FIELD(edma_ops->reduction_ind, 1);
         SET_FIELD(edma_ops->context_id, streamCtxtID);
 
-        LOG_TRACE(
-            HCL_SUBMIT,
-            "Packets | serializeDmaCommand with arc_cmd_nic_edma_sibo_ops_v3_t. "
+        PRINT_PACKET_TRACE(
+            scalStream,
+            "with arc_cmd_nic_edma_sibo_ops_v3_t. "
             "schedIdx:{}, Command[0-3]: 0x{:x}, 0x{:x}, 0x{:x}, command address: 0x{:x}, sched_opcode: {}, "
             "cmd_size:{} "
             "engine_group_type:{}, "
@@ -341,7 +390,7 @@ void SchedArcCommandsGaudi2::serializeDmaCommand(hcl::ScalStreamBase& scalStream
             "srcAddr:0x{:x}, dstAddr:0x{:x}, dst_addr_lo:0x{:x}, dst_addr_hi:0x{:x}, src_addr_lo:0x{:x}, "
             "src_addr_hi:0x{:x}, "
             "reduction_ind:{}, reduction_op:{}, local_datasize:{}, sibo_datasize:{}, "
-            "output_datasize:{}, dtype:{}, on stream:{}",
+            "output_datasize:{}, dtype:{}",
             schedIdx,
             *((uint32_t*)(command)),
             *((uint32_t*)(command) + 1),
@@ -374,8 +423,7 @@ void SchedArcCommandsGaudi2::serializeDmaCommand(hcl::ScalStreamBase& scalStream
             (uint32_t)edma_ops->local_datasize,
             (uint32_t)edma_ops->sibo_datasize,
             (uint32_t)edma_ops->output_datasize,
-            (uint32_t)edma_ops->dtype,
-             *(scalStream.getStreamName()));
+            (uint32_t)edma_ops->dtype);
     }
     else if (dmaType == static_cast<uint32_t>(g2fw::NIC_EDMA_CMD_LIN_OPS_V3))
     {
@@ -396,40 +444,39 @@ void SchedArcCommandsGaudi2::serializeDmaCommand(hcl::ScalStreamBase& scalStream
         SET_FIELD(edma_ops->reduction_ind, (useReductionInd ? 1 : 0));
         SET_FIELD(edma_ops->context_id, streamCtxtID);
 
-        LOG_TRACE(HCL_SUBMIT,
-                  "Packets | serializeDmaCommand with arc_cmd_nic_edma_lin_ops_v3_t. "
-                  "schedIdx:{}, Command[0-3]: 0x{:x}, 0x{:x}, 0x{:x}, command address: 0x{:x}, sched_opcode: {}, "
-                  "cmd_size:{} "
-                  "engine_group_type:{}, "
-                  "opcode:{}, "
-                  "sob_address:0x{:x}, transfer_size:{}, "
-                  "srcAddr:0x{:x}, dstAddr:0x{:x}, dst_addr_lo:0x{:x}, dst_addr_hi:0x{:x}, src_addr_lo:0x{:x}, "
-                  "src_addr_hi:0x{:x}, "
-                  "reduction_ind:{}, reduction_op:{}, input_datasize:{}, output_datasize:{}, data_type:{}, "
-                  "on stream:{}",
-                  schedIdx,
-                  *((uint32_t*)(command)),
-                  *((uint32_t*)(command) + 1),
-                  *((uint32_t*)(command) + 2),
-                  (uint64_t)command,
-                  command->opcode,
-                  command->cmd_size,
-                  command->engine_group_type,
-                  (uint32_t)edma_ops->opcode,
-                  (uint64_t)edma_ops->sob_address,
-                  (uint32_t)edma_ops->transfer_size,
-                  (uint64_t)srcAddress,
-                  (uint64_t)destAddress,
-                  (uint64_t)edma_ops->dst_addr_lo,
-                  (uint64_t)edma_ops->dst_addr_hi,
-                  (uint64_t)edma_ops->src_addr_lo,
-                  (uint64_t)edma_ops->src_addr_hi,
-                  (uint32_t)edma_ops->reduction_ind,
-                  (uint32_t)edma_ops->reduction_op,
-                  (uint32_t)edma_ops->input_datasize,
-                  (uint32_t)edma_ops->output_datasize,
-                  (uint32_t)edma_ops->dtype,
-                  *(scalStream.getStreamName()));
+        PRINT_PACKET_TRACE(
+            scalStream,
+            "with arc_cmd_nic_edma_lin_ops_v3_t. "
+            "schedIdx:{}, Command[0-3]: 0x{:x}, 0x{:x}, 0x{:x}, command address: 0x{:x}, sched_opcode: {}, "
+            "cmd_size:{} "
+            "engine_group_type:{}, "
+            "opcode:{}, "
+            "sob_address:0x{:x}, transfer_size:{}, "
+            "srcAddr:0x{:x}, dstAddr:0x{:x}, dst_addr_lo:0x{:x}, dst_addr_hi:0x{:x}, src_addr_lo:0x{:x}, "
+            "src_addr_hi:0x{:x}, "
+            "reduction_ind:{}, reduction_op:{}, input_datasize:{}, output_datasize:{}, data_type:{}",
+            schedIdx,
+            *((uint32_t*)(command)),
+            *((uint32_t*)(command) + 1),
+            *((uint32_t*)(command) + 2),
+            (uint64_t)command,
+            command->opcode,
+            command->cmd_size,
+            command->engine_group_type,
+            (uint32_t)edma_ops->opcode,
+            (uint64_t)edma_ops->sob_address,
+            (uint32_t)edma_ops->transfer_size,
+            (uint64_t)srcAddress,
+            (uint64_t)destAddress,
+            (uint64_t)edma_ops->dst_addr_lo,
+            (uint64_t)edma_ops->dst_addr_hi,
+            (uint64_t)edma_ops->src_addr_lo,
+            (uint64_t)edma_ops->src_addr_hi,
+            (uint32_t)edma_ops->reduction_ind,
+            (uint32_t)edma_ops->reduction_op,
+            (uint32_t)edma_ops->input_datasize,
+            (uint32_t)edma_ops->output_datasize,
+            (uint32_t)edma_ops->dtype);
     }
     else if (dmaType == static_cast<uint32_t>(g2fw::NIC_EDMA_CMD_SIBO_MEMSET_V3))
     {
@@ -439,37 +486,37 @@ void SchedArcCommandsGaudi2::serializeDmaCommand(hcl::ScalStreamBase& scalStream
         SET_FIELD(edma_ops->sob_address, (soAddressLSB & 0x7ffffff));
         SET_FIELD(edma_ops->opcode, dmaType);
         SET_FIELD(edma_ops->transfer_size, size);
-        SET_FIELD(edma_ops->sibo_index, (indexOfReproBuffer * numberOfReproBuffers));
+        SET_FIELD(edma_ops->sibo_index, (indexOfSubBuffer * numberOfSubBuffers));
         SET_FIELD(edma_ops->rank_count, numberOfRanks);
         SET_FIELD(edma_ops->rank_offset_in_sibo, 0);
         SET_FIELD(edma_ops->pool_id, poolId);
         SET_FIELD(edma_ops->context_id, streamCtxtID);
         SET_FIELD(edma_ops->memset_value, memsetValue);
 
-        LOG_TRACE(HCL_SUBMIT,
-                  "Packets | serializeDmaCommand with arc_cmd_nic_edma_sibo_memset_v3_t. "
-                  "schedIdx:{} , Command[0-3]: 0x{:x}, 0x{:x}, 0x{:x}, command address: 0x{:x}, sched_opcode: {}, "
-                  "cmd_size:{} "
-                  "engine_group_type:{}, "
-                  "opcode:{}, sibo_index:{}, rank_offset_in_sibo:{}, pool_id: {} , "
-                  "rank_count:{}, sob_address:0x{:x}, transfer_size:{}, memset_value:{} on stream:{}",
-                  schedIdx,
-                  *((uint32_t*)(command)),
-                  *((uint32_t*)(command) + 1),
-                  *((uint32_t*)(command) + 2),
-                  (uint64_t)command,
-                  command->opcode,
-                  command->cmd_size,
-                  command->engine_group_type,
-                  (uint32_t)edma_ops->opcode,
-                  (uint32_t)edma_ops->sibo_index,
-                  (uint32_t)edma_ops->rank_offset_in_sibo,
-                  (uint32_t)edma_ops->pool_id,
-                  (uint32_t)edma_ops->rank_count,
-                  (uint64_t)edma_ops->sob_address,
-                  (uint32_t)edma_ops->transfer_size,
-                  (uint32_t)edma_ops->memset_value,
-                   *(scalStream.getStreamName()));
+        PRINT_PACKET_TRACE(
+            scalStream,
+            "with arc_cmd_nic_edma_sibo_memset_v3_t. "
+            "schedIdx:{} , Command[0-3]: 0x{:x}, 0x{:x}, 0x{:x}, command address: 0x{:x}, sched_opcode: {}, "
+            "cmd_size:{} "
+            "engine_group_type:{}, "
+            "opcode:{}, sibo_index:{}, rank_offset_in_sibo:{}, pool_id: {} , "
+            "rank_count:{}, sob_address:0x{:x}, transfer_size:{}, memset_value:{}",
+            schedIdx,
+            *((uint32_t*)(command)),
+            *((uint32_t*)(command) + 1),
+            *((uint32_t*)(command) + 2),
+            (uint64_t)command,
+            command->opcode,
+            command->cmd_size,
+            command->engine_group_type,
+            (uint32_t)edma_ops->opcode,
+            (uint32_t)edma_ops->sibo_index,
+            (uint32_t)edma_ops->rank_offset_in_sibo,
+            (uint32_t)edma_ops->pool_id,
+            (uint32_t)edma_ops->rank_count,
+            (uint64_t)edma_ops->sob_address,
+            (uint32_t)edma_ops->transfer_size,
+            (uint32_t)edma_ops->memset_value);
     }
     else  //(dmaType == static_cast<uint32_t>(g2fw::NIC_EDMA_CMD_LIN_MEMSET_V3_2))
     {
@@ -487,33 +534,33 @@ void SchedArcCommandsGaudi2::serializeDmaCommand(hcl::ScalStreamBase& scalStream
         SET_FIELD(edma_ops->dst_addr_hi, (destAddress >> 32));
         SET_FIELD(edma_ops->context_id, streamCtxtID);
         SET_FIELD(edma_ops->memset_value, memsetValue);
-        LOG_TRACE(HCL_SUBMIT,
-                  "Packets | serializeDmaCommand with arc_cmd_nic_edma_lin_memset_v3_2_t. "
-                  "schedIdx:{}, Command[0-3]: 0x{:x}, 0x{:x}, 0x{:x}, command address: 0x{:x}, sched_opcode: {}, "
+        PRINT_PACKET_TRACE(
+            scalStream,
+            "with arc_cmd_nic_edma_lin_memset_v3_2_t. "
+            "schedIdx:{}, Command[0-3]: 0x{:x}, 0x{:x}, 0x{:x}, command address: 0x{:x}, sched_opcode: {}, "
 
-                  "cmd_size:{} "
-                  "engine_group_type:{}, "
-                  "opcode:{}, "
-                  "sob_address:0x{:x}, sob_base:{}, sob_index:{}, transfer_size:{}, "
-                  "dstAddr:0x{:x}, dst_addr_lo:0x{:x}, dst_addr_hi:0x{:x}, memset_value:{} on stream:{}",
-                  schedIdx,
-                  *((uint32_t*)(command)),
-                  *((uint32_t*)(command) + 1),
-                  *((uint32_t*)(command) + 2),
-                  (uint64_t)command,
-                  command->opcode,
-                  command->cmd_size,
-                  command->engine_group_type,
-                  (uint32_t)edma_ops->opcode,
-                  (uint64_t)comp_cfg[edma_ops->sob_base].m_base + (uint64_t)edma_ops->sob_index * 4,
-                  (uint32_t)edma_ops->sob_base,
-                  (uint32_t)edma_ops->sob_index,
-                  (uint32_t)edma_ops->transfer_size,
-                  (uint64_t)destAddress,
-                  (uint64_t)edma_ops->dst_addr_lo,
-                  (uint64_t)edma_ops->dst_addr_hi,
-                  (uint32_t)edma_ops->memset_value,
-                  *(scalStream.getStreamName()));
+            "cmd_size:{} "
+            "engine_group_type:{}, "
+            "opcode:{}, "
+            "sob_address:0x{:x}, sob_base:{}, sob_index:{}, transfer_size:{}, "
+            "dstAddr:0x{:x}, dst_addr_lo:0x{:x}, dst_addr_hi:0x{:x}, memset_value:{}",
+            schedIdx,
+            *((uint32_t*)(command)),
+            *((uint32_t*)(command) + 1),
+            *((uint32_t*)(command) + 2),
+            (uint64_t)command,
+            command->opcode,
+            command->cmd_size,
+            command->engine_group_type,
+            (uint32_t)edma_ops->opcode,
+            (uint64_t)comp_cfg[edma_ops->sob_base].m_base + (uint64_t)edma_ops->sob_index * 4,
+            (uint32_t)edma_ops->sob_base,
+            (uint32_t)edma_ops->sob_index,
+            (uint32_t)edma_ops->transfer_size,
+            (uint64_t)destAddress,
+            (uint64_t)edma_ops->dst_addr_lo,
+            (uint64_t)edma_ops->dst_addr_hi,
+            (uint32_t)edma_ops->memset_value);
     }
 }
 
@@ -581,7 +628,7 @@ void SchedArcCommandsGaudi2::serializePdmaCommand(hcl::ScalStreamBase& scalStrea
     SET_FIELD(command->batch_params->transfer_size, size);
     SET_FIELD(command->batch_count, batchCount);
     SET_FIELD(command->api_id, apiId);
-    auto pdmaCtxtId = getPdmaCtxtId(isDownload, streamIndex);
+    auto pdmaCtxtId = getPdmaStreamCtxtId(isDownload, streamIndex);
     SET_FIELD(command->stream_ctxt_id, pdmaCtxtId);
 
     if (command->has_payload)
@@ -589,20 +636,7 @@ void SchedArcCommandsGaudi2::serializePdmaCommand(hcl::ScalStreamBase& scalStrea
         VERIFY(!command->signal_to_cg, "both cannot be used at the same time");
     }
 
-    LOG_TRACE(HCL_SUBMIT,
-              "Packets | serializePDMACommand schedIdx:{}, on stream:{}",
-              schedIdx,
-              *(scalStream.getStreamName()));
-}
-
-uint8_t SchedArcCommandsGaudi2::getPdmaCtxtId(bool isDownload, unsigned streamIndex)
-{
-    PdmaDirCtx         direction  = isDownload ? PdmaDirCtx::DOWN : PdmaDirCtx::UP;
-    internalStreamType streamType = internalStreamType::INTERNAL_STREAM_TYPE_COLLECTIVE_NETWORK;
-
-    return (((((uint8_t)direction) & ContextEncoding::DIR_MASK) << ContextEncoding::DIR_OFFSET) |
-            (((uint8_t)streamType) & ContextEncoding::TYPE_MASK) << ContextEncoding::TYPE_OFFSET) |
-           ((((uint8_t)streamIndex) & ContextEncoding::STREAM_MASK) << ContextEncoding::STREAM_OFFSET);
+    PRINT_PACKET_TRACE(scalStream, "schedIdx:{}", schedIdx);
 }
 
 void SchedArcCommandsGaudi2::serializeGlobalDmaCommand(hcl::ScalStreamBase&                  scalStream,
@@ -616,9 +650,8 @@ void SchedArcCommandsGaudi2::serializeGlobalDmaCommand(hcl::ScalStreamBase&     
     const unsigned activateAllDwordsMap = (1 << numDwords) - 1;
     // sched_arc_cmd_nic_edma_ops_t with arc_cmd_update_edma_nic_ctxt_v3_t
     // and edma_nic_glbl_ctxt_v3_t
-    const size_t   sizeInBytes          = sizeof(g2fw::sched_arc_cmd_nic_edma_ops_t) +
-                                          sizeof(g2fw::arc_cmd_update_edma_nic_ctxt_v3_t) +
-                                          (numDwords * sizeof(uint32_t));
+    const size_t sizeInBytes = sizeof(g2fw::sched_arc_cmd_nic_edma_ops_t) +
+                               sizeof(g2fw::arc_cmd_update_edma_nic_ctxt_v3_t) + (numDwords * sizeof(uint32_t));
 
     g2fw::sched_arc_cmd_nic_edma_ops_t* command =
         reinterpret_cast<g2fw::sched_arc_cmd_nic_edma_ops_t*>(scalStream.getNextPtr(sizeInBytes));
@@ -651,15 +684,15 @@ void SchedArcCommandsGaudi2::serializeGlobalDmaCommand(hcl::ScalStreamBase&     
         SET_FIELD(edma_ctxt->comp_cfg[i], compCfg);
     }
 
-    LOG_TRACE(
-        HCL_SUBMIT,
-        "Packets | serializeGlobalDmaCommand sched_arc_cmd_nic_edma_ops_t  |  command->opcode:{}, "
+    PRINT_PACKET_TRACE(
+        scalStream,
+        "sched_arc_cmd_nic_edma_ops_t  |  command->opcode:{}, "
         " command->engine_group_type:{}, command->cmd_size:{} "
         "arc_cmd_update_edma_nic_ctxt_v3_t | opcode:{}, update_bitmap:{}, num_dwords:{} "
         "edma_nic_glbl_ctxt_v3_t | baseAddress[0]:0x{:x}, sibo_rank_stride[0]:{}, baseAddress[1]:0x{:x}, "
         "sibo_rank_stride[1]:{}, fwBaseAddress:0x{:x}, sirb_size:{}, "
         "comp_cfg: [0]:0x{:x}, [1]:0x{:x}, [2]:0x{:x}, [3]:0x{:x}, [4]:0x{:x}, [5]:0x{:x}, "
-        "[6]:0x{:x}, [7]:0x{:x} on stream: {}",
+        "[6]:0x{:x}, [7]:0x{:x}",
         command->opcode,
         command->engine_group_type,
         command->cmd_size,
@@ -679,8 +712,7 @@ void SchedArcCommandsGaudi2::serializeGlobalDmaCommand(hcl::ScalStreamBase&     
         ((struct g2fw::edma_nic_glbl_ctxt_v3_t*)(command->edma_ctxt_v3->data))->comp_cfg[4],
         ((struct g2fw::edma_nic_glbl_ctxt_v3_t*)(command->edma_ctxt_v3->data))->comp_cfg[5],
         ((struct g2fw::edma_nic_glbl_ctxt_v3_t*)(command->edma_ctxt_v3->data))->comp_cfg[6],
-        ((struct g2fw::edma_nic_glbl_ctxt_v3_t*)(command->edma_ctxt_v3->data))->comp_cfg[7],
-        *(scalStream.getStreamName()));
+        ((struct g2fw::edma_nic_glbl_ctxt_v3_t*)(command->edma_ctxt_v3->data))->comp_cfg[7]);
 }
 
 void SchedArcCommandsGaudi2::serializeUpdateGlobalContextCommand(hcl::ScalStreamBase&                scalStream,
@@ -696,7 +728,6 @@ void SchedArcCommandsGaudi2::serializeUpdateGlobalContextCommand(hcl::ScalStream
     struct g2fw::nic_glbl_ctxt_t*    glbl_ctxt;
     struct g2fw::nic_glbl_ctxt_v2_t* glbl_ctxt_v2;
 
-    // Use RR flow as default in order to enable RR and non RR mode to be able to work simultaneously
     size += sizeof(g2fw::nic_glbl_ctxt_v2_t);
 
     g2fw::sched_arc_cmd_update_nic_glbl_ctxt_t* command =
@@ -709,8 +740,7 @@ void SchedArcCommandsGaudi2::serializeUpdateGlobalContextCommand(hcl::ScalStream
     SET_FIELD(command->cmd_update_glbl_ctxt.nic_opcode, g2fw::NIC_CMD_UPDATE_GLBL_CTXT);
     SET_FIELD(command->cmd_update_glbl_ctxt.num_glbl_ctxt, contexts.size());
 
-    // Use RR flow as default in order to enable RR and non RR mode to be able to work simultaneously
-    SET_FIELD(command->cmd_update_glbl_ctxt.update_bitmap, 0x3F);  // all 6 dwords involved for RR
+    SET_FIELD(command->cmd_update_glbl_ctxt.update_bitmap, 0x3F);  // all 6 dwords involved
     SET_FIELD(command->so_lbw_address, soAddressLSB);
 
     glbl_ctxt = (struct g2fw::nic_glbl_ctxt_t*)&command->glbl_ctxt;
@@ -721,7 +751,6 @@ void SchedArcCommandsGaudi2::serializeUpdateGlobalContextCommand(hcl::ScalStream
         glbl_ctxt++;
     }
 
-    // Use RR flow as default in order to enable RR and non RR mode to be able to work simultaneously
     glbl_ctxt_v2 = (struct g2fw::nic_glbl_ctxt_v2_t*)(glbl_ctxt);  // starting from the point that glbl_ctxt finished
 
     SET_FIELD(glbl_ctxt_v2->sib_order_base_addr, sib_order_base_addr);
@@ -729,23 +758,23 @@ void SchedArcCommandsGaudi2::serializeUpdateGlobalContextCommand(hcl::ScalStream
     SET_FIELD(glbl_ctxt_v2->sibo_rank_stride, sibo_rank_stride);
     SET_FIELD(glbl_ctxt_v2->siba_stride, siba_stride);
 
-    LOG_TRACE(HCL_SUBMIT,
-              "Packets | serializeUpdateGlobalContextCommand  sched_arc_cmd_update_nic_glbl_ctxt_t  |  "
-              "command->opcode:{}, "
-              " command->engine_group_type:{}, command->cmd_size:{}, command->so_lbw_address:0x{:x}, "
-              "update_bitmap:0x{:x} "
-              "nic_glbl_ctxt_v2_t | sib_order_base_addr:0x{:x}, sib_acc_base_addr:0x{:x}, sibo_rank_stride:{}, "
-              "siba_stride:{} on stream:{}",
-              command->opcode,
-              command->engine_group_type,
-              command->cmd_size,
-              (uint64_t)command->cmd_update_glbl_ctxt.update_bitmap,
-              (uint64_t)command->so_lbw_address,
-              glbl_ctxt_v2->sib_order_base_addr,
-              glbl_ctxt_v2->sib_acc_base_addr,
-              glbl_ctxt_v2->sibo_rank_stride,
-              glbl_ctxt_v2->siba_stride,
-               *(scalStream.getStreamName()));
+    PRINT_PACKET_TRACE(
+        scalStream,
+        "sched_arc_cmd_update_nic_glbl_ctxt_t  |  "
+        "command->opcode:{}, "
+        " command->engine_group_type:{}, command->cmd_size:{}, command->so_lbw_address:0x{:x}, "
+        "update_bitmap:0x{:x} "
+        "nic_glbl_ctxt_v2_t | sib_order_base_addr:0x{:x}, sib_acc_base_addr:0x{:x}, sibo_rank_stride:{}, "
+        "siba_stride:{}",
+        command->opcode,
+        command->engine_group_type,
+        command->cmd_size,
+        (uint64_t)command->cmd_update_glbl_ctxt.update_bitmap,
+        (uint64_t)command->so_lbw_address,
+        glbl_ctxt_v2->sib_order_base_addr,
+        glbl_ctxt_v2->sib_acc_base_addr,
+        glbl_ctxt_v2->sibo_rank_stride,
+        glbl_ctxt_v2->siba_stride);
 }
 
 void SchedArcCommandsGaudi2::serializeUpdateGlobalContextScaleOutCommand(hcl::ScalStreamBase& scalStream,
@@ -757,7 +786,6 @@ void SchedArcCommandsGaudi2::serializeUpdateGlobalContextScaleOutCommand(hcl::Sc
     size_t                        size   = dwords * sizeof(uint32_t);
     struct g2fw::nic_glbl_ctxt_t* glbl_ctxt;
 
-    // Use RR flow as default in order to enable RR and non RR mode to be able to work simultaneously
     size += sizeof(g2fw::nic_glbl_ctxt_v2_t);
 
     g2fw::sched_arc_cmd_update_nic_glbl_ctxt_t* command =
@@ -806,31 +834,30 @@ void SchedArcCommandsGaudi2::serializeUpdateGlobalContextScaleOutCommand(hcl::Sc
         glbl_ctxt++;
     }
 
-    LOG_TRACE(HCL_SUBMIT,
-              "Packets | serializeUpdateGlobalContextScaleOutCommand sched_arc_cmd_update_nic_glbl_ctxt_t  |  "
-              "command->opcode:{}, "
-              " command->engine_group_type:{}, command->cmd_size:{}, command->so_lbw_address:0x{:x} "
-              " command->scaleout_cmd_update_glbl_ctxt.nic_opcode: {} "
-              " command->scaleout_cmd_update_glbl_ctxt.num_glbl_ctxt: {} "
-              " command->scaleout_cmd_update_glbl_ctxt.start_nic_idx: {} on stream:{}",
-              command->opcode,
-              command->engine_group_type,
-              command->cmd_size,
-              (uint64_t)command->so_lbw_address,
-              command->scaleout_cmd_update_glbl_ctxt.nic_opcode,
-              command->scaleout_cmd_update_glbl_ctxt.num_glbl_ctxt,
-              command->scaleout_cmd_update_glbl_ctxt.start_nic_idx,
-               *(scalStream.getStreamName()));
+    PRINT_PACKET_TRACE(scalStream,
+                       "sched_arc_cmd_update_nic_glbl_ctxt_t  |  "
+                       "command->opcode:{}, "
+                       " command->engine_group_type:{}, command->cmd_size:{}, command->so_lbw_address:0x{:x} "
+                       " command->scaleout_cmd_update_glbl_ctxt.nic_opcode: {} "
+                       " command->scaleout_cmd_update_glbl_ctxt.num_glbl_ctxt: {} "
+                       " command->scaleout_cmd_update_glbl_ctxt.start_nic_idx: {}",
+                       command->opcode,
+                       command->engine_group_type,
+                       command->cmd_size,
+                       (uint64_t)command->so_lbw_address,
+                       command->scaleout_cmd_update_glbl_ctxt.nic_opcode,
+                       command->scaleout_cmd_update_glbl_ctxt.num_glbl_ctxt,
+                       command->scaleout_cmd_update_glbl_ctxt.start_nic_idx);
 }
 
-void SchedArcCommandsGaudi2::serializeUpdateCollectiveContextCommand(hcl::ScalStreamBase&           scalStream,
-                                                                     bool                           isSend,
-                                                                     unsigned                       collectiveContextIndex,
-                                                                     unsigned                       commDescIndex,
+void SchedArcCommandsGaudi2::serializeUpdateCollectiveContextCommand(hcl::ScalStreamBase& scalStream,
+                                                                     bool                 isSend,
+                                                                     unsigned             collectiveContextIndex,
+                                                                     unsigned             commDescIndex,
                                                                      ContextManager::ContextValues& contextValues)
 {
-    size_t dwordsNumForUpdate = contextValues.second;
-    size_t size               = (2 + dwordsNumForUpdate) * sizeof(uint32_t);
+    size_t                                      dwordsNumForUpdate = contextValues.second;
+    size_t                                      size               = (2 + dwordsNumForUpdate) * sizeof(uint32_t);
     g2fw::sched_arc_cmd_update_nic_coll_ctxt_t* command =
         reinterpret_cast<g2fw::sched_arc_cmd_update_nic_coll_ctxt_t*>(scalStream.getNextPtr(size));
     memset(command, 0, size);
@@ -850,13 +877,12 @@ void SchedArcCommandsGaudi2::serializeUpdateCollectiveContextCommand(hcl::ScalSt
     SET_FIELD(command->cmd_update_coll_ctxt.update_rri_ce, 0);
     SET_FIELD(command->cmd_update_coll_ctxt.update_bitmap, 0);
 
-    LOG_INFO(HCL_SUBMIT,
-             "Packets | serializeCollectiveContextUpdate for collectiveContext = {}, "
-             "(commDescIndex={}, {} dwords): on stream:{}",
-             collectiveContextIndex,
-             commDescIndex,
-             dwordsNumForUpdate,
-              *(scalStream.getStreamName()));
+    PRINT_PACKET_TRACE(scalStream,
+                       "for collectiveContext = {}, "
+                       "(commDescIndex={}, {} dwords)",
+                       collectiveContextIndex,
+                       commDescIndex,
+                       dwordsNumForUpdate);
 
     int i = 0;
     for (size_t dword = 0; dword < contextValues.first.size(); dword++)
@@ -874,7 +900,8 @@ void SchedArcCommandsGaudi2::serializeUpdateCollectiveContextCommand(hcl::ScalSt
                 SET_FIELD(command->cmd_update_coll_ctxt.update_rri_ce, 1);
                 break;
             default:
-                SET_FIELD(command->cmd_update_coll_ctxt.update_bitmap, (command->cmd_update_coll_ctxt.update_bitmap | (1 << (uint8_t)dword)));
+                SET_FIELD(command->cmd_update_coll_ctxt.update_bitmap,
+                          (command->cmd_update_coll_ctxt.update_bitmap | (1 << (uint8_t)dword)));
                 break;
         }
         SET_FIELD(command->dwords[i].dword_value, contextValueUpdater.value);
@@ -935,28 +962,28 @@ void SchedArcCommandsGaudi2::serializeCollectiveSendShortCommand(hcl::ScalStream
         std::memcpy(&cmd_coll_ops_short->buffer_size, &bufferSize, sizeof(uint32_t));
     }
 
-    LOG_TRACE(HCL_SUBMIT,
-              "Packets | serializeCollectiveSendShortCommand sched_arc_cmd_nic_coll_ops_t  |  command->opcode:{}, "
-              " command->engine_group_type:{}, command->cmd_size:{}, "
-              " cache_line_count:{}, cache_line_remainder:{}, element_remainder:{}, "
-              " sob_index:{}, has_size:{}, notify_rndv_ack:{}, wait_for_rndv_acks:{} coll_ctxt_id:{} nic_opcode:{}, "
-              " comm_desc_index:{}, buffer_addr_lsb:0x{:x}, buffer_size:{} on stream:{}",
-              command->opcode,
-              command->engine_group_type,
-              command->cmd_size,
-              cmd_coll_ops_short->cache_line_count,
-              cmd_coll_ops_short->cache_line_remainder,
-              cmd_coll_ops_short->element_remainder,
-              cmd_coll_ops_short->sob_index,
-              cmd_coll_ops_short->has_size,
-              cmd_coll_ops_short->notify_rndv_ack,
-              cmd_coll_ops_short->wait_for_rndv_acks,
-              cmd_coll_ops_short->coll_ctxt_id,
-              cmd_coll_ops_short->nic_opcode,
-              cmd_coll_ops_short->comm_desc_index,
-              cmd_coll_ops_short->buffer_addr_lsb,
-              bufferSize,
-               *(scalStream.getStreamName()));
+    PRINT_PACKET_TRACE(
+        scalStream,
+        "sched_arc_cmd_nic_coll_ops_t  |  command->opcode:{}, "
+        " command->engine_group_type:{}, command->cmd_size:{}, "
+        " cache_line_count:{}, cache_line_remainder:{}, element_remainder:{}, "
+        " sob_index:{}, has_size:{}, notify_rndv_ack:{}, wait_for_rndv_acks:{} coll_ctxt_id:{} nic_opcode:{}, "
+        " comm_desc_index:{}, buffer_addr_lsb:0x{:x}, buffer_size:{}",
+        command->opcode,
+        command->engine_group_type,
+        command->cmd_size,
+        cmd_coll_ops_short->cache_line_count,
+        cmd_coll_ops_short->cache_line_remainder,
+        cmd_coll_ops_short->element_remainder,
+        cmd_coll_ops_short->sob_index,
+        cmd_coll_ops_short->has_size,
+        cmd_coll_ops_short->notify_rndv_ack,
+        cmd_coll_ops_short->wait_for_rndv_acks,
+        cmd_coll_ops_short->coll_ctxt_id,
+        cmd_coll_ops_short->nic_opcode,
+        cmd_coll_ops_short->comm_desc_index,
+        cmd_coll_ops_short->buffer_addr_lsb,
+        bufferSize);
 }
 
 void SchedArcCommandsGaudi2::serializeCollectiveRecvShortInOrderCommand(hcl::ScalStreamBase& scalStream,
@@ -967,12 +994,14 @@ void SchedArcCommandsGaudi2::serializeCollectiveRecvShortInOrderCommand(hcl::Sca
                                                                         uint32_t             cacheLineCount,
                                                                         uint32_t             currentRank,
                                                                         uint32_t             accuIndex,
-                                                                        uint32_t             rrIndex,
+                                                                        uint32_t             subBuffIndex,
                                                                         uint32_t             numOfRanks,
                                                                         uint8_t              nicsBitmap,
-                                                                        uint32_t             poolId)
+                                                                        uint32_t             poolId,
+                                                                        bool                 notifyRndvAck,
+                                                                        bool                 waitForRndvAcks)
 {
-    size_t                                              dwords = 3;  // 1 for the sched_arc, 2 for the arc_cmd
+    size_t                                                 dwords = 3;  // 1 for the sched_arc, 2 for the arc_cmd
     struct g2fw::arc_cmd_coll_ops_recv_short_inorder_v2_t* cmd_coll_ops_short;
 
     g2fw::sched_arc_cmd_nic_coll_ops_t* command =
@@ -993,10 +1022,12 @@ void SchedArcCommandsGaudi2::serializeCollectiveRecvShortInOrderCommand(hcl::Sca
     SET_FIELD(cmd_coll_ops_short->nic_opcode, 5);  // NIC_CMD_COLL_OPS_RECV_INORDER_V2
     SET_FIELD(cmd_coll_ops_short->coll_ctxt_id, collectiveContextIndex);
     SET_FIELD(cmd_coll_ops_short->siba_index, accuIndex);
-    SET_FIELD(cmd_coll_ops_short->sibo_index, rrIndex);
+    SET_FIELD(cmd_coll_ops_short->sibo_index, subBuffIndex);
     SET_FIELD(cmd_coll_ops_short->num_ranks, 0);
     SET_FIELD(cmd_coll_ops_short->pool_id, poolId);
     SET_FIELD(cmd_coll_ops_short->reduction_opcode, 0);
+    SET_FIELD(cmd_coll_ops_short->notify_rndv_ack, notifyRndvAck);
+    SET_FIELD(cmd_coll_ops_short->wait_for_rndv_acks, waitForRndvAcks);
 
     /**<
      * Reduction parameters to be used when accumulating data into
@@ -1009,28 +1040,29 @@ void SchedArcCommandsGaudi2::serializeCollectiveRecvShortInOrderCommand(hcl::Sca
      * bit [9]:   Reduction Operation
      */
 
-    LOG_TRACE(
-        HCL_SUBMIT,
-        "Packets | serializeCollectiveRecvShortInOrderCommand  sched_arc_cmd_nic_coll_ops_t  |  command->opcode:{}, "
-        " command->engine_group_type:{}, command->cmd_size:{} "
-        "arc_cmd_coll_ops_recv_short_inorder_v2_t | cache_line_count:{}, sob_index:{}, "
-        "local_rank_index:{}, comm_desc_index:{}, nic_opcode:{}, pool_id:{}, "
-        "coll_ctxt_id:{}, siba_index:{}, sibo_index:{}, num_ranks:{}, reduction_opcode:{} on stream:{}",
-        command->opcode,
-        command->engine_group_type,
-        command->cmd_size,
-        cmd_coll_ops_short->cache_line_count,
-        cmd_coll_ops_short->sob_index,
-        cmd_coll_ops_short->local_rank_index,
-        cmd_coll_ops_short->comm_desc_index,
-        cmd_coll_ops_short->nic_opcode,
-        cmd_coll_ops_short->pool_id,
-        cmd_coll_ops_short->coll_ctxt_id,
-        cmd_coll_ops_short->siba_index,
-        cmd_coll_ops_short->sibo_index,
-        cmd_coll_ops_short->num_ranks,
-        cmd_coll_ops_short->reduction_opcode,
-         *(scalStream.getStreamName()));
+    PRINT_PACKET_TRACE(scalStream,
+                       "sched_arc_cmd_nic_coll_ops_t  |  command->opcode:{}, "
+                       " command->engine_group_type:{}, command->cmd_size:{} "
+                       "arc_cmd_coll_ops_recv_short_inorder_v2_t | cache_line_count:{}, sob_index:{}, "
+                       "local_rank_index:{}, comm_desc_index:{}, nic_opcode:{}, pool_id:{}, "
+                       "coll_ctxt_id:{}, siba_index:{}, sibo_index:{}, num_ranks:{}, reduction_opcode:{}, "
+                       "notify_rndv_ack:{}, wait_for_rndv_acks:{}",
+                       command->opcode,
+                       command->engine_group_type,
+                       command->cmd_size,
+                       cmd_coll_ops_short->cache_line_count,
+                       cmd_coll_ops_short->sob_index,
+                       cmd_coll_ops_short->local_rank_index,
+                       cmd_coll_ops_short->comm_desc_index,
+                       cmd_coll_ops_short->nic_opcode,
+                       cmd_coll_ops_short->pool_id,
+                       cmd_coll_ops_short->coll_ctxt_id,
+                       cmd_coll_ops_short->siba_index,
+                       cmd_coll_ops_short->sibo_index,
+                       cmd_coll_ops_short->num_ranks,
+                       cmd_coll_ops_short->reduction_opcode,
+                       cmd_coll_ops_short->notify_rndv_ack,
+                       cmd_coll_ops_short->wait_for_rndv_acks);
 }
 
 void SchedArcCommandsGaudi2::serializeCollectiveSendLongCommand(hcl::ScalStreamBase& scalStream,
@@ -1086,41 +1118,41 @@ void SchedArcCommandsGaudi2::serializeCollectiveSendLongCommand(hcl::ScalStreamB
         std::memcpy(&cmd_coll_ops_long->buffer_size, &bufferSize, sizeof(uint32_t));
     }
 
-    LOG_TRACE(HCL_SUBMIT,
-              "Packets | serializeCollectiveSendLongCommand sched_arc_cmd_nic_coll_ops_t  |  command->opcode:{}, "
-              " command->engine_group_type:{}, command->cmd_size:{}, "
-              " cache_line_count:{}, cache_line_remainder:{}, element_remainder:{}, "
-              " sob_index:{}, has_size:{}, notify_rndv_ack:{}, wait_for_rndv_acks:{} coll_ctxt_id:{} nic_opcode:{}, "
-              " comm_desc_index:{}, buffer_addr_lsb:0x{:x}, addr_msb:0x{:x} buffer_size:{} on stream:{}",
-              command->opcode,
-              command->engine_group_type,
-              command->cmd_size,
-              cmd_coll_ops_long->cache_line_count,
-              cmd_coll_ops_long->cache_line_remainder,
-              cmd_coll_ops_long->element_remainder,
-              cmd_coll_ops_long->sob_index,
-              cmd_coll_ops_long->has_size,
-              cmd_coll_ops_long->notify_rndv_ack,
-              cmd_coll_ops_long->wait_for_rndv_acks,
-              cmd_coll_ops_long->coll_ctxt_id,
-              cmd_coll_ops_long->nic_opcode,
-              cmd_coll_ops_long->comm_desc_index,
-              cmd_coll_ops_long->buffer_addr_lsb,
-              cmd_coll_ops_long->addr_msb,
-              bufferSize,
-               *(scalStream.getStreamName()));
+    PRINT_PACKET_TRACE(
+        scalStream,
+        "sched_arc_cmd_nic_coll_ops_t  |  command->opcode:{}, "
+        " command->engine_group_type:{}, command->cmd_size:{}, "
+        " cache_line_count:{}, cache_line_remainder:{}, element_remainder:{}, "
+        " sob_index:{}, has_size:{}, notify_rndv_ack:{}, wait_for_rndv_acks:{} coll_ctxt_id:{} nic_opcode:{}, "
+        " comm_desc_index:{}, buffer_addr_lsb:0x{:x}, addr_msb:0x{:x} buffer_size:{}",
+        command->opcode,
+        command->engine_group_type,
+        command->cmd_size,
+        cmd_coll_ops_long->cache_line_count,
+        cmd_coll_ops_long->cache_line_remainder,
+        cmd_coll_ops_long->element_remainder,
+        cmd_coll_ops_long->sob_index,
+        cmd_coll_ops_long->has_size,
+        cmd_coll_ops_long->notify_rndv_ack,
+        cmd_coll_ops_long->wait_for_rndv_acks,
+        cmd_coll_ops_long->coll_ctxt_id,
+        cmd_coll_ops_long->nic_opcode,
+        cmd_coll_ops_long->comm_desc_index,
+        cmd_coll_ops_long->buffer_addr_lsb,
+        cmd_coll_ops_long->addr_msb,
+        bufferSize);
 }
 
-void SchedArcCommandsGaudi2::serializeCollectiveSendScaleOutCommand(hcl::ScalStreamBase&           scalStream,
-                                                                    unsigned                       collectiveContextIndex,
-                                                                    bool                           isSend,
-                                                                    bool                           hasBufferSize,
-                                                                    uint32_t                       bufferSize,
-                                                                    unsigned                       syncObjectAddressIndex,
-                                                                    uint32_t                       cacheLineCount,
-                                                                    uint32_t                       cacheLineRemainder,
-                                                                    uint8_t                        elementRemainder,
-                                                                    uint64_t                       address,
+void SchedArcCommandsGaudi2::serializeCollectiveSendScaleOutCommand(hcl::ScalStreamBase& scalStream,
+                                                                    unsigned             collectiveContextIndex,
+                                                                    bool                 isSend,
+                                                                    bool                 hasBufferSize,
+                                                                    uint32_t             bufferSize,
+                                                                    unsigned             syncObjectAddressIndex,
+                                                                    uint32_t             cacheLineCount,
+                                                                    uint32_t             cacheLineRemainder,
+                                                                    uint8_t              elementRemainder,
+                                                                    uint64_t             address,
                                                                     ContextManager::ContextValues& contextValues,
                                                                     std::array<uint16_t, 4>&       qpnDesc,
                                                                     bool                           notifyRndvAck,
@@ -1227,34 +1259,36 @@ void SchedArcCommandsGaudi2::serializeCollectiveSendScaleOutCommand(hcl::ScalStr
     SET_FIELD(command->cmd_coll_ops_scaleout.notify_rndv_ack, notifyRndvAck);
     SET_FIELD(command->cmd_coll_ops_scaleout.wait_for_rndv_acks, waitForRndvAcks);
 
-    LOG_TRACE(HCL_SUBMIT,
-              "Packets | serializeCollectiveSendScaleOutCommand sched_arc_cmd_nic_coll_ops_scaleout_t  |  "
-              "size:{}, isSend:{}, (rsi, subnic0_qpn, subnic1_qpn, subnic2_qpn)=({},{},{},{}), "
-              "command->opcode:{}, command->engine_group_type:{}, command->cmd_size:{}, qpn_desc_count:{}, "
-              " cache_line_count:{}, cache_line_remainder:{}, element_remainder:{}, sob_index:{}, "
-              "has_size:{}, notify_rndv_ack:{}, wait_for_rndv_acks:{} coll_ctxt_id:{} nic_opcode:{}, "
-              " buffer_addr_lsb:0x{:x}, buffer_size:{}, num_dwords_bitmask:{} update_bitmask:0x{:x} on stream:{}",
-              size,
-              isSend,
-              qpnDesc[0], qpnDesc[1], qpnDesc[2], qpnDesc[3],
-              command->opcode,
-              command->engine_group_type,
-              command->cmd_size,
-              command->cmd_coll_ops_scaleout.qpn_desc_count,
-              command->cmd_coll_ops_scaleout.cache_line_count,
-              command->cmd_coll_ops_scaleout.cache_line_remainder,
-              command->cmd_coll_ops_scaleout.element_remainder,
-              command->cmd_coll_ops_scaleout.sob_index,
-              command->cmd_coll_ops_scaleout.has_size,
-              command->cmd_coll_ops_scaleout.notify_rndv_ack,
-              command->cmd_coll_ops_scaleout.wait_for_rndv_acks,
-              command->cmd_coll_ops_scaleout.coll_ctxt_id,
-              command->cmd_coll_ops_scaleout.nic_opcode,
-              command->cmd_coll_ops_scaleout.buffer_addr_lsb,
-              bufferSize,
-              command->cmd_coll_ops_scaleout.num_dwords_bitmask,
-              command->cmd_coll_ops_scaleout.update_bitmask,
-               *(scalStream.getStreamName()));
+    PRINT_PACKET_TRACE(scalStream,
+                       "sched_arc_cmd_nic_coll_ops_scaleout_t  |  "
+                       "size:{}, isSend:{}, (rsi, subnic0_qpn, subnic1_qpn, subnic2_qpn)=({},{},{},{}), "
+                       "command->opcode:{}, command->engine_group_type:{}, command->cmd_size:{}, qpn_desc_count:{}, "
+                       " cache_line_count:{}, cache_line_remainder:{}, element_remainder:{}, sob_index:{}, "
+                       "has_size:{}, notify_rndv_ack:{}, wait_for_rndv_acks:{} coll_ctxt_id:{} nic_opcode:{}, "
+                       " buffer_addr_lsb:0x{:x}, buffer_size:{}, num_dwords_bitmask:{} update_bitmask:0x{:x}",
+                       size,
+                       isSend,
+                       qpnDesc[0],
+                       qpnDesc[1],
+                       qpnDesc[2],
+                       qpnDesc[3],
+                       command->opcode,
+                       command->engine_group_type,
+                       command->cmd_size,
+                       command->cmd_coll_ops_scaleout.qpn_desc_count,
+                       command->cmd_coll_ops_scaleout.cache_line_count,
+                       command->cmd_coll_ops_scaleout.cache_line_remainder,
+                       command->cmd_coll_ops_scaleout.element_remainder,
+                       command->cmd_coll_ops_scaleout.sob_index,
+                       command->cmd_coll_ops_scaleout.has_size,
+                       command->cmd_coll_ops_scaleout.notify_rndv_ack,
+                       command->cmd_coll_ops_scaleout.wait_for_rndv_acks,
+                       command->cmd_coll_ops_scaleout.coll_ctxt_id,
+                       command->cmd_coll_ops_scaleout.nic_opcode,
+                       command->cmd_coll_ops_scaleout.buffer_addr_lsb,
+                       bufferSize,
+                       command->cmd_coll_ops_scaleout.num_dwords_bitmask,
+                       command->cmd_coll_ops_scaleout.update_bitmask);
 }
 
 void SchedArcCommandsGaudi2::serializeUserSendCommand(std::vector<uint32_t>& out,
@@ -1380,13 +1414,14 @@ void SchedArcCommandsGaudi2::serializeNicPassthroughCommand(hcl::ScalStreamBase&
     command->required_q_credits_inbytes = credits;
 
     VERIFY(records.size() > 0, "Tried to serialize NIC_PASSTHROUGH command with no records!");
+    PRINT_PACKET_TRACE(scalStream, "");
     LOG_INFO(HCL,
              "Adding {} records to nic passthrough command (size = {} dwords, credits = {}), "
              "on stream:{}",
              records.size(),
              dwords,
              credits,
-              *(scalStream.getStreamName()));
+             *(scalStream.getStreamName()));
 
     uint32_t* ptr = (uint32_t*)command->passthrough_data;
     for (size_t i = 0; i < records.size(); i++)

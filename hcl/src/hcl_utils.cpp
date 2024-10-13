@@ -1,20 +1,20 @@
 #include "hcl_utils.h"
 
-#include <execinfo.h>               // for backtrace, backtrace_symbols
-#include <ifaddrs.h>                // for ifaddrs, freeifaddrs, getifaddrs
-#include <linux/ethtool.h>          // for ethtool_drvinfo, ETHTOOL_GDRVINFO
-#include <linux/sockios.h>          // for SIOCETHTOOL
-#include <net/if.h>                 // for ifreq, ifr_data, ifr_name
-#include <netinet/in.h>             // for IPPROTO_IP, sockaddr_in
-#include <signal.h>                 // for sigaction, sa_handler, sigemptyset
-#include <cstdint>                  // for uint64_t, uint32_t
-#include <cstdlib>                  // for free
-#include <sys/ioctl.h>              // for ioctl
-#include <sys/types.h>              // for off_t
-#include <string>                   // for string, allocator, basic_string
-#include <utility>                  // for pair
-#include "hlthunk.h"                // for hlthunk_host_memory_map, hlthunk_mem...
-#include "hcl_log_manager.h"        // for LOG_*
+#include <execinfo.h>         // for backtrace, backtrace_symbols
+#include <ifaddrs.h>          // for ifaddrs, freeifaddrs, getifaddrs
+#include <linux/ethtool.h>    // for ethtool_drvinfo, ETHTOOL_GDRVINFO
+#include <linux/sockios.h>    // for SIOCETHTOOL
+#include <net/if.h>           // for ifreq, ifr_data, ifr_name
+#include <netinet/in.h>       // for IPPROTO_IP, sockaddr_in
+#include <signal.h>           // for sigaction, sa_handler, sigemptyset
+#include <cstdint>            // for uint64_t, uint32_t
+#include <cstdlib>            // for free
+#include <sys/ioctl.h>        // for ioctl
+#include <sys/types.h>        // for off_t
+#include <string>             // for string, allocator, basic_string
+#include <utility>            // for pair
+#include "hlthunk.h"          // for hlthunk_host_memory_map, hlthunk_mem...
+#include "hcl_log_manager.h"  // for LOG_*
 
 std::array<int, (unsigned)HLLOG_ENUM_TYPE_NAME::LOG_MAX> g_logContext = {};
 
@@ -56,7 +56,7 @@ void free_mem_mapped_to_device(void* hostAddr, int length, uint64_t deviceHandle
     if (deviceHandle && fd != -1)
     {
         int rc = hlthunk_memory_unmap(fd, deviceHandle);
-        VERIFY( rc == 0, "hlthunk_memory_unmap() failed: {}", rc);
+        VERIFY(rc == 0, "hlthunk_memory_unmap() failed: {}", rc);
     }
 
     munmap(hostAddr, length);
@@ -132,7 +132,7 @@ std::string getMemoryInfo()
     meminfo.close();
 
     // Extract the memory values from the strings
-    int                totalKB = 0, freeKB = 0,  availableKB = 0;
+    int                totalKB = 0, freeKB = 0, availableKB = 0;
     std::istringstream totalStream(totalMemory);
     totalStream >> totalMemory >> totalKB;
     std::istringstream freeStream(freeMemory);
@@ -175,11 +175,9 @@ std::string getMemoryInfo()
 
     // Construct and return the memory information string
     std::stringstream result;
-    result << "Memory - Total: " << totalKB / 1024 << " MB "
-           << "Used: " << usedKB / 1024 << " MB "
-           << "Free: " << freeKB / 1024 << " MB "
-           << "Available: " << availableKB / 1024 << " MB "
-           << "Process[" << pid << "]: " << processMemory / 1024 << " MB";
+    result << "Memory - Total: " << totalKB / 1024 << " MB " << "Used: " << usedKB / 1024 << " MB "
+           << "Free: " << freeKB / 1024 << " MB " << "Available: " << availableKB / 1024 << " MB " << "Process[" << pid
+           << "]: " << processMemory / 1024 << " MB";
     return result.str();
 }
 

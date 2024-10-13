@@ -12,13 +12,13 @@ HclCollectiveMemHandlerGaudi2::HclCollectiveMemHandlerGaudi2(int                
 {
 }
 
-void HclCollectiveMemHandlerGaudi2::generateBaseAddressOrRRIdx(SliceState&       sliceState,
-                                                               unsigned int&     sliceIter,
-                                                               BoxNumInfo&       boxNumInfo,
-                                                               HCL_CollectiveOp& currentOp,
-                                                               uint64_t&         offset,
-                                                               uint64_t&         baseAddress,
-                                                               uint32_t&         rrIndex)
+void HclCollectiveMemHandlerGaudi2::generateBaseAddressOrSubBuffIdx(SliceState&       sliceState,
+                                                                    unsigned int&     sliceIter,
+                                                                    BoxNumInfo&       boxNumInfo,
+                                                                    HCL_CollectiveOp& currentOp,
+                                                                    uint64_t&         offset,
+                                                                    uint64_t&         baseAddress,
+                                                                    uint32_t&         subBuffIndex)
 {
     if (!sliceState.m_isReductionCollective || currentOp == eHCLAllGather || currentOp == eHCLGather)
     {
@@ -28,10 +28,9 @@ void HclCollectiveMemHandlerGaudi2::generateBaseAddressOrRRIdx(SliceState&      
     }
     else
     {
-        // Current RR implementation work in granularity of 8
-        rrIndex =
-            m_addressGenerator.generateScaleUpRecvIndices(sliceState, m_archStreamId) / RR_BUFFER_GRANULARITY_SCALEUP;
-        LOG_HCL_TRACE(HCL, "Setting scale-up receive index to {}", rrIndex);
+        subBuffIndex = m_addressGenerator.generateScaleUpRecvIndices(sliceState, m_archStreamId) /
+                       DeviceBufferManager::getFactor(SCALEUP_AND_ALL2ALL_POOL);
+        LOG_HCL_TRACE(HCL, "Setting scale-up receive index to {}", subBuffIndex);
     }
 }
 
@@ -49,10 +48,10 @@ void HclCollectiveMemHandlerGaudi2::memsetIMBs(hcl::IntermediateBufferContainer*
                                                hcclDataType_t                    dataType)
 {
     // get relevant slice
-    unsigned indexOfReproBuffer = m_intermediateBufferManager.getSliceId(poolId, m_streamId);
+    unsigned indexOfSubBuffer = m_intermediateBufferManager.getSliceId(poolId, m_streamId);
 
     // get correct index by relevant granularity
-    indexOfReproBuffer /= m_intermediateBufferManager.getFactor(poolId);
+    indexOfSubBuffer /= m_intermediateBufferManager.getFactor(poolId);
 
     if (m_intermediateBufferManager.bufferExpired(poolId))
     {
@@ -67,7 +66,7 @@ void HclCollectiveMemHandlerGaudi2::memsetIMBs(hcl::IntermediateBufferContainer*
         unsigned    initialOffset = 0;
         hcclRedOp_t effectiveOp   = sendSliceState.m_reduceOp;
 
-        if (poolId == SCALEOUT_RR_POOL)
+        if (poolId == SCALEOUT_POOL)
         {
             if (sendSliceState.m_16BitReduction)
             {
@@ -84,22 +83,22 @@ void HclCollectiveMemHandlerGaudi2::memsetIMBs(hcl::IntermediateBufferContainer*
                   longSo.targetValue);
 
         uint32_t currNumberOfRanks;
-        uint32_t currNumberOfReproBuffers;
+        uint32_t currNumberOfSubBuffers;
 
-        if (poolId == REDUCE_RR_POOL)
+        if (poolId == REDUCE_POOL)
         {
             VERIFY(recvSliceState.m_collectiveOp == eHCLReduce,
-                   "REDUCE_RR_POOL is only used in eHCLReduce collectiveOp, current collectiveOp={}",
+                   "REDUCE_POOL is only used in eHCLReduce collectiveOp, current collectiveOp={}",
                    recvSliceState.m_collectiveOp);
             // single chunk from each peer rank on recv / single chunk to cast down after reduce
             currNumberOfRanks = 1;
             // single buffer every slice
-            currNumberOfReproBuffers = 1;
+            currNumberOfSubBuffers = 1;
         }
-        else if (poolId == SCALEOUT_RR_POOL)
+        else if (poolId == SCALEOUT_POOL)
         {
-            currNumberOfRanks = std::min(sendSliceState.m_reproScaleoutBuffersAmount, sendSliceState.m_boxIterations);
-            currNumberOfReproBuffers = sendSliceState.m_reproScaleoutBuffersAmount;  // 8 buffers every slice
+            currNumberOfRanks      = std::min(sendSliceState.m_scaleoutBuffersAmount, sendSliceState.m_boxIterations);
+            currNumberOfSubBuffers = sendSliceState.m_scaleoutBuffersAmount;
         }
         else
         {
@@ -121,8 +120,8 @@ void HclCollectiveMemHandlerGaudi2::memsetIMBs(hcl::IntermediateBufferContainer*
                                               poolId,
                                               false,  // isForScaleout
                                               currNumberOfRanks,
-                                              currNumberOfReproBuffers,
-                                              indexOfReproBuffer);
+                                              currNumberOfSubBuffers,
+                                              indexOfSubBuffer);
         }
     }
 }

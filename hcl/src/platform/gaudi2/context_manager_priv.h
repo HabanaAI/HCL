@@ -8,11 +8,11 @@
 #include "platform/gaudi2/communicator_descriptor.h"
 #include "infra/scal/gen2_arch_common/scal_stream.h"
 #include "platform/gaudi2/nic_passthrough_handler.h"
-#include "hccl_types.h"  // for hcclRedOp_t
+#include "hccl_types.h"                                              // for hcclRedOp_t
 #include "platform/gen2_arch_common/nic_passthrough_handler_base.h"  // for DwordsNicsArray
 
 class ContextManager;
-class Gaudi2DevicePortMapping;
+class Gen2ArchServerConnectivity;
 
 class UniqueCollectiveContext
 {
@@ -49,10 +49,10 @@ public:
 class CachedCollectiveContext
 {
 public:
-    CachedCollectiveContext(uint8_t                        collectiveContextIndex,
-                            const std::vector<unsigned>&   nicEngines,
-                            const Gaudi2DevicePortMapping& portMapping,
-                            HclCommandsGen2Arch&           commands);
+    CachedCollectiveContext(uint8_t                           collectiveContextIndex,
+                            const std::vector<unsigned>&      nicEngines,
+                            const Gen2ArchServerConnectivity& serverConnectivity,
+                            HclCommandsGen2Arch&              commands);
     virtual ~CachedCollectiveContext() = default;
 
     void dwordDiff(const RequiredCollectiveContext& other, edwords_t& dwordsForUpdate);
@@ -80,10 +80,10 @@ private:
 class CachedCollectiveContextScaleUp : public CachedCollectiveContext
 {
 public:
-    CachedCollectiveContextScaleUp(uint8_t                        collectiveContextIndex,
-                                   const std::vector<unsigned>&   nicEngines,
-                                   const Gaudi2DevicePortMapping& portMapping,
-                                   HclCommandsGen2Arch&           commands);
+    CachedCollectiveContextScaleUp(uint8_t                           collectiveContextIndex,
+                                   const std::vector<unsigned>&      nicEngines,
+                                   const Gen2ArchServerConnectivity& serverConnectivity,
+                                   HclCommandsGen2Arch&              commands);
     virtual ~CachedCollectiveContextScaleUp() = default;
     CommunicatorDescriptor m_activeCommunicatorDescriptor;
 };

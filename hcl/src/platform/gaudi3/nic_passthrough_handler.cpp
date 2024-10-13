@@ -5,19 +5,22 @@
 #include <memory>   // for shared_ptr
 #include <utility>  // for pair, make_pair
 
-#include "sched_pkts.h"                              // for g3fw
-#include "hcl_utils.h"                               // for VERIFY
-#include "hcl_log_manager.h"                         // for LOG_*
-#include "platform/gaudi3/commands/hcl_commands.h"   // for HclCommandsGaudi3
-#include "platform/gen2_arch_common/port_mapping.h"  // for Gen2ArchDevicePortMapping
-#include "gaudi3/gaudi3.h"                           // for NIC_MAX_NUM_OF_MACROS
-#include "platform/gaudi3/port_mapping.h"            // for DeviceNicsMacrosMask, NicMacrosDevicesArray
+#include "sched_pkts.h"                                       // for g3fw
+#include "hcl_utils.h"                                        // for VERIFY
+#include "hcl_log_manager.h"                                  // for LOG_*
+#include "platform/gaudi3/commands/hcl_commands.h"            // for HclCommandsGaudi3
+#include "gaudi3/gaudi3.h"                                    // for NIC_MAX_NUM_OF_MACROS
+#include "platform/gaudi3/gaudi3_base_server_connectivity.h"  // for Gaudi3BaseServerConnectivity
 
-NicPassthroughHandlerGaudi3::NicPassthroughHandlerGaudi3(const bool                     isSend,
-                                                         const bool                     isPair0,
-                                                         const Gaudi3DevicePortMapping& portMapping,
-                                                         HclCommandsGaudi3&             commands)
-: NicPassthroughHandlerBase(), m_isSend(isSend), m_isSet0(isPair0), m_portMapping(portMapping), m_commands(commands)
+NicPassthroughHandlerGaudi3::NicPassthroughHandlerGaudi3(const bool                          isSend,
+                                                         const bool                          isPair0,
+                                                         const Gaudi3BaseServerConnectivity& serverConnectivity,
+                                                         HclCommandsGaudi3&                  commands)
+: NicPassthroughHandlerBase(),
+  m_isSend(isSend),
+  m_isSet0(isPair0),
+  m_serverConnectivity(serverConnectivity),
+  m_commands(commands)
 {
 }
 
@@ -108,7 +111,9 @@ void NicPassthroughHandlerGaudi3::addNicBuffer(const NicsDwordsArray& nicBuffer)
     }
 }
 
-int NicPassthroughHandlerGaudi3::addDeviceBuffer(const DwordsBoxesArray& deviceBuffer, const DevicesSet& devicesSet)
+int NicPassthroughHandlerGaudi3::addDeviceBuffer(const DwordsBoxesArray& deviceBuffer,
+                                                 const DevicesSet&       devicesSet,
+                                                 const HCL_Comm          comm)
 {
     int usedDwords = 0;
     if (deviceBuffer.size() == 0) return 0;
@@ -130,7 +135,7 @@ int NicPassthroughHandlerGaudi3::addDeviceBuffer(const DwordsBoxesArray& deviceB
                           deviceBuffer[deviceId].size());
 
             // each device belongs to 2 or more NIC macros, in a vector
-            const NicMacrosPerDevice& macros(m_portMapping.getNicMacrosPerDevice(deviceId));
+            const NicMacrosPerDevice& macros(m_serverConnectivity.getNicMacrosPerDevice(deviceId, comm));
 
             if (deviceBuffer[deviceId].size() > 0)
             {
@@ -177,7 +182,7 @@ int NicPassthroughHandlerGaudi3::fillInNicNops(hcl::ScalStreamBase& scalStream,
                                                const uint32_t       consumeDwords,
                                                const uint16_t       setNopDupMask)
 {
-    const uint32_t credits       = 0;                                // consumeDwords * sizeof(uint32_t);
+    const uint32_t credits       = 0;  // consumeDwords * sizeof(uint32_t);
     const uint16_t dupMaskForNop = setNopDupMask & ((1 << 11) - 1);
     LOG_HCL_DEBUG(HCL,
                   "m_isSend={}, m_isSet0={}: Adding a NIC NOP for send/recv for with dupMask {:012b} and {} credits, "

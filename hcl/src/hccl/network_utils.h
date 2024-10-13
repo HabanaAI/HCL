@@ -49,8 +49,8 @@ bool match_tcp_if_pattern(const std::string& tcp_if_name, const std::vector<std:
 bool ip_is_local(const std::string ip);
 
 // Receives the data by reading the socket.
-// Works similarily to recv(..., MSG_WAITALL), but guarantees to return one of the following:
-//  * Negative integer - when an unrecoverable error occurrs, or a message has been read partially.
+// Works similarly to recv(..., MSG_WAITALL), but guarantees to return one of the following:
+//  * Negative integer - when an unrecoverable error occurs, or a message has been read partially.
 //  * 0 - when the socket is closed (remote peer closed the connection prior to this call).
 //  * Positive integer - in this case it is always `length`.
 // This function will never return value >0 but less than `length`.

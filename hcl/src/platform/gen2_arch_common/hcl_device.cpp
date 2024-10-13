@@ -1,19 +1,19 @@
 #include "platform/gen2_arch_common/hcl_device.h"
 
-#include <pthread.h>                                                    // for pthread_self
-#include <cstring>                                                      // for memset
-#include <memory>                                                       // for __shared_ptr_access
-#include "hcl_config.h"                                                 // for HclDeviceConfig
-#include "hcl_dynamic_comms_manager.h"                                  // for HclDynamicCommsM...
-#include "hcl_dynamic_communicator.h"                                   // for HclDynamicCommun...
-#include "hcl_types.h"                                                  // for RankInfo
-#include "hcl_utils.h"                                                  // for setLogContext
-#include "hlthunk.h"                                                    // for hlthunk_requeste...
-#include "platform/gen2_arch_common/eq_handler.h"                       // for IEventQueueHandler
-#include "platform/gen2_arch_common/port_mapping.h"                     // for Gen2ArchDevicePortMapping
-#include "hcl_log_manager.h"                                            // for LOG_*
-#include "platform/gen2_arch_common/intermediate_buffer_container.h"    // for IntermediateBufferContainer
-#include "platform/gen2_arch_common/scaleout_provider.h"                // for ScaleoutProvider
+#include <pthread.h>                                                  // for pthread_self
+#include <cstring>                                                    // for memset
+#include <memory>                                                     // for __shared_ptr_access
+#include "hcl_config.h"                                               // for HclConfig
+#include "platform/gen2_arch_common/hcl_device_config.h"              // for HclDeviceConfig
+#include "hcl_dynamic_comms_manager.h"                                // for HclDynamicCommsM...
+#include "hcl_dynamic_communicator.h"                                 // for HclDynamicCommun...
+#include "hcl_types.h"                                                // for RankInfo
+#include "hcl_utils.h"                                                // for setLogContext
+#include "hlthunk.h"                                                  // for hlthunk_requeste...
+#include "platform/gen2_arch_common/eq_handler.h"                     // for IEventQueueHandler
+#include "hcl_log_manager.h"                                          // for LOG_*
+#include "platform/gen2_arch_common/intermediate_buffer_container.h"  // for IntermediateBufferContainer
+#include "platform/gen2_arch_common/scaleout_provider.h"              // for ScaleoutProvider
 #include "platform/gen2_arch_common/commands/hcl_commands.h"
 #include "hccl_coordinator_client.h"
 #include "infra/scal/gen2_arch_common/scal_manager.h"  // for Gen2ArchScalManager
@@ -22,53 +22,62 @@
 #include "hcl_math_utils.h"
 #include "libfabric/mr_mapping.h"  // for MRMapping
 #include "platform/gen2_arch_common/hcl_device_controller.h"
-#include "platform/gen2_arch_common/port_mapping_config.h"  // for SCALEOUT_DEVICE_ID
+#include "platform/gen2_arch_common/server_def.h"                 // for Gen2ArchServerDef
+#include "platform/gen2_arch_common/server_connectivity_types.h"  // for SCALEOUT_DEVICE_ID
 
 class HclCommandsGen2Arch;
 class DeviceBufferManager;
 
 /* This is a test-only constructor, so the nic array in a few lines is allowed... :-\ */
-HclDeviceGen2Arch::HclDeviceGen2Arch(HclDeviceControllerGen2Arch& controller)
-: IHclDevice(),
+HclDeviceGen2Arch::HclDeviceGen2Arch(const bool                   testCtor,
+                                     HclDeviceControllerGen2Arch& controller,
+                                     HclDeviceConfig&             deviceConfig,
+                                     Gen2ArchServerDef&           serverDef)
+: IHclDevice(deviceConfig),
+  m_deviceController(controller),
   m_scalManager(controller.getGen2ArchScalManager()),
   m_commands(controller.getGen2ArchCommands()),
-  m_cgSize(0)
+  m_cgSize(0),
+  m_serverDef(serverDef),
+  m_serverConnectivity(serverDef.getServerConnectivity())
 {
     setLogContext(0, "localhost", (uint64_t)pthread_self());
+    LOG_HCL_TRACE(HCL, "Test ctor, deviceType={}", deviceConfig.getDeviceTypeStr());
 }
 
-HclDeviceGen2Arch::HclDeviceGen2Arch(HclDeviceControllerGen2Arch& controller, HclDeviceConfig& deviceConfig)
+// Runtime ctor
+HclDeviceGen2Arch::HclDeviceGen2Arch(HclDeviceControllerGen2Arch& controller,
+                                     HclDeviceConfig&             deviceConfig,
+                                     Gen2ArchServerDef&           serverDef)
 : IHclDevice(deviceConfig),
+  m_deviceController(controller),
   m_scalManager(controller.getGen2ArchScalManager()),
-  m_deviceType(deviceConfig.m_deviceType),
   m_commands(controller.getGen2ArchCommands()),
-  m_cgSize(m_scalManager.getCgInfo(0)[(int)hcl::SchedulerType::external].size)
+  m_cgSize(m_scalManager.getCgInfo(0)[(int)hcl::SchedulerType::external].size),
+  m_serverDef(serverDef),
+  m_serverConnectivity(serverDef.getServerConnectivity())
 {
+    LOG_HCL_TRACE(HCL, "Runtime ctor, deviceType={}", deviceConfig.getDeviceTypeStr());
     setLogContext(deviceConfig.getHwModuleId(), deviceConfig.getHostName(), (uint64_t)pthread_self());
 
-    VERIFY(GCFG_HCL_GNIC_SCALE_OUT_QP_SETS.value() <= MAX_QPS_SETS_PER_CONNECTION,
+    g_ibv.set_hcl_device(this);
+
+    VERIFY(
+        GCFG_HCL_GNIC_SCALE_OUT_QP_SETS.value() <= MAX_QPS_SETS_PER_CONNECTION,
         "HCL_GNIC_SCALE_OUT_QP_SETS (0x{:x}) is expected to be equal or less than MAX_QPS_SETS_PER_CONNECTION (0x{:x})",
         GCFG_HCL_GNIC_SCALE_OUT_QP_SETS.value(),
-           MAX_QPS_SETS_PER_CONNECTION);
+        MAX_QPS_SETS_PER_CONNECTION);
     VERIFY(GCFG_HCL_HNIC_SCALE_OUT_QP_SETS.value() <= MAX_HNIC_CONNECTION_SETS,
            "HCL_HNIC_SCALE_OUT_QP_SETS (0x{:x}) is expected to be equal or less than MAX_HNIC_CONNECTION_SETS (0x{:x})",
            GCFG_HCL_HNIC_SCALE_OUT_QP_SETS.value(),
            MAX_HNIC_CONNECTION_SETS);
 
-    char busId[13] {};
-    int  res = hlthunk_get_pci_bus_id_from_fd(deviceConfig.m_fd, busId, sizeof(busId));
-    if (res != 0)
-    {
-        LOG_ERR(HCL, "Failed to get busId from fd {} for interfaces", deviceConfig.m_fd);
-    }
-
-    m_ethStats.init(busId);
-    m_portMappingConfig.parseConfig(GCFG_HCL_PORT_MAPPING_CONFIG.value());  // parse json port mapping file if exists
+    m_ethStats.init(m_deviceConfig.getDevicePciBusId());
 }
 
 uint32_t HclDeviceGen2Arch::createQp(uint32_t port, uint8_t qpId)
 {
-    return g_ibv.create_qp(isSender(qpId), port) ;
+    return g_ibv.create_qp(isSender(qpId), port);
 }
 
 bool HclDeviceGen2Arch::isNicUp(uint32_t nic)
@@ -114,8 +123,6 @@ HclDeviceGen2Arch::~HclDeviceGen2Arch() noexcept(false)
     delete m_eqHandler;
     delete m_sibContainer;
     delete m_scaleoutProvider;
-
-    g_ibv.close();
 }
 
 hcclResult_t HclDeviceGen2Arch::openQpsHLS(HCL_Comm comm)
@@ -140,8 +147,7 @@ hcclResult_t HclDeviceGen2Arch::openQpsHLS(HCL_Comm comm)
     return hcclSuccess;
 }
 
-nics_mask_t
-HclDeviceGen2Arch::getActiveNics(HCL_Rank fromRank, HCL_Rank toRank, int physicalQueueOffset, HCL_Comm comm)
+nics_mask_t HclDeviceGen2Arch::getActiveNics(HCL_Rank fromRank, HCL_Rank toRank, int physicalQueueOffset, HCL_Comm comm)
 {
     // should not happen
     VERIFY(fromRank != toRank, "getActiveNics called with same rank({})", fromRank);
@@ -158,11 +164,11 @@ HclDeviceGen2Arch::getActiveNics(HCL_Rank fromRank, HCL_Rank toRank, int physica
                              ? getComm(comm).m_remoteDevices[toRank]->header.hwModuleID
                              : SCALEOUT_DEVICE_ID;
 
-    nics_mask_t result = getAllPorts(deviceId, getComm(comm).getSpotlightType());
+    const nics_mask_t result = getAllPorts(deviceId, comm);
 
     VERIFY(result.count() <= ((SCALEOUT_DEVICE_ID == (unsigned)deviceId)
-                                  ? getPortMapping().getMaxNumScaleOutPorts()
-                                  : getHal()->getMaxNumScaleUpPortsPerConnection()),
+                                  ? getServerConnectivity().getMaxNumScaleOutPorts(/* ? HCL_Comm comm*/)
+                                  : getServerConnectivity().getMaxNumScaleUpPortsPerConnection(comm)),
 
            "invalid number of active nics({}) from rank({}) to rank({})",
 
@@ -185,6 +191,16 @@ HclDeviceGen2Arch::getActiveNics(HCL_Rank fromRank, HCL_Rank toRank, int physica
     }
 
     return m_activeNicsSingleRankCache[comm][ranksPair];
+}
+
+nics_mask_t HclDeviceGen2Arch::getAllPorts(const int deviceId, const HCL_Comm comm) const
+{
+    return getServerConnectivity().getAllPorts(deviceId, comm);
+};
+
+bool HclDeviceGen2Arch::isScaleOutPort(const uint16_t port, const HCL_Comm comm) const
+{
+    return getServerConnectivity().isScaleoutPort(port, comm);
 }
 
 hcclResult_t HclDeviceGen2Arch::onNewCommStart(HCL_Comm comm, uint32_t commSize, HclConfig& config)
@@ -214,12 +230,25 @@ hcclResult_t HclDeviceGen2Arch::destroyComm(HCL_Comm comm, bool force)
     return hcclSuccess;
 }
 
+void HclDeviceGen2Arch::deleteCommConnections(HCL_Comm comm)
+{
+    QPManagerHints hints(comm);
+    for (unsigned nic = 0; nic < MAX_NICS_GEN2ARCH; nic++)
+    {
+        hints.m_nic = nic;
+        m_qpManagers.at(nic)->closeQPs(hints);
+    }
+
+    LOG_INFO(HCL, "Close scale-out connections");
+    m_scaleoutProvider->closeConnections(comm);
+}
+
 void HclDeviceGen2Arch::checkSignals()
 {
     LOG_HCL_DEBUG(HCL, "Started");
 
     bool failedCheckSignals = false;
-    bool anyRegNonZero = false;
+    bool anyRegNonZero      = false;
     for (size_t archIndex = 0; archIndex < hcl::ScalJsonNames::numberOfArchsStreams; archIndex++)
     {
         int rc = 0;
@@ -335,41 +364,38 @@ hcclResult_t HclDeviceGen2Arch::destroy(bool force)
 hcclResult_t
 HclDeviceGen2Arch::setupQps(HCL_Comm comm, HCL_Rank rank, uint32_t stream, uint32_t port, uint32_t qpn, uint8_t qpSet)
 {
-    const uint16_t   peerNic = getPeerNic(rank, comm, port);
-    GaudiNicAddress& remoteNicAddress =
-        getComm(comm).m_remoteDevices[rank]->device.gaudiNicAddresses.nics[peerNic];
+    const uint16_t   peerNic          = getPeerNic(rank, comm, port);
+    GaudiNicAddress& remoteNicAddress = getComm(comm).m_remoteDevices[rank]->device.gaudiNicAddresses.nics[peerNic];
 
-    GaudiNicQPs::NicQPs& remoteQPs =
-        getComm(comm).m_remoteDevices[rank]->remoteInfo.gaudiNicQPs[peerNic];
-    uint32_t         qpi    = getQpi(comm, port, rank, qpn, qpSet);
-    GaudiNicAddress& srcNic = getComm(comm).m_rankInfo.device.gaudiNicAddresses.nics[port];
+    GaudiNicQPs::NicQPs& remoteQPs = getComm(comm).m_remoteDevices[rank]->remoteInfo.gaudiNicQPs[peerNic];
+    uint32_t             qpi       = getQpi(comm, port, rank, qpn, qpSet);
+    GaudiNicAddress&     srcNic    = getComm(comm).m_rankInfo.device.gaudiNicAddresses.nics[port];
 
     uint8_t lagIdx, lastInLag;
-    getLagInfo(port, lagIdx, lastInLag, getComm(comm).getSpotlightType());
+    getLagInfo(port, lagIdx, lastInLag, comm);
 
     LOG_HCL_TRACE(HCL,
-                    "comm({}), rank({}), stream({}), port({}), peerNic={}, qpn({}), qpSet({}) calling getDestQpi({})",
-                    comm,
-                    rank,
-                    stream,
-                    port,
-                    peerNic,
-                    qpn,
-                    qpSet,
-                    qpi);
+                  "comm({}), rank({}), stream({}), port({}), peerNic={}, qpn({}), qpSet({}) calling getDestQpi({})",
+                  comm,
+                  rank,
+                  stream,
+                  port,
+                  peerNic,
+                  qpn,
+                  qpSet,
+                  qpi);
 
     g_ibv.set_qp_ctx(qpn,
-                    port,
-                    srcNic.ip,
-                    srcNic.mac.u64,
-                    remoteNicAddress.ip,
-                    remoteNicAddress.mac.u64,
-                    remoteQPs.qp[qpSet][getDestQpi(qpi)],
+                     port,
+                     srcNic.ip,
+                     srcNic.mac.u64,
+                     remoteNicAddress.ip,
+                     remoteNicAddress.mac.u64,
+                     remoteQPs.qp[qpSet][getDestQpi(qpi, port)],
                      lagIdx,
                      lastInLag);
 
     return hcclSuccess;
-
 }
 
 bool HclDeviceGen2Arch::isDramAddressValid(uint64_t addr) const
@@ -377,7 +403,7 @@ bool HclDeviceGen2Arch::isDramAddressValid(uint64_t addr) const
     return (addr >= m_allocationRangeStart && addr < m_allocationRangeEnd);
 }
 
-void HclDeviceGen2Arch::getLagInfo(int nic, uint8_t& lagIdx, uint8_t& lastInLag, unsigned spotlightType)
+void HclDeviceGen2Arch::getLagInfo(const uint16_t nic, uint8_t& lagIdx, uint8_t& lastInLag, const HCL_Comm comm)
 {
     lagIdx    = 0;
     lastInLag = false;
@@ -388,22 +414,9 @@ HclCommandsGen2Arch& HclDeviceGen2Arch::getGen2ArchCommands()
     return m_commands;
 }
 
-uint64_t HclDeviceGen2Arch::getEnabledPortsMask()
-{
-    VERIFY(false, "HclDeviceGen2Arch::getEnabledPortsMask() not supported!");
-    return 0;
-}
-
 ScaleoutProvider* HclDeviceGen2Arch::getScaleOutProvider()
 {
     return m_scaleoutProvider;
-}
-
-hcclResult_t HclDeviceGen2Arch::openQps(HCL_Comm comm, const UniqueSortedVector& ranks)
-{
-    VERIFY(false, "HclDeviceGen2Arch::openQps - not implemented yet");
-
-    return hcclSuccess;
 }
 
 extern std::unordered_map<HCL_Comm, spHcclCoordinatorClient> g_hcclCordClient;
@@ -440,42 +453,37 @@ void HclDeviceGen2Arch::openAllRequiredNonPeerQPs(const HCL_Comm comm, const std
     std::vector<HostNicConnectInfo> hnicsConnectionInfoBuffers(nonPeerRemoteRanks.size());  // used by host nics
     size_t                          ranksCounter = 0;
 
+    std::vector<void*> sendBuffers, recvBuffers;
+
     LOG_HCL_TRACE(HCL, "Exchanging connections info from remote ranks - async recv");
-    std::vector<std::unique_ptr<hcclHandle>> recvHandles;
+
+    VERIFY(g_hcclCordClient[comm].get());
+
     for (const HCL_Rank remoteRank : nonPeerRemoteRanks)
     {
-        VERIFY(g_hcclCordClient[comm].get());
-        recvHandles.emplace_back(std::make_unique<hcclHandle>());
+        void* recvBuffer = nullptr;
 
-        void*        recvBuffer = nullptr;
-        const size_t recvSize   = sendRecvBufSize;
         if (isHnicsScaleout)
         {
-            auto& bufferFromTarget = hnicsConnectionInfoBuffers[ranksCounter];
+            auto& bufferFromTarget = hnicsConnectionInfoBuffers[ranksCounter++];
             recvBuffer             = &bufferFromTarget;
         }
         else
         {
             recvBuffer = getComm(comm).m_remoteDevices[remoteRank].get();
         }
-        LOG_HCL_TRACE(HCL,
-                      "Calling recvFromRankAsync, comm({}), remoteRank({}), recvBuffer={:p}, recvSize={}",
-                      comm,
-                      remoteRank,
-                      recvBuffer,
-                      recvSize);
-        const hcclResult_t ret =
-            g_hcclCordClient[comm]->recvFromRankAsync(recvBuffer, recvSize, remoteRank, &(*(recvHandles.back())));
-        VERIFY(ret == hcclSuccess, "recvFromRankAsync RankInfo failed, ret={}, remoteRank={}", ret, remoteRank);
-        ranksCounter++;
+
+        recvBuffers.push_back(recvBuffer);
     }
 
-    LOG_HCL_TRACE(HCL, "Exchanging connections info from remote ranks - sync send");
+    std::vector<RemoteDeviceConnectionInfo> rdInfo;
+    rdInfo.resize(nonPeerRemoteRanks.size());
+    ranksCounter = 0;
+
     for (const HCL_Rank remoteRank : nonPeerRemoteRanks)
     {
-        void*                      sendBuffer = nullptr;
-        const size_t               sendSize   = sendRecvBufSize;
-        RemoteDeviceConnectionInfo connectionInfo;
+        void* sendBuffer = nullptr;
+
         if (isHnicsScaleout)
         {
             auto& bufferToTarget = getComm(comm).m_rankInfo.remoteInfo[remoteRank].hostNicConns;
@@ -483,89 +491,25 @@ void HclDeviceGen2Arch::openAllRequiredNonPeerQPs(const HCL_Comm comm, const std
         }
         else
         {
+            RemoteDeviceConnectionInfo connectionInfo;
             // extract remote device connection info for remoteRank
             connectionInfo.header     = getComm(comm).m_rankInfo.header;
             connectionInfo.device     = getComm(comm).m_rankInfo.device;
             connectionInfo.remoteInfo = getComm(comm).m_rankInfo.remoteInfo[remoteRank];
-            sendBuffer                = &connectionInfo;
+
+            rdInfo[ranksCounter] = connectionInfo;
+            sendBuffer           = &rdInfo[ranksCounter];
+            ranksCounter++;
         }
 
-        LOG_HCL_TRACE(HCL,
-                      "Calling sendToRank, comm({}), remoteRank({}), sendBuffer={:p}, sendSize={}",
-                      comm,
-                      remoteRank,
-                      sendBuffer,
-                      sendSize);
-        const hcclResult_t ret = g_hcclCordClient[comm]->sendToRank(remoteRank, sendBuffer, sendSize);
-        VERIFY(ret == hcclSuccess, "sendToRank RankInfo failed, ret{}, remoteRank={}", ret, remoteRank);
+        sendBuffers.push_back(sendBuffer);
     }
 
-    LOG_HCL_TRACE(HCL, "Exchanging connections info from remote ranks - wait for recv");
-    for (const HCL_Rank remoteRank : nonPeerRemoteRanks)
-    {
-        LOG_HCL_TRACE(HCL, "Calling waitForHandle & updateRankQps, comm={}, remoteRank={}", comm, remoteRank);
-
-        VERIFY(recvHandles.front()->internalHandle.waitForHandle(),
-               "waitForHandle RankInfo failed, remoteRank={}",
-               remoteRank);
-        recvHandles.erase(recvHandles.begin());  // call dtor
-    }
-    VERIFY(recvHandles.size() == 0, "recvHandles is not empty, {}", recvHandles.size());
+    g_hcclCordClient[comm]->sendRecvFromRanks(nonPeerRemoteRanks, recvBuffers, sendBuffers, sendRecvBufSize, comm);
 
     LOG_HCL_TRACE(HCL, "Updating connections info with remote ranks");
     m_scaleoutProvider->updateConnectionsNonPeer(comm, nonPeerRemoteRanks, hnicsConnectionInfoBuffers);
-    synchronizeRemoteRanks(comm, nonPeerRemoteRanks);
-}
-
-void HclDeviceGen2Arch::synchronizeRemoteRanks(const HCL_Comm comm, const UniqueSortedVector& remoteRanks)
-{
-    // This section synchronize all the remote ranks using the coordinator
-    LOG_HCL_TRACE(HCL, "Synchronize with all remote ranks - comm={}, , remoteRanks={}", comm, remoteRanks);
-
-    std::vector<std::unique_ptr<hcclHandle>> recvHandles;
-    std::vector<int>                               recvAckKeys(remoteRanks.size(), 0);
-    unsigned                                       recvAckCount = 0;
-    for (const HCL_Rank remoteRank : remoteRanks)
-    {
-        LOG_HCL_TRACE(HCL, "Calling recvFromRankAsync ack, comm={}, remoteRank={}", comm, remoteRank);
-
-        recvHandles.emplace_back(std::make_unique<hcclHandle>());
-        int*               ackPtr(&recvAckKeys[recvAckCount++]);
-        const hcclResult_t ret =
-            g_hcclCordClient[comm]->recvFromRankAsync(ackPtr, sizeof(*ackPtr), remoteRank, &(*(recvHandles.back())));
-        VERIFY(ret == hcclSuccess, "recvFromRankAsync ack failed, ret={}, remoteRank={}", ret, remoteRank);
-    }
-
-    LOG_HCL_TRACE(HCL, "Synchronize with all remote ranks - sync send");
-    static int ackKey = 0xABC;
-    for (const HCL_Rank remoteRank : remoteRanks)
-    {
-        LOG_HCL_TRACE(HCL, "Calling sendToRank ack, comm={}, remoteRank={}", comm, remoteRank);
-
-        const hcclResult_t ret = g_hcclCordClient[comm]->sendToRank(remoteRank, &ackKey, sizeof(ackKey));
-        VERIFY(ret == hcclSuccess, "sendToRank ack failed, ret={}, remoteRank={}", ret, remoteRank);
-    }
-
-    LOG_HCL_TRACE(HCL, "Synchronize with all remote ranks - wait for recv");
-    recvAckCount = 0;
-    for (const HCL_Rank remoteRank : remoteRanks)
-    {
-        LOG_HCL_TRACE(HCL, "Calling waitForHandle ack, comm={}, remoteRank={}", comm, remoteRank);
-
-        const int* ackPtr(&recvAckKeys[recvAckCount++]);
-        VERIFY(recvHandles.front()->internalHandle.waitForHandle(),
-               "waitForHandle ack failed, remoteRank={}",
-               remoteRank);
-        VERIFY(*ackPtr == ackKey,
-               "ackKey verification failed, received key=0x{:x} from remoteRank={}, expected key=0x{}",
-               *ackPtr,
-               remoteRank,
-               ackKey);
-        recvHandles.erase(recvHandles.begin());  // call dtor
-        LOG_HCL_TRACE(HCL, "waitForHandle ack completed successfully, comm={}, remoteRank={}", comm, remoteRank);
-    }
-
-    VERIFY(recvHandles.size() == 0, "After ack recvHandles is not empty, {}", recvHandles.size());
+    g_hcclCordClient[comm]->synchronizeRemoteRanks(comm, nonPeerRemoteRanks);
 }
 
 unsigned HclDeviceGen2Arch::getEdmaEngineWorkDistributionSize()
@@ -657,14 +601,58 @@ bool HclDeviceGen2Arch::isACcbHalfFullForDeviceBenchMark(const unsigned archStre
 void HclDeviceGen2Arch::initRemoteNicsLoopback(HCL_Comm comm)
 {
     LOG_HCL_DEBUG(HCL, "Init loopback remote nics comm({})", getCommSize(comm));
-    for (int rank = 0; rank < getCommSize(comm); rank++)
+
+    nics_mask_t scaleupNics  = getServerConnectivity().getScaleUpPorts(comm);
+    nics_mask_t scaleoutNics = getServerConnectivity().getScaleOutPorts(comm);
+
+    int scaleupNicIndex = 0, nic = 0;
+    for (HCL_Rank rank = 0; rank < getCommSize(comm); rank++)
     {
+        if (rank == getMyRank(comm)) continue;
+
+        int scaleoutNicIndex = 0;
+
         // direct access to qp data, to set nic
         GaudiNicQPs::NicQPs* qps = getComm(comm).m_rankInfo.remoteInfo[rank].gaudiNicQPs.qp;
-        for (size_t index = 0; index < COMPACT_RANK_INFO_NICS; index++)
+        for (size_t qpIndex = 0; qpIndex < COMPACT_RANK_INFO_NICS; qpIndex++)
         {
-            qps[index].nic = LOOPBACK_NIC_INDEX_INIT(index, rank);
+            if (rank < getScaleupGroupSize(comm))
+            {
+                nic = scaleupNics(scaleupNicIndex);
+                scaleupNicIndex++;
+            }
+            else
+            {
+                nic = scaleoutNics(scaleoutNicIndex);
+                scaleoutNicIndex++;
+            }
+            qps[qpIndex].nic = nic;
         }
         LOG_HCL_DEBUG(HCL, "Rank({}) mapped to ({}, {}, {})", rank, qps[0].nic, qps[1].nic, qps[2].nic);
     }
+}
+
+uint16_t HclDeviceGen2Arch::getMaxNumScaleUpPortsPerConnection(const HCL_Comm hclCommId) const
+{
+    return getServerConnectivity().getMaxNumScaleUpPortsPerConnection(hclCommId);
+}
+
+uint32_t HclDeviceGen2Arch::getDestQpi(const unsigned qpi, const unsigned nic) const
+{
+    return m_qpManagers.at(nic)->getDestQPi(qpi);
+}
+
+void HclDeviceGen2Arch::allocateQPDBStorage(HCL_Comm comm)
+{
+    // this is used for null-submit mode only, we allocate QP storage without the actual QPs
+    for (unsigned nic = 0; nic < MAX_NICS_GEN2ARCH; nic++)
+    {
+        m_qpManagers.at(nic)->allocateQPDBStorage(comm);
+    }
+}
+
+void HclDeviceGen2Arch::setTraceMarker(const synStreamHandle stream_handle, uint32_t val)
+{
+    int archStreamIdx = synStreamGetPhysicalQueueOffset(stream_handle);
+    m_deviceController.setTraceMarker(archStreamIdx, val);
 }

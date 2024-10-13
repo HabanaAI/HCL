@@ -122,6 +122,7 @@ typedef enum EngArcBufferAddrBase
     PATCHING_ADDR_BASE,
     EXECUTE_ADDR_BASE,
     DYNAMIC_ADDR_BASE,
+    PRG_DATA_ADDR_BASE,
     NOP_KERNEL_ADDR_BASE = 7  // Agreeable value with the Firmware for indicating the NOP-Kernel address
 } EngArcBufferAddrBase;
 

@@ -34,7 +34,7 @@ uint64_t Gaudi2ScalWrapper::getMonitorPayloadAddr(std::string name, unsigned /*f
     if (rc != SCAL_SUCCESS)
     {
         throw ScalErrorException("Failed on scal_get_core_handle_by_name with device handle: " +
-        std::to_string(uint64_t(m_deviceHandle)) + " and name: " + name);
+                                 std::to_string(uint64_t(m_deviceHandle)) + " and name: " + name);
     }
 
     scal_control_core_info_t info;
@@ -42,7 +42,7 @@ uint64_t Gaudi2ScalWrapper::getMonitorPayloadAddr(std::string name, unsigned /*f
     if (rc != SCAL_SUCCESS)
     {
         throw ScalErrorException("Failed on scal_control_core_get_info with core handle: " +
-        std::to_string(uint64_t(schedulerHandle)));
+                                 std::to_string(uint64_t(schedulerHandle)));
     }
     return info.dccm_message_queue_address;
 }

@@ -1,16 +1,16 @@
 #pragma once
 
-#include <cstddef>                // for size_t
-#include <cstdint>                // for uint32_t
-#include <map>                    // for map
-#include <queue>                  // for queue
-#include <thread>                 // for thread
-#include <vector>                 // for vector
+#include <cstddef>  // for size_t
+#include <cstdint>  // for uint32_t
+#include <map>      // for map
+#include <queue>    // for queue
+#include <thread>   // for thread
+#include <vector>   // for vector
 
 #include "infra/concurrent_unordered_map.hpp"  // for ConcurrentUnorderedMap
 #include "infra/concurrent_queue.hpp"          // for ConcurrentQueue
-#include "infra/hcl_mpsc_fifo.h"  // for mpsc_fifo_t
-#include "hccl_internal_defs.h"   // for msg_header_t
+#include "infra/hcl_mpsc_fifo.h"               // for mpsc_fifo_t
+#include "hccl_internal_defs.h"                // for msg_header_t
 
 struct hcclHandle;
 struct hcclInternalHandle;
@@ -77,7 +77,7 @@ private:
     mpsc_fifo_t<SocketJob*, JOBS_QUEUE_CAPACITY> m_jobsQueue;
     std::thread                                  m_thread;
     volatile bool                                m_stop = true;
-    int                                          m_globalRank;
+    HCL_Rank                                     m_globalRank;
     int                                          m_socketThreadId;
     int                                          m_socket  = -1;
     bool                                         m_isAsync = false;

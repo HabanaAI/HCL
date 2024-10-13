@@ -20,5 +20,4 @@ protected:
 
     HclThread m_thread;
     bool      m_stopEqThread = false;
-
 };

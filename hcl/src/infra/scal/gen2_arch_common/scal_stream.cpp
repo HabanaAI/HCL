@@ -17,28 +17,49 @@ void* ScalStreamBase::getNextPtr(size_t size)
 }
 
 ScalStream::ScalStream(ScalJsonNames&       scalNames,
-                       const std::string&   name,
+                       const std::string&   schedNameAndStreamNum,
+                       const std::string&   schedAndStreamName,
                        Gen2ArchScalWrapper& scalWrapper,
                        CompletionGroup&     cg,
                        unsigned             schedIdx,
                        unsigned             internalStreamIdx,
                        unsigned             archStreamIndex,
-                       HclCommandsGen2Arch& commands)
+                       HclCommandsGen2Arch& commands,
+                       CyclicBufferType     type)
 : m_scalNames(scalNames),
   m_scalWrapper(scalWrapper),
-  m_streamName(name),
+  m_schedNameAndStreamNum(schedNameAndStreamNum),
+  m_schedAndStreamName(schedAndStreamName),
   m_schedIdx(schedIdx),
   m_internalStreamIdx(internalStreamIdx),
   m_archStreamIndex(archStreamIndex)
 {
-    m_scalWrapper.initStream(name, m_streamHandle, m_streamInfo, m_hostCyclicBufferSize, m_bufferHandle, m_bufferInfo);
+    m_scalWrapper.initStream(schedNameAndStreamNum,
+                             m_streamHandle,
+                             m_streamInfo,
+                             m_hostCyclicBufferSize,
+                             m_bufferHandle,
+                             m_bufferInfo);
 
     LOG_HCL_TRACE(HCL_SCAL,
                   "Created new Stream {} with handle 0x{:x}, and buffer handle 0x{:x}, on host address: 0x{:x}",
-                  m_streamName,
+                  m_schedNameAndStreamNum,
                   (uint64_t)m_streamHandle,
                   (uint64_t)m_bufferHandle,
                   (uint64_t)m_bufferInfo.host_address);
+
+    m_cyclicBuffer = CyclicBufferFactory::createCyclicBuffer(type,
+                                                             this,
+                                                             scalNames,
+                                                             cg,
+                                                             (uint64_t)m_bufferInfo.host_address,
+                                                             m_streamInfo,
+                                                             m_hostCyclicBufferSize,
+                                                             m_schedNameAndStreamNum,
+                                                             m_streamHandle,
+                                                             m_scalWrapper,
+                                                             m_schedIdx,
+                                                             commands);
 }
 
 void ScalStream::setTargetValue(uint64_t targetValue)

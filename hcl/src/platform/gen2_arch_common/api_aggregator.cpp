@@ -1,11 +1,11 @@
 #include "api_aggregator.h"
-#include <unordered_set>                            // for unordered_set
-#include "hcl_exceptions.h"                         // for NotImplementedExc...
-#include "hcl_utils.h"                              // for LOG_HCL_INFO, VERIFY
-#include "interfaces/hcl_icollective_routines.h"    // for IHclCollectiveRou...
-#include "platform/gen2_arch_common/group_calls.h"  // for GroupCalls
-#include "hcl_log_manager.h"                        // for LOG_*
-#include "platform/gen2_arch_common/hcl_collective_routines.h"        // for HclCollectiveRoutinesGen2Arch
+#include <unordered_set>                                        // for unordered_set
+#include "hcl_exceptions.h"                                     // for NotImplementedExc...
+#include "hcl_utils.h"                                          // for LOG_HCL_INFO, VERIFY
+#include "interfaces/hcl_icollective_routines.h"                // for IHclCollectiveRou...
+#include "platform/gen2_arch_common/group_calls.h"              // for GroupCalls
+#include "hcl_log_manager.h"                                    // for LOG_*
+#include "platform/gen2_arch_common/hcl_collective_routines.h"  // for HclCollectiveRoutinesGen2Arch
 #include "platform/gen2_arch_common/collective_states.h"
 #include "platform/gen2_arch_common/hcl_device.h"
 #include "hccl_context.h"
@@ -94,9 +94,9 @@ uint64_t ApiAggregatorGen2Arch::checkGroupCollectiveDependency()
             false,
             device->getScaleOutProvider()->isGaudiDirect(),
             device->getEdmaEngineWorkDistributionSize(),
-            device->getHal()->getMaxNumScaleUpPortsPerConnection(),
-            (device->getPortMapping()).getNumScaleOutPorts(params.m_dynamicComm.getSpotlightType()),
-            device->getDeviceType(),
+            device->getServerConnectivity().getMaxNumScaleUpPortsPerConnection(params.m_dynamicComm),
+            device->getServerConnectivity().getNumScaleOutPorts(params.m_dynamicComm),
+            device->getSignalsCalculator(),
             m_collectiveRoutines->m_remainderCalculator};
         tempTargetVal = m_collectiveRoutines->checkCollectiveDependency(commonState, nextTargetVal, false);
         retTargetVal  = std::max(retTargetVal, tempTargetVal);
@@ -157,15 +157,15 @@ void ApiAggregatorGen2Arch::onHandleSendRecvEntry(SendRecvApiEntry& sendRecvEntr
     {
         case ApiType::Send:
         {
-            index = sendRecvEntry.isRankInsideScaleupGroup
-                    ? hcl::SchedulersIndex::sendScaleUp : hcl::SchedulersIndex::sendScaleOut;
+            index = sendRecvEntry.isRankInsideScaleupGroup ? hcl::SchedulersIndex::sendScaleUp
+                                                           : hcl::SchedulersIndex::sendScaleOut;
 
             break;
         }
         case ApiType::Recv:
         {
-            index =
-                sendRecvEntry.isRankInsideScaleupGroup ? hcl::SchedulersIndex::recvScaleUp : hcl::SchedulersIndex::recvScaleOut;
+            index = sendRecvEntry.isRankInsideScaleupGroup ? hcl::SchedulersIndex::recvScaleUp
+                                                           : hcl::SchedulersIndex::recvScaleOut;
             break;
         }
         default:
@@ -222,8 +222,7 @@ bool ApiAggregatorGen2Arch::checkCallsCounter()
 
 hcclResult_t ApiAggregatorGen2Arch::addSendRecvApiCall(HCL_Rank myRank, const SendRecvApiEntry& entry)
 {
-    if (!checkCallsCounter())
-        return hcclInvalidUsage;
+    if (!checkCallsCounter()) return hcclInvalidUsage;
 
     addGroupStart();
 
@@ -242,16 +241,14 @@ hcclResult_t ApiAggregatorGen2Arch::addSendRecvApiCall(HCL_Rank myRank, const Se
     }
 
     return addGroupEnd();
-
 }
 
 hcclResult_t ApiAggregatorGen2Arch::addCollectiveApiCall(HclCollectiveParams& params)
 {
-    if (m_counter == 0) // no group mode
+    if (m_counter == 0)  // no group mode
         return m_collectiveRoutines->hclCollectiveCall(params);
 
-    if (!checkCallsCounter())
-        return hcclInvalidUsage;
+    if (!checkCallsCounter()) return hcclInvalidUsage;
 
     m_comms.insert(params.m_dynamicComm);
     m_collectiveStack.push_back(params);
@@ -275,8 +272,8 @@ hcclResult_t ApiAggregatorGen2Arch::addGroupEnd()
         return hcclInvalidUsage;
     }
 
-
-    if (m_comms.size() == 0) return hcclSuccess;;
+    if (m_comms.size() == 0) return hcclSuccess;
+    ;
 
     checkGroupCollectiveDependency();
 
@@ -335,6 +332,5 @@ void ApiAggregatorGen2Arch::handleSelfSendRecv()
         }
 
         m_sendRecvMemCpyVec.push_back({recvEntry.count, recvEntry.dataType, recvEntry.address, sendEntry.address});
-
     }
 }

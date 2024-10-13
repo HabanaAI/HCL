@@ -32,7 +32,7 @@ void HclCollectiveRoutinesGen2Arch::determineCompletionSO(SliceState& sliceState
     {
         if (sliceState.m_syncUpBufferWithLtu && !isFirstBox)
         {
-            sliceState.m_execution.m_scaleoutCompletionWaitEvent  = WaitEvent::RR_LTU_SIGNALING_WAIT_FOR_SCALEOUT_SEND;
+            sliceState.m_execution.m_scaleoutCompletionWaitEvent  = WaitEvent::LTU_SIGNALING_WAIT_FOR_SCALEOUT_SEND;
             sliceState.m_execution.m_scaleoutCompletionWaitMethod = WaitMethod::GPSO_0;
         }
     }
@@ -40,10 +40,10 @@ void HclCollectiveRoutinesGen2Arch::determineCompletionSO(SliceState& sliceState
     {
         int ScaleupGroupSize = sliceState.m_dynamicComm.getScaleupGroupSize();
 
-        bool scaleOutFirstOp = ((sliceState.m_currentOp == eHCLAllGather || sliceState.m_currentOp == eHCLScatter ||
-                                 (sliceState.m_currentOp == eHCLGather && !isFirstBox) ||
-                                 sliceState.m_currentOp == eHCLSimpleBroadcast) &&
-                                ScaleupGroupSize != 1);
+        bool scaleOutFirstOp =
+            ((sliceState.m_currentOp == eHCLAllGather || sliceState.m_currentOp == eHCLScatter ||
+              (sliceState.m_currentOp == eHCLGather && !isFirstBox) || sliceState.m_currentOp == eHCLSimpleBroadcast) &&
+             ScaleupGroupSize != 1);
 
         if (m_scaleoutProvider->isGaudiDirect() && sliceState.m_currentOp == eHCLReduceScatter)
         {
@@ -60,17 +60,17 @@ void HclCollectiveRoutinesGen2Arch::determineCompletionSO(SliceState& sliceState
             {
                 bool     isEdgeIteration = sliceState.isEdgeIteration(sliceState.m_boxNumInfo);
                 unsigned boxIter         = sliceState.calcBoxIterRecv(sliceState.m_boxNumInfo);
-                int      longtermOffset  = isEdgeIteration ? sliceState.m_reproScaleoutLongtermAmount - 1
-                                                           : boxIter % sliceState.m_reproScaleoutBuffersAmount;
+                int      longtermOffset  = isEdgeIteration ? sliceState.m_scaleoutLongtermAmount - 1
+                                                           : boxIter % sliceState.m_scaleoutBuffersAmount;
 
                 if (isEdgeIteration)
                 {
-                    sliceState.m_execution.m_scaleoutCompletionWaitEvent = WaitEvent::RR_RS_SO_WAIT_FOR_ALL_RECV;
+                    sliceState.m_execution.m_scaleoutCompletionWaitEvent = WaitEvent::RS_SO_WAIT_FOR_ALL_RECV;
                 }
                 else
                 {
                     sliceState.m_execution.m_scaleoutCompletionWaitEvent =
-                        (WaitEvent)((unsigned)WaitEvent::RR_RS_SO_RECV_WAIT_FOR_PREV_RECV_BASE + longtermOffset);
+                        (WaitEvent)((unsigned)WaitEvent::RS_SO_RECV_WAIT_FOR_PREV_RECV_BASE + longtermOffset);
                 }
             }
 
@@ -124,10 +124,7 @@ void HclCollectiveRoutinesGen2Arch::provideScaleoutResources(SliceState& sliceSt
         return;
     }
 
-    hcl::ScalStream& currentStream = ActiveStreamManagerGen2Arch::getActiveCollectiveStream(m_deviceController,
-                                                                                            sliceState.m_currentOp,
-                                                                                            m_streamId,
-                                                                                            0);
+    hcl::ScalStream& currentStream = m_activeStreamManager.getActiveCollectiveStream(hcl::SchedulersIndex::dma);
 
     LOG_HCL_TRACE(HCL,
                   "need to provide {} SOBs and {} Fences",
@@ -156,25 +153,25 @@ void HclCollectiveRoutinesGen2Arch::provideScaleoutResources(SliceState& sliceSt
 
             bool     isEdgeIteration = sliceState.isEdgeIteration(sliceState.m_boxNumInfo);
             unsigned boxIter         = sliceState.calcBoxIterRecv(sliceState.m_boxNumInfo);
-            int      longtermOffset  = isEdgeIteration ? sliceState.m_reproScaleoutLongtermAmount - 1
-                                                       : boxIter % sliceState.m_reproScaleoutBuffersAmount;
-            unsigned phaseOfWait     = isEdgeIteration ? 0 : (boxIter / sliceState.m_reproScaleoutBuffersAmount);
+            int      longtermOffset  = isEdgeIteration ? sliceState.m_scaleoutLongtermAmount - 1
+                                                       : boxIter % sliceState.m_scaleoutBuffersAmount;
+            unsigned phaseOfWait     = isEdgeIteration ? 0 : (boxIter / sliceState.m_scaleoutBuffersAmount);
 
             if (isEdgeIteration)
             {
-                waitEvent = WaitEvent::RR_RS_SO_WAIT_FOR_ALL_RECV;
+                waitEvent = WaitEvent::RS_SO_WAIT_FOR_ALL_RECV;
             }
             else
             {
-                waitEvent = (WaitEvent)((unsigned)WaitEvent::RR_RS_SO_RECV_WAIT_FOR_PREV_RECV_BASE + longtermOffset);
+                waitEvent = (WaitEvent)((unsigned)WaitEvent::RS_SO_RECV_WAIT_FOR_PREV_RECV_BASE + longtermOffset);
             }
             m_signalsManager->enqueueWait(waitEvent,
-                                          {SignalEvent::RR_SIGNAL_TO_LONGTERM},
+                                          {SignalEvent::SIGNAL_TO_LONGTERM},
                                           WaitMethod::GPSO_LONGTERM,
                                           phaseOfWait,
                                           1,
                                           longtermOffset);
-            m_signalsManager->enqueueCompletion({SignalEvent::RR_SIGNAL_TO_CG});
+            m_signalsManager->enqueueCompletion({SignalEvent::SIGNAL_TO_CG});
         }
         else if (!m_scaleoutProvider->isGaudiDirect())
         {
@@ -187,15 +184,16 @@ void HclCollectiveRoutinesGen2Arch::provideScaleoutResources(SliceState& sliceSt
 
                 if (sliceState.m_currentOp == eHCLScatter)
                 {
-                    unsigned     nextBox = getNextBox(sliceState.m_dynamicComm.getMyScaleupGroup(), sliceState.m_boxIterations);
+                    unsigned nextBox =
+                        getNextBox(sliceState.m_dynamicComm.getMyScaleupGroup(), sliceState.m_boxIterations);
                     unsigned int numFences = (nextBox == sliceState.rootBox()) ? 1 : 2;
 
                     m_signalsManager->enqueueWait(WaitEvent::COMPLEX_BCAST_SO_SEND_AND_AG_SU_WAIT_FOR_SO_RECV,
-                                                  {SignalEvent::RR_SIGNAL_TO_LONGTERM},
+                                                  {SignalEvent::SIGNAL_TO_LONGTERM},
                                                   WaitMethod::GPSO_LONGTERM,
                                                   0,
                                                   numFences);
-                    m_signalsManager->enqueueCompletion({SignalEvent::RR_SIGNAL_TO_CG});
+                    m_signalsManager->enqueueCompletion({SignalEvent::SIGNAL_TO_CG});
                 }
             }
         }
@@ -220,11 +218,7 @@ void HclCollectiveRoutinesGen2Arch::provideScaleoutResources(SliceState& sliceSt
 
 void HclCollectiveRoutinesGen2Arch::provideScaleoutResources(NonCollectiveState& nonCollectiveState)
 {
-    hcl::ScalStream& currentStream =
-        ActiveStreamManagerGen2Arch::getActiveCollectiveStream(m_deviceController,
-                                                               nonCollectiveState.m_currentOp,
-                                                               m_streamId,
-                                                               0);
+    hcl::ScalStream& currentStream = m_activeStreamManager.getActiveCollectiveStream(hcl::SchedulersIndex::dma);
     LOG_HCL_TRACE(HCL,
                   "(NonCollectiveState): m_isSend={}, m_comm={}, m_isScaleoutRequired={}",
                   nonCollectiveState.m_isSend,
@@ -256,7 +250,10 @@ void HclCollectiveRoutinesGen2Arch::provideScaleoutResources(NonCollectiveState&
     nonCollectiveState.m_execution.m_completionSoAddr = nonCollectiveState.m_completionSoAddr;
 }
 
-void HclCollectiveRoutinesGen2Arch::getDeviceToRemoteIndex(CommonState& commonState, bool isSend, box_devices_t& deviceToRemoteIndex, bool isAllGatherQp)
+void HclCollectiveRoutinesGen2Arch::getDeviceToRemoteIndex(CommonState&   commonState,
+                                                           bool           isSend,
+                                                           box_devices_t& deviceToRemoteIndex,
+                                                           bool           isAllGatherQp)
 {
     // initialize the output array
     deviceToRemoteIndex.fill(-1);
@@ -443,7 +440,7 @@ unsigned int HclCollectiveRoutinesGen2Arch::calcRequiredCreditAmount(CommonState
         if (commonState.m_collectiveOp != eHCLReduce)
         {
             continuousTargets =
-                std::min(commonState.m_reproScaleoutBuffersAmount, commonState.m_boxIterations - boxIter - 1);
+                std::min(commonState.m_scaleoutBuffersAmount, commonState.m_boxIterations - boxIter - 1);
             if (commonState.isEdgeIteration(prevBoxNumInfo) && commonState.m_collectiveOp != eHCLReduceScatter)
             {
                 continuousTargets += 1;
@@ -477,7 +474,7 @@ unsigned int HclCollectiveRoutinesGen2Arch::calcRequiredCreditAmount(CommonState
                           "hnics & scaleout send, m_scaleoutNonCollectiveSend={}",
                           commonState.m_scaleoutNonCollectiveSend);
             const uint64_t lastTargetVal = m_scaleoutProvider->getHostBufferManager(m_streamId)
-                                              ->allocNextBuffer(m_longSo.targetValue, HNIC_SEND_POOL);
+                                               ->allocNextBuffer(m_longSo.targetValue, HNIC_SEND_POOL);
             if (lastTargetVal != 0)
             {
                 VERIFY(m_longSo.targetValue > lastTargetVal, "No available send host buffer");
@@ -489,7 +486,7 @@ unsigned int HclCollectiveRoutinesGen2Arch::calcRequiredCreditAmount(CommonState
         else if (commonState.isScaleoutRequired(true, nexBoxNumInfo))
         {
             uint64_t lastTargetVal = m_scaleoutProvider->getHostBufferManager(m_streamId)
-                                        ->allocNextBuffer(m_longSo.targetValue, HNIC_SEND_POOL);
+                                         ->allocNextBuffer(m_longSo.targetValue, HNIC_SEND_POOL);
             if (lastTargetVal != 0)
             {
                 VERIFY(m_longSo.targetValue > lastTargetVal, "No available send host buffer");
@@ -507,7 +504,7 @@ unsigned int HclCollectiveRoutinesGen2Arch::calcRequiredCreditAmount(CommonState
                           "hnics & scaleout recv, m_scaleoutNonCollectiveRecv={}",
                           commonState.m_scaleoutNonCollectiveRecv);
             const uint64_t lastTargetVal = m_scaleoutProvider->getHostBufferManager(m_streamId)
-                                              ->allocNextBuffer(m_longSo.targetValue, HNIC_RECV_POOL);
+                                               ->allocNextBuffer(m_longSo.targetValue, HNIC_RECV_POOL);
             if (lastTargetVal != 0)
             {
                 VERIFY(m_longSo.targetValue > lastTargetVal, "No available recv host buffer");
@@ -522,7 +519,7 @@ unsigned int HclCollectiveRoutinesGen2Arch::calcRequiredCreditAmount(CommonState
             if (commonState.m_currentOp == eHCLReduceScatter)
             {
                 continuousTargets =
-                    std::min(commonState.m_reproScaleoutBuffersAmount, commonState.m_boxIterations - boxIter - 1);
+                    std::min(commonState.m_scaleoutBuffersAmount, commonState.m_boxIterations - boxIter - 1);
                 if (commonState.isEdgeIteration(prevBoxNumInfo) && commonState.m_collectiveOp != eHCLReduceScatter)
                 {
                     continuousTargets += 1;
@@ -530,7 +527,7 @@ unsigned int HclCollectiveRoutinesGen2Arch::calcRequiredCreditAmount(CommonState
                 LOG_HCL_TRACE(HCL, "allocating hnic recv buffer for {} future collectives", continuousTargets);
             }
             uint64_t lastTargetVal = m_scaleoutProvider->getHostBufferManager(m_streamId)
-                                        ->allocNextBuffer(m_longSo.targetValue + continuousTargets, HNIC_RECV_POOL);
+                                         ->allocNextBuffer(m_longSo.targetValue + continuousTargets, HNIC_RECV_POOL);
             if (lastTargetVal != 0)
             {
                 VERIFY(m_longSo.targetValue > lastTargetVal, "No available recv host buffer");
@@ -554,14 +551,14 @@ unsigned int HclCollectiveRoutinesGen2Arch::calcRequiredCreditAmount(CommonState
 
     if (commonState.isLongtermGPSORequired(boxIter))
     {
-        uint64_t  lastTargetValLongTerm = 0;
+        uint64_t lastTargetValLongTerm = 0;
         int64_t  signalDiff            = 0;
         unsigned continuousTarget      = commonState.calcLongtermContinuousTarget(boxIter);
 
         LOG_HCL_TRACE(HCL, "Allocating longterm gpso for continuousTarget={} future collectives", continuousTarget);
-        m_graphSync.incLongtermSoIndex(commonState.m_reproScaleoutLongtermAmount);
+        m_graphSync.incLongtermSoIndex(commonState.m_scaleoutLongtermAmount);
 
-        for (unsigned i = 0; i < commonState.m_reproScaleoutLongtermAmount; ++i)
+        for (unsigned i = 0; i < commonState.m_scaleoutLongtermAmount; ++i)
         {
             lastTargetValLongTerm =
                 m_deviceController.getSyncParams(m_streamId)
@@ -577,7 +574,7 @@ unsigned int HclCollectiveRoutinesGen2Arch::calcRequiredCreditAmount(CommonState
         }
     }
 
-    bool firstOpInGroup = false;
+    bool           firstOpInGroup      = false;
     const uint64_t groupMaxTargetValue = getGroupMaxTargetValue();
     if (getGroupContext())
     {
@@ -628,8 +625,10 @@ unsigned int HclCollectiveRoutinesGen2Arch::calcRequiredCreditAmount(CommonState
     return m_deviceController.handleExtraCredits(m_streamId, requiredExtraCredits);
 }
 
-uint64_t HclCollectiveRoutinesGen2Arch::getBufferClearSize(SliceState& sendSliceState, uint64_t scaleOutRecvCount,
-                                                           uint64_t sizeInBytes, e_devicePoolID bufferId)
+uint64_t HclCollectiveRoutinesGen2Arch::getBufferClearSize(SliceState&    sendSliceState,
+                                                           uint64_t       scaleOutRecvCount,
+                                                           uint64_t       sizeInBytes,
+                                                           e_devicePoolID bufferId)
 {
     return sendSliceState.m_remainderCalculator->getBufferClearSize(sendSliceState.m_collectiveOp,
                                                                     sizeInBytes,

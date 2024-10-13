@@ -1,4 +1,5 @@
 #include "platform/gen2_arch_common/hcl_collective_routines.h"
+#include "platform/gen2_arch_common/hcl_packets_utils.h"
 
 #include <ext/alloc_traits.h>  // for __alloc...
 #include <cstdint>             // for uint64_t
@@ -20,19 +21,15 @@
 #include "platform/gen2_arch_common/dependency_checker.h"   // for DependencyChecker
 #include "platform/gen2_arch_common/collective_utils.h"     // for getNextBox, getPrevBox
 #include "platform/gen2_arch_common/active_stream_manager.h"
+#include "platform/gen2_arch_common/hcl_lbw_write_aggregator.h"
 #include "hcl_math_utils.h"
-
-static std::map<uint32_t, std::string> g_signalNames;
 
 void HclCollectiveRoutinesGen2Arch::initCollectiveRoutinesGen2Arch()
 {
     LOG_HCL_TRACE(HCL, "Initializing DeviceController");
     m_deviceController.initDeviceForCollectiveRoutine(m_streamId, &m_longSo, &m_longSoNullSubmit);
 
-    m_signalsManager = new SignalsManager(m_graphSync,
-                                          m_utils,
-                                          m_graphSync.getCgData(true).size,
-                                          m_streamId);
+    m_signalsManager = new SignalsManager(m_graphSync, m_utils, m_graphSync.getCgData(true).size, m_streamId);
 
     m_deviceController.setSignalFinalize(m_streamId, [&]() { m_signalsManager->finalize(false); });
 
@@ -47,62 +44,49 @@ void HclCollectiveRoutinesGen2Arch::createDmaProgs(SliceState&    sendSliceState
                                                    unsigned       requiredCredits,
                                                    hcclDataType_t dataType)
 {
-    unsigned         sliceIter = sendSliceState.m_sliceIter;
-    unsigned         sendBoxNum = sendSliceState.m_boxNumInfo.m_boxNum;
-    unsigned         schedIdx  = (unsigned)hcl::SchedulersIndex::dma;
+    unsigned sliceIter  = sendSliceState.m_sliceIter;
+    unsigned sendBoxNum = sendSliceState.m_boxNumInfo.m_boxNum;
 
     // No need to cast down self box, as there's no need to send it to other boxes.
     bool isFirstBox = sendBoxNum == sendSliceState.m_dynamicComm.getMyScaleupGroup();
 
-    ActiveStreamManagerGen2Arch activeStreamManager(sendSliceState,
-                                                    m_scaleoutProvider,
-                                                    m_deviceController,
-                                                    m_streamId,
-                                                    schedIdx);
-
-    activeStreamManager.setTargetValueForAllDmaStreams(m_longSo.targetValue);
-
-    hcl::ScalStream* arbitratorStream = activeStreamManager.getDmaScalStream(hcl::DMAStreams::arbitrator);
+    hcl::ScalStream* arbitratorStream = m_activeStreamManager.getDmaScalStream(hcl::DMAStreams::arbitrator);
     m_deviceController.addBarrierArm(*arbitratorStream,
                                      false,
                                      requiredCredits,
-                                     activeStreamManager.getActiveDmaStreams());
+                                     m_activeStreamManager.getActiveDmaStreams());
 
     uint64_t chunkCountForActivateReductionStream = 0;
 
     hcl::ScalStream* currentStream = nullptr;
 
-    if ((currentStream = activeStreamManager.getDmaScalStream(hcl::DMAStreams::reduction)) != nullptr)
+    if ((currentStream = m_activeStreamManager.getDmaScalStream(hcl::DMAStreams::reduction)) != nullptr)
     {
         LOG_HCL_CONTEXT_TRACE(HCL, "Running dma for scaleup");
 
         m_deviceController.waitForBarrierArm(*currentStream);
 
-        streamAddSingleWaitIfNeeded(*currentStream,
-                                    {WaitEvent::RR_DMA_WAIT_FOR_RECV,
-                                     WaitEvent::RR_DMA_WAIT_FOR_SU_RECV,
-                                     WaitEvent::RR_DMA_BATCH_WAIT_FOR_SCALEOUT_RECV});
+        streamAddSingleWaitIfNeeded(*currentStream, {WaitEvent::DMA_WAIT_FOR_SU_RECV});
 
         chunkCountForActivateReductionStream = sendSliceState.m_rankScaleOutCount;
 
-        uint32_t indexOfReproBuffer = 0;
+        uint32_t indexOfSubBuffer = 0;
 
-        e_devicePoolID poolIdx = SCALEUP_RR_AND_ALL2ALL_POOL;
-        indexOfReproBuffer =
-            m_intermediateBufferManager.getSliceId(poolIdx, m_streamId) / (RR_BUFFER_GRANULARITY_SCALEUP);
+        e_devicePoolID poolIdx = SCALEUP_AND_ALL2ALL_POOL;
+        indexOfSubBuffer =
+            m_intermediateBufferManager.getSliceId(poolIdx, m_streamId) / (DeviceBufferManager::getFactor(poolIdx));
         bool     shouldCastUp     = sendSliceState.m_16BitReduction && sendSliceState.m_isMultiScaleupGroup;
         bool     isLastReduceRoot = (sendSliceState.m_collectiveOp == eHCLReduce &&
                                  !(sendSliceState.m_isMultiScaleupGroup && sendSliceState.m_16BitReduction));
-        uint32_t dmaType          = (isLastReduceRoot && sendSliceState.m_16BitReduction &&
-                                     sendSliceState.m_isMultiScaleupGroup) ? m_commands.getDmaTypeCastDown()
-                                        : (shouldCastUp ? m_commands.getDmaTypeCastUp()
-                                                        : m_commands.getDmaTypeMemCpy());
+        uint32_t dmaType = (isLastReduceRoot && sendSliceState.m_16BitReduction && sendSliceState.m_isMultiScaleupGroup)
+                               ? m_commands.getDmaTypeCastDown()
+                               : (shouldCastUp ? m_commands.getDmaTypeCastUp() : m_commands.getDmaTypeMemCpy());
 
         uint32_t soLtuAddress = 0;
         if (isFirstBox && sendSliceState.m_dynamicComm.getScaleupGroupSize() != 1 &&
             sendSliceState.m_syncUpBufferWithLtu)
         {
-            unsigned upBufferIdx = m_intermediateBufferManager.getCurrentBufferIdx(SCALEUP_RR_AND_ALL2ALL_POOL);
+            unsigned upBufferIdx = m_intermediateBufferManager.getCurrentBufferIdx(SCALEUP_AND_ALL2ALL_POOL);
             soLtuAddress         = m_graphSync.getCurrentLtuGpsoAddr(upBufferIdx);
             unsigned lastVal     = m_graphSync.getCurrentLtuGpsoData(upBufferIdx);
             unsigned nextVal     = m_graphSync.getCurrentLtuGpsoData(
@@ -111,17 +95,22 @@ void HclCollectiveRoutinesGen2Arch::createDmaProgs(SliceState&    sendSliceState
 
             if (nextVal < lastVal)
             {
-                // we encounterd an overflow, EDMA signals only increment SO value and can't set it.
+                sob_info             sobInfo = m_utils->getSOBInfo(m_graphSync.getCurrentLtuGpsoAddr(upBufferIdx));
+                SyncObjectDescriptor sobDesc = {.sob = sobInfo, .value = 0};
+                LOG_HCL_DEBUG(HCL, "LTU wraparound has been reached, clearing {}", m_utils->printSOBInfo(sobInfo));
+
+                // we encountered an overflow, EDMA signals only increment SO value and can't set it.
                 // 1) update the expected LTU SO Value after edma signals
                 // 2) use LBW write to set SO value to zero
-                // 3) add wait to make sure SO is set to zero before continueing to prevent a race.
-                // * we don't mind the proformance since in the worst case it happnes every ~32K iterations.
+                // 3) add wait to make sure SO is set to zero before continuing to prevent a race.
+                // * we don't mind the performance since in the worst case it happens every ~32K iterations.
                 m_graphSync.getCurrentLtuGpsoData(upBufferIdx, SO_MAX_VAL - lastVal);
                 m_commands.serializeLbwWriteCommand(*currentStream,
                                                     currentStream->getSchedIdx(),
                                                     soLtuAddress,
                                                     m_graphSync.getSoConfigValue(0, false));
-                m_deviceController.addInternalWait(*currentStream, 0, m_graphSync.getCurrentLtuGpsoIdx(upBufferIdx));
+
+                m_deviceController.streamAddWait(*currentStream, sobDesc, true);
             }
         }
 
@@ -134,17 +123,14 @@ void HclCollectiveRoutinesGen2Arch::createDmaProgs(SliceState&    sendSliceState
                                             *currentStream,
                                             dmaType,
                                             false,
-                                            indexOfReproBuffer,
+                                            indexOfSubBuffer,
                                             true,
-                                            false,
                                             false,
                                             poolIdx,
                                             true);
 
         // Wait for 1 additional signal
-        streamAddSingleWaitIfNeeded(
-            *currentStream,
-            {WaitEvent::RR_FINAL_DMA_WAIT_FOR_EDMA, WaitEvent::RR_REDUCE_FINAL_SCALEOUT_DMA_WAIT_FOR_DMA_BATCH});
+        streamAddSingleWaitIfNeeded(*currentStream, {WaitEvent::FINAL_DMA_WAIT_FOR_EDMA});
 
         if (soLtuAddress)
         {
@@ -152,14 +138,14 @@ void HclCollectiveRoutinesGen2Arch::createDmaProgs(SliceState&    sendSliceState
         }
     }
 
-    if ((currentStream = activeStreamManager.getDmaScalStream(hcl::DMAStreams::gdr)) != nullptr)
+    if ((currentStream = m_activeStreamManager.getDmaScalStream(hcl::DMAStreams::gdr)) != nullptr)
     {
         LOG_HCL_CONTEXT_TRACE(HCL, "Running dma for gaudi-direct");
         m_deviceController.waitForBarrierArm(*currentStream);
 
         streamAddSingleWaitIfNeeded(*currentStream, {WaitEvent::GDR_MEMCPY_WAIT_FOR_HNIC_RECV});
 
-        // Copy from GDR buffer to SO_RR buffer
+        // Copy from GDR buffer to SO buffer
         m_memHandler->createMemCopyCommands(sendSliceState,
                                             m_signalsManager,
                                             sliceIter,
@@ -169,78 +155,72 @@ void HclCollectiveRoutinesGen2Arch::createDmaProgs(SliceState&    sendSliceState
                                             (sendSliceState.m_16BitReduction) ? m_commands.getDmaTypeCastUp()
                                                                               : m_commands.getDmaTypeMemCpy(),
                                             false,
-                                            0, /* indexOfReproBuffer */
+                                            0, /* indexOfSubBuffer */
                                             false,
                                             /*isForScaleout=*/true,
-                                            false,
                                             SCALEOUT_GDR_POOL);
 
         streamAddSingleWaitIfNeeded(*currentStream, {WaitEvent::HNIC_SIGNAL_SPLIT_WAIT_FOR_GDR_MEMCPY});
 
         LBWBurstDestData_t destData;
         destData.push_back(
-            {m_signalsManager->dequeueSoAddress(SignalEvent::RR_SIGNAL_TO_LONGTERM),
-             m_graphSync.getSoConfigValue(sendSliceState.signalToCost(SignalEvent::RR_SIGNAL_TO_LONGTERM), true)});
+            {m_signalsManager->dequeueSoAddress(SignalEvent::SIGNAL_TO_LONGTERM),
+             m_graphSync.getSoConfigValue(sendSliceState.signalToCost(SignalEvent::SIGNAL_TO_LONGTERM), true)});
         destData.push_back(
-            {m_signalsManager->dequeueSoAddress(SignalEvent::RR_SIGNAL_TO_CG),
-             m_graphSync.getSoConfigValue(sendSliceState.signalToCost(SignalEvent::RR_SIGNAL_TO_CG), true)});
+            {m_signalsManager->dequeueSoAddress(SignalEvent::SIGNAL_TO_CG),
+             m_graphSync.getSoConfigValue(sendSliceState.signalToCost(SignalEvent::SIGNAL_TO_CG), true)});
         m_commands.serializeLbwBurstWriteCommand(*currentStream, currentStream->getSchedIdx(), destData);
     }
 
-    if ((currentStream = activeStreamManager.getDmaScalStream(hcl::DMAStreams::signaling)) != nullptr)
+    if ((currentStream = m_activeStreamManager.getDmaScalStream(hcl::DMAStreams::signaling)) != nullptr)
     {
         m_deviceController.waitForBarrierArm(*currentStream);
 
-        if (!isFirstBox && m_scaleoutProvider->isHostNic())
+        // for PDMA flow
+        if (!isFirstBox && m_scaleoutProvider->isHostNic() && !m_scaleoutProvider->isGaudiDirect())
         {
-            VERIFY(!m_scaleoutProvider->isGaudiDirect(), "Signaling stream shouldn't be used with GDR");
             streamAddSingleWaitIfNeeded(*currentStream, {WaitEvent::HNIC_SIGNAL_SPLIT_WAIT_FOR_PDMA});
             LBWBurstDestData_t destData;
             destData.push_back(
-                {m_signalsManager->dequeueSoAddress(SignalEvent::RR_SIGNAL_TO_LONGTERM),
-                 m_graphSync.getSoConfigValue(sendSliceState.signalToCost(SignalEvent::RR_SIGNAL_TO_LONGTERM), true)});
+                {m_signalsManager->dequeueSoAddress(SignalEvent::SIGNAL_TO_LONGTERM),
+                 m_graphSync.getSoConfigValue(sendSliceState.signalToCost(SignalEvent::SIGNAL_TO_LONGTERM), true)});
             destData.push_back(
-                {m_signalsManager->dequeueSoAddress(SignalEvent::RR_SIGNAL_TO_CG),
-                 m_graphSync.getSoConfigValue(sendSliceState.signalToCost(SignalEvent::RR_SIGNAL_TO_CG), true)});
+                {m_signalsManager->dequeueSoAddress(SignalEvent::SIGNAL_TO_CG),
+                 m_graphSync.getSoConfigValue(sendSliceState.signalToCost(SignalEvent::SIGNAL_TO_CG), true)});
             m_commands.serializeLbwBurstWriteCommand(*currentStream, currentStream->getSchedIdx(), destData);
         }
 
         if (sendSliceState.m_syncUpBufferWithLtu && !isFirstBox)
         {
             LBWBurstDestData_t destData;
-            streamAddSingleWaitIfNeeded(*currentStream,
-                                        {WaitEvent::RR_FIRST_BOX_FINAL_SIGNAL_WAIT_FOR_GPSO,
-                                         WaitEvent::RR_LTU_SIGNALING_WAIT_FOR_SCALEOUT_SEND});
+            streamAddSingleWaitIfNeeded(*currentStream, {WaitEvent::LTU_SIGNALING_WAIT_FOR_SCALEOUT_SEND});
 
-            unsigned upBufferIdx = m_intermediateBufferManager.getCurrentBufferIdx(SCALEUP_RR_AND_ALL2ALL_POOL);
+            unsigned upBufferIdx = m_intermediateBufferManager.getCurrentBufferIdx(SCALEUP_AND_ALL2ALL_POOL);
             destData.push_back(
                 {m_graphSync.getCurrentLtuGpsoAddr(upBufferIdx),
                  m_graphSync.getSoConfigValue(m_graphSync.getCurrentLtuGpsoData(upBufferIdx, true), false)});
             destData.push_back(
-                {m_signalsManager->dequeueSoAddress(SignalEvent::RR_SIGNAL_TO_CG),
-                 m_graphSync.getSoConfigValue(sendSliceState.signalToCost(SignalEvent::RR_SIGNAL_TO_CG), true)});
+                {m_signalsManager->dequeueSoAddress(SignalEvent::SIGNAL_TO_CG),
+                 m_graphSync.getSoConfigValue(sendSliceState.signalToCost(SignalEvent::SIGNAL_TO_CG), true)});
             m_commands.serializeLbwBurstWriteCommand(*currentStream, currentStream->getSchedIdx(), destData);
         }
     }
 
     uint64_t chunkCountForActivateScaleoutReductionStream = 0;
 
-    if ((currentStream = activeStreamManager.getDmaScalStream(hcl::DMAStreams::scaleoutReduction)) != nullptr)
+    if ((currentStream = m_activeStreamManager.getDmaScalStream(hcl::DMAStreams::scaleoutReduction)) != nullptr)
     {
         LOG_HCL_CONTEXT_TRACE(HCL, "Running dma for scaleout");
 
         m_deviceController.waitForBarrierArm(*currentStream);
 
-        streamAddSingleWaitIfNeeded(*currentStream,
-                                    {WaitEvent::RR_RS_SO_WAIT_FOR_ALL_RECV,
-                                     WaitEvent::RR_DMA_BATCH_WAIT_FOR_SCALEOUT_RECV,
-                                     WaitEvent::RR_DMA_BATCH_WAIT_FOR_GDR_MEMCPY});
+        streamAddSingleWaitIfNeeded(*currentStream, {WaitEvent::RS_SO_WAIT_FOR_ALL_RECV});
 
         chunkCountForActivateScaleoutReductionStream = recvSliceState.m_rankScaleOutCount;
 
-        unsigned indexOfReproBuffer = m_intermediateBufferManager.getSliceId(SCALEOUT_RR_POOL, m_streamId);
+        unsigned indexOfSubBuffer = m_intermediateBufferManager.getSliceId(SCALEOUT_POOL, m_streamId);
 
-        indexOfReproBuffer /= RR_BUFFER_GRANULARITY_SCALEOUT;
+        indexOfSubBuffer /= DeviceBufferManager::getFactor(SCALEOUT_POOL);
 
         m_memHandler->createMemCopyCommands(sendSliceState,
                                             m_signalsManager,
@@ -251,26 +231,23 @@ void HclCollectiveRoutinesGen2Arch::createDmaProgs(SliceState&    sendSliceState
                                             sendSliceState.m_16BitReduction ? m_commands.getDmaTypeCastDown()
                                                                             : m_commands.getDmaTypeMemCpy(),
                                             false,
-                                            indexOfReproBuffer,
+                                            indexOfSubBuffer,
                                             true,
                                             /*isForScaleout=*/true,
-                                            false,
-                                            SCALEOUT_RR_POOL);
-
-        streamAddSingleWaitIfNeeded(*currentStream, {WaitEvent::RR_FINAL_SCALEOUT_DMA_WAIT_FOR_DMA_BATCH});
+                                            SCALEOUT_POOL);
     }
 
-    hcl::ScalStream* garbageStream = activeStreamManager.getDmaScalStream(hcl::DMAStreams::garbageCollection);
+    hcl::ScalStream* garbageStream = m_activeStreamManager.getDmaScalStream(hcl::DMAStreams::garbageCollection);
 
     m_deviceController.waitForBarrierArm(*garbageStream);
     m_deviceController.addBarrierArm(*garbageStream, true, 1, {});
-
+    HclLbwWriteAggregator aggregator(garbageStream, garbageStream->getSchedIdx(), m_commands);
     {
-        const auto& methodsToClean            = m_signalsManager->getMethodsToClean();
+        const auto& methodsToClean = m_signalsManager->getMethodsToClean();
         bool        expiringByLongtermManager =
             m_deviceController.getSyncParams(m_streamId).m_longtermGPSOManager->isCreditExpiring();
-        bool        expiringByGraph =
-            methodsToClean[(unsigned)WaitMethod::GPSO_LONGTERM + recvSliceState.m_reproScaleoutLongtermAmount - 1];
+        bool expiringByGraph =
+            methodsToClean[(unsigned)WaitMethod::GPSO_LONGTERM + recvSliceState.m_scaleoutLongtermAmount - 1];
 
         VERIFY(expiringByLongtermManager == expiringByGraph,
                "Longterm GPSO credit ({}) is expiring at a different time than graph thinks ({}) at credit {}",
@@ -278,8 +255,7 @@ void HclCollectiveRoutinesGen2Arch::createDmaProgs(SliceState&    sendSliceState
                expiringByGraph,
                m_longSo.targetValue);
 
-        m_graphSync.createResetSoMessages(*garbageStream,
-                                          garbageStream->getSchedIdx(),
+        m_graphSync.createResetSoMessages(aggregator,
                                           m_deviceController.getSyncParams(m_streamId).m_smInfo.soSmIndex,
                                           methodsToClean);
     }
@@ -289,31 +265,16 @@ void HclCollectiveRoutinesGen2Arch::createDmaProgs(SliceState&    sendSliceState
         m_signalsManager->enqueueInternalCompletion(SignalEvent::FORCE_ORDER);
     }
 
-    for (auto buffer_pool : m_memset_buffers)
-    {
-        m_memHandler->memsetIMBs(m_device->m_sibContainer,
-                                 m_signalsManager,
-                                 sendSliceState,
-                                 recvSliceState,
-                                 sizeInBytes,
-                                 m_longSo,
-                                 garbageStream->getSchedIdx(),
-                                 *garbageStream,
-                                 m_streamId,
-                                 buffer_pool,
-                                 hcl::encodeStreamContextID(sendSliceState.m_apiId, m_streamId),
-                                 dataType);
-    }
+    memsetIMBsIfNeeded(sendSliceState, recvSliceState, sizeInBytes, dataType, garbageStream);
 
     LOG_HCL_TRACE(HCL,
                   "using {} internal signals for cleanup (post-collective) on {}",
                   m_signalsManager->getNumSignalsForInternal(),
                   m_utils->printSOBInfo(m_signalsManager->getSoAddress(WaitMethod::INTERNAL_CG_SO)));
-    m_commands.serializeLbwWriteCommand(
-        *garbageStream,
-        garbageStream->getSchedIdx(),
+    aggregator.aggregate(
         m_signalsManager->getSoAddress(WaitMethod::INTERNAL_CG_SO),
-        m_graphSync.getSoConfigValue(COMP_SYNC_GROUP_CMAX_TARGET - m_signalsManager->getNumSignalsForInternal(), true));
+        m_graphSync.getSoConfigValue(m_utils->getCMaxTargetValue() - m_signalsManager->getNumSignalsForInternal(),
+                                     true));
     m_deviceController.incInternalCgTargetValue(m_streamId);
 }
 
@@ -340,16 +301,10 @@ void HclCollectiveRoutinesGen2Arch::createScaleUpSendProgsNonCollective(
                   requiredCredits,
                   memcopyVec.size(),
                   sendVec);
-    hcl::ScalStream& currentStream =
-        ActiveStreamManagerGen2Arch::getActiveCollectiveStream(m_deviceController,
-                                                               eHCLNoCollective,
-                                                               m_streamId,
-                                                               (unsigned)hcl::SchedulersIndex::sendScaleUp);
-    currentStream.setTargetValue(m_longSo.targetValue);
 
-    hcl::ScalStream& arbitratorStream =
-        m_deviceController.getScalStream(m_streamId, currentStream.getSchedIdx(), ARB_STREAM_IDX);
-    arbitratorStream.setTargetValue(m_longSo.targetValue);
+    hcl::ScalStream& arbitratorStream = m_activeStreamManager.getArbitratorStream(hcl::SchedulersIndex::sendScaleUp);
+    hcl::ScalStream& currentStream = m_activeStreamManager.getActiveCollectiveStream(hcl::SchedulersIndex::sendScaleUp);
+
     m_deviceController.addBarrierArm(arbitratorStream, false, requiredCredits, {currentStream.getStreamIndex()});
     m_deviceController.waitForBarrierArm(currentStream);
 
@@ -365,33 +320,34 @@ void HclCollectiveRoutinesGen2Arch::createScaleUpSendProgsNonCollective(
                                           hcclOpNone,
                                           0};
 
-    CommonState commonState {
-        collectiveParams,
-        m_intermediateBufferManager,
-        m_scaleoutProvider->isHostNic(),
-        m_scaleoutProvider->isGaudiDirect(),
-        m_device->getEdmaEngineWorkDistributionSize(),
-        m_device->getHal()->getMaxNumScaleUpPortsPerConnection(),
-        (m_device->getPortMapping()).getNumScaleOutPorts(collectiveParams.m_dynamicComm.getSpotlightType()),
-        m_device->getDeviceType(),
-        this->m_remainderCalculator};
+    CommonState commonState {collectiveParams,
+                             m_intermediateBufferManager,
+                             m_scaleoutProvider->isHostNic(),
+                             m_scaleoutProvider->isGaudiDirect(),
+                             m_device->getEdmaEngineWorkDistributionSize(),
+                             m_device->getServerConnectivity().getMaxNumScaleUpPortsPerConnection(comm),
+                             m_device->getServerConnectivity().getNumScaleOutPorts(comm),
+                             m_device->getSignalsCalculator(),
+                             this->m_remainderCalculator};
 
     // count scaleup signals
     unsigned numSignals = countScaleUpSignalsSendRecv(commonState,
                                                       numberOfSendBuckets,
                                                       numberOfRecvBuckets,
                                                       numberOfSends,
-                                                      numberOfRecvs);
+                                                      numberOfRecvs,
+                                                      comm);
 
     const unsigned isForceOrder = m_graphSync.isForceOrder(true);
 
-    numSignals += isForceOrder + (memcopyVec.size() * commonState.signalToCost(SignalEvent::EDMA_MEMCOPY))+ scaleoutSignals;
+    numSignals +=
+        isForceOrder + (memcopyVec.size() * commonState.signalToCost(SignalEvent::EDMA_MEMCOPY)) + scaleoutSignals;
     LOG_HCL_TRACE(HCL, "isForceOrder={}, numSignals={}", isForceOrder, numSignals);
 
     m_commands.serializeLbwWriteCommand(currentStream,
                                         currentStream.getSchedIdx(),
                                         m_graphSync.getCurrentCgSoAddr(CgType::eExternal),
-                                        m_graphSync.getSoConfigValue(COMP_SYNC_GROUP_CMAX_TARGET - numSignals, true));
+                                        m_graphSync.getSoConfigValue(m_utils->getCMaxTargetValue() - numSignals, true));
 
     for (const SendRecvMemCopyEntry& var : memcopyVec)
     {
@@ -428,22 +384,15 @@ void HclCollectiveRoutinesGen2Arch::createScaleUpRecvProgsNonCollective(uint32_t
 {
     LOG_HCL_TRACE(HCL, "numberOfRecv={}, requiredCredits={}, recvVec={}", numberOfRecv, requiredCredits, recvVec);
 
-    hcl::ScalStream& currentStream =
-        ActiveStreamManagerGen2Arch::getActiveCollectiveStream(m_deviceController,
-                                                               eHCLNoCollective,
-                                                               m_streamId,
-                                                               (unsigned)hcl::SchedulersIndex::recvScaleUp);
-    currentStream.setTargetValue(m_longSo.targetValue);
+    hcl::ScalStream& arbitratorStream = m_activeStreamManager.getArbitratorStream(hcl::SchedulersIndex::recvScaleUp);
+    hcl::ScalStream& currentStream = m_activeStreamManager.getActiveCollectiveStream(hcl::SchedulersIndex::recvScaleUp);
 
-    hcl::ScalStream& arbitratorStream =
-        m_deviceController.getScalStream(m_streamId, currentStream.getSchedIdx(), ARB_STREAM_IDX);
-    arbitratorStream.setTargetValue(m_longSo.targetValue);
     m_deviceController.addBarrierArm(arbitratorStream, false, requiredCredits, {currentStream.getStreamIndex()});
     m_deviceController.waitForBarrierArm(currentStream);
 
     if (numberOfRecv > 0)
     {
-        uint32_t recvIndex = 0;
+        uint32_t recvIndex      = 0;
         auto     wraparoundBits = m_wqeTracker->getWqeWraparoundBits(
             comm,
             0,
@@ -464,8 +413,8 @@ void HclCollectiveRoutinesGen2Arch::createScaleUpRecvProgsNonCollective(uint32_t
 void HclCollectiveRoutinesGen2Arch::createDmaProgsNonCollective(unsigned int sizeInBytes, unsigned requiredCredits)
 {
     LOG_HCL_TRACE(HCL, "sizeInBytes={}, requiredCredits={}", sizeInBytes, requiredCredits);
-    const unsigned     dmaSchedIdx            = (unsigned)hcl::SchedulersIndex::dma;
-    hcl::ScalStream&   arbStream =
+    const unsigned   dmaSchedIdx = (unsigned)hcl::SchedulersIndex::dma;
+    hcl::ScalStream& arbStream =
         m_deviceController.getScalStream(m_streamId, dmaSchedIdx, static_cast<unsigned>(hcl::DMAStreams::arbitrator));
     constexpr unsigned streamIdx              = 0;
     hcl::ScalStream&   garbageCollectorStream = m_deviceController.getScalStream(m_streamId, dmaSchedIdx, streamIdx);
@@ -476,9 +425,8 @@ void HclCollectiveRoutinesGen2Arch::createDmaProgsNonCollective(unsigned int siz
 
     m_deviceController.waitForBarrierArm(garbageCollectorStream);
     m_deviceController.addBarrierArm(garbageCollectorStream, true, 1 /*creditsNr*/, {});
-
-    m_graphSync.createResetSoMessages(garbageCollectorStream,
-                                      dmaSchedIdx,
+    HclLbwWriteAggregator aggregator(&garbageCollectorStream, dmaSchedIdx, m_commands);
+    m_graphSync.createResetSoMessages(aggregator,
                                       m_deviceController.getSyncParams(m_streamId).m_smInfo.soSmIndex,
                                       m_signalsManager->getMethodsToClean());
 
@@ -486,13 +434,10 @@ void HclCollectiveRoutinesGen2Arch::createDmaProgsNonCollective(unsigned int siz
 
     LOG_HCL_TRACE(HCL,
                   "Count-Signaling | Internal cg is set to wait on 0x{:x}, signals: {}",
-                  uint64_t(COMP_SYNC_GROUP_CMAX_TARGET - additionalSignal),
+                  uint64_t(m_utils->getCMaxTargetValue() - additionalSignal),
                   additionalSignal);
-    m_commands.serializeLbwWriteCommand(
-        garbageCollectorStream,
-        dmaSchedIdx,
-        m_graphSync.getCurrentCgSoAddr(CgType::eInternal),
-        m_graphSync.getSoConfigValue(COMP_SYNC_GROUP_CMAX_TARGET - additionalSignal, true));
+    aggregator.aggregate(m_graphSync.getCurrentCgSoAddr(CgType::eInternal),
+                         m_graphSync.getSoConfigValue(m_utils->getCMaxTargetValue() - additionalSignal, true));
     m_deviceController.incInternalCgTargetValue(m_streamId);
 }
 
@@ -503,34 +448,24 @@ void HclCollectiveRoutinesGen2Arch::createScaleUpSendProgs(SliceState&      send
                                                            HCL_CollectiveOp currentOp,
                                                            unsigned         numSignals)
 {
-    hcl::ScalStream& currentStream =
-        ActiveStreamManagerGen2Arch::getActiveCollectiveStream(m_deviceController,
-                                                               currentOp,
-                                                               m_streamId,
-                                                               (unsigned)hcl::SchedulersIndex::sendScaleUp);
-    bool isPeersOnly = sendSliceState.m_isMultiScaleupGroup && sendSliceState.m_dynamicComm.getScaleupGroupSize() == 1;
-
-    currentStream.setTargetValue(m_longSo.targetValue);
-
-    m_deviceController.waitForBarrierArm(currentStream);
-
-    hcl::ScalStream& arbitratorStream =
-        m_deviceController.getScalStream(m_streamId, currentStream.getSchedIdx(), ARB_STREAM_IDX);
-    arbitratorStream.setTargetValue(m_longSo.targetValue);
+    hcl::ScalStream& arbitratorStream = m_activeStreamManager.getArbitratorStream(hcl::SchedulersIndex::sendScaleUp);
+    hcl::ScalStream& currentStream = m_activeStreamManager.getActiveCollectiveStream(hcl::SchedulersIndex::sendScaleUp);
 
     m_deviceController.addBarrierArm(arbitratorStream, false, requiredCredits, {currentStream.getStreamIndex()});
+    m_deviceController.waitForBarrierArm(currentStream);
 
     LOG_HCL_CONTEXT_TRACE(HCL, "Serializing scaleup send scheduler commands");
 
     if (sendSliceState.gatherOpsWaitForRS(true))
     {
-        streamAddSingleWaitIfNeeded(currentStream, {WaitEvent::RR_GATHER_OPS_WAIT_FOR_RS});
+        streamAddSingleWaitIfNeeded(currentStream, {WaitEvent::GATHER_OPS_WAIT_FOR_RS});
     }
 
-    m_commands.serializeLbwWriteCommand(currentStream,
-                                        currentStream.getSchedIdx(),
-                                        m_signalsManager->getSoAddress(WaitMethod::EXTERNAL_CG_SO),
-                                        m_graphSync.getSoConfigValue(COMP_SYNC_GROUP_CMAX_TARGET - numSignals, true));
+    // This should always be true when ran from hclCollectiveCall(). Other methods (like hcclGraph) will set this to 0.
+    if (numSignals > 0)
+    {
+        configureExternalSoForCompletion(numSignals);
+    }
 
     if (m_signalsManager->isEventRegistered(SignalEvent::EDMA_MEMCOPY) ||
         m_signalsManager->isEventRegistered(SignalEvent::EDMA_CAST_UP))
@@ -548,6 +483,9 @@ void HclCollectiveRoutinesGen2Arch::createScaleUpSendProgs(SliceState&      send
 
         syncWithLtuIfNeeded(sendSliceState, currentStream);
 
+        bool isPeersOnly =
+            sendSliceState.m_isMultiScaleupGroup && sendSliceState.m_dynamicComm.getScaleupGroupSize() == 1;
+
         // first copy for not-in-place
         m_memHandler->createMemCopyCommands(
             sendSliceState,
@@ -561,7 +499,6 @@ void HclCollectiveRoutinesGen2Arch::createScaleUpSendProgs(SliceState&      send
                 : m_commands.getDmaTypeMemCpy(),
             false,
             0,
-            false,
             false,
             false,
             NO_POOL /* DONT CARE - poolId*/);
@@ -579,8 +516,8 @@ void HclCollectiveRoutinesGen2Arch::createScaleUpSendProgs(SliceState&      send
                                      WaitEvent::COMPLEX_BCAST_SO_SEND_AND_AG_SU_WAIT_FOR_SU_RECV,
                                      WaitEvent::COMPLEX_BCAST_SO_SEND_AND_AG_SU_WAIT_FOR_SO_RECV});
 
-        uint64_t count = sendSliceState.m_boxCount;
-        uint64_t cellCount = sendSliceState.getChunkCount();
+        uint64_t count       = sendSliceState.m_boxCount;
+        uint64_t cellCount   = sendSliceState.getChunkCount();
         uint64_t strideCount = sendSliceState.getStrideCount();
         uint64_t offset =
             sendSliceState.m_dynamicComm.getRankInScaleupGroup() * strideCount * sendSliceState.m_dataTypeSizeInBytes;
@@ -633,7 +570,7 @@ void HclCollectiveRoutinesGen2Arch::calculateScaleupSignals(CommonState& commonS
                                                             bool         isLastBox,
                                                             bool         isFirstBox)
 {
-    bool isPeersOnly         = commonState.m_isMultiScaleupGroup && commonState.m_dynamicComm.getScaleupGroupSize() == 1;
+    bool isPeersOnly = commonState.m_isMultiScaleupGroup && commonState.m_dynamicComm.getScaleupGroupSize() == 1;
 
     if (m_graphSync.isForceOrder(true))
     {
@@ -651,7 +588,7 @@ void HclCollectiveRoutinesGen2Arch::calculateScaleupSignals(CommonState& commonS
                 {
                     if (!commonState.isRoot())
                     {
-                        // ScaleOut send and AG ScaleUp wait for scaleup recieve
+                        // ScaleOut send and AG ScaleUp wait for scaleup receive
                         unsigned int numFences = commonState.m_isMultiScaleupGroup ? 2 : 1;
                         m_signalsManager->enqueueWait(WaitEvent::COMPLEX_BCAST_SO_SEND_AND_AG_SU_WAIT_FOR_SU_RECV,
                                                       {SignalEvent::SCALEUP_RECV},
@@ -809,7 +746,7 @@ void HclCollectiveRoutinesGen2Arch::calculateScaleupSignals(CommonState& commonS
                 {
                     m_signalsManager->enqueueCompletion({SignalEvent::SCALEUP_RECV});
                 }
-                else // non root - send to root
+                else  // non root - send to root
                 {
                     m_signalsManager->enqueueCompletion({SignalEvent::SCALEUP_SEND});
                 }
@@ -842,7 +779,8 @@ void HclCollectiveRoutinesGen2Arch::calculateScaleupSignals(CommonState& commonS
             {
                 m_signalsManager->enqueueCompletion({SignalEvent::SCALEUP_SEND});
 
-                if (!commonState.m_isMultiScaleupGroup || boxNumInfo.m_boxNum == commonState.m_dynamicComm.getMyScaleupGroup())
+                if (!commonState.m_isMultiScaleupGroup ||
+                    boxNumInfo.m_boxNum == commonState.m_dynamicComm.getMyScaleupGroup())
                 {
                     m_signalsManager->enqueueCompletion({SignalEvent::EDMA_MEMCOPY, SignalEvent::SCALEUP_RECV});
                 }
@@ -881,8 +819,7 @@ void HclCollectiveRoutinesGen2Arch::calculateScaleupSignalsReduceScatter(CommonS
                                                                          bool         isFirstBox)
 {
     bool isHierarchicalFirst = commonState.m_isMultiScaleupGroup && isFirstBox;
-    bool isPeersOnly         = commonState.m_isMultiScaleupGroup &&
-                               commonState.m_dynamicComm.getScaleupGroupSize() == 1;
+    bool isPeersOnly = commonState.m_isMultiScaleupGroup && commonState.m_dynamicComm.getScaleupGroupSize() == 1;
 
     BoxNumInfo myBoxNumInfo(commonState.m_dynamicComm.getMyScaleupGroup(), BoxNumInfo::boxOrientation::MY_BOX);
 
@@ -891,12 +828,11 @@ void HclCollectiveRoutinesGen2Arch::calculateScaleupSignalsReduceScatter(CommonS
         if (isHierarchicalFirst)
         {
             bool     isEdgeIteration = commonState.isEdgeIteration(myBoxNumInfo);
-            unsigned longtermOffset  = isEdgeIteration ? commonState.m_reproScaleoutLongtermAmount - 1 : 0;
+            unsigned longtermOffset  = isEdgeIteration ? commonState.m_scaleoutLongtermAmount - 1 : 0;
 
             WaitEvent waitEventForSoRecv =
-                isEdgeIteration
-                    ? WaitEvent::RR_RS_SO_WAIT_FOR_ALL_RECV
-                    : (WaitEvent)((unsigned)WaitEvent::RR_RS_SO_RECV_WAIT_FOR_PREV_RECV_BASE + longtermOffset);
+                isEdgeIteration ? WaitEvent::RS_SO_WAIT_FOR_ALL_RECV
+                                : (WaitEvent)((unsigned)WaitEvent::RS_SO_RECV_WAIT_FOR_PREV_RECV_BASE + longtermOffset);
 
             m_signalsManager->enqueueWait(
                 waitEventForSoRecv,
@@ -919,14 +855,14 @@ void HclCollectiveRoutinesGen2Arch::calculateScaleupSignalsReduceScatter(CommonS
     else if (isFirstBox)
     {
         bool     isEdgeIteration = commonState.isEdgeIteration(myBoxNumInfo);
-        unsigned longtermOffset  = isEdgeIteration ? commonState.m_reproScaleoutLongtermAmount - 1 : 0;
+        unsigned longtermOffset  = isEdgeIteration ? commonState.m_scaleoutLongtermAmount - 1 : 0;
 
         WaitEvent waitEventForSoRecv =
-            isEdgeIteration ? WaitEvent::RR_RS_SO_WAIT_FOR_ALL_RECV
-                            : (WaitEvent)((unsigned)WaitEvent::RR_RS_SO_RECV_WAIT_FOR_PREV_RECV_BASE + longtermOffset);
+            isEdgeIteration ? WaitEvent::RS_SO_WAIT_FOR_ALL_RECV
+                            : (WaitEvent)((unsigned)WaitEvent::RS_SO_RECV_WAIT_FOR_PREV_RECV_BASE + longtermOffset);
 
         m_signalsManager->enqueueWait(waitEventForSoRecv,
-                                      {SignalEvent::RR_SIGNAL_TO_LONGTERM},
+                                      {SignalEvent::SIGNAL_TO_LONGTERM},
                                       WaitMethod::GPSO_LONGTERM,
                                       0,
                                       1,
@@ -940,32 +876,29 @@ void HclCollectiveRoutinesGen2Arch::calculateScaleupSignalsReduceScatter(CommonS
 
     if (!isPeersOnly)
     {
-        WaitMethod waitMethodForRR = WaitMethod::GPSO_0;
+        WaitMethod waitMethod = WaitMethod::GPSO_0;
         WaitEvent  waitEventForEdmaBatch;
 
         if (commonState.m_isMultiScaleupGroup && !isFirstBox)
         {
-            waitEventForEdmaBatch = WaitEvent::RR_SCALEOUT_SEND_WAIT_FOR_DMA;
+            waitEventForEdmaBatch = WaitEvent::SCALEOUT_SEND_WAIT_FOR_DMA;
         }
         else
         {
-            waitEventForEdmaBatch = WaitEvent::RR_FINAL_DMA_WAIT_FOR_EDMA;
+            waitEventForEdmaBatch = WaitEvent::FINAL_DMA_WAIT_FOR_EDMA;
         }
 
         // First chain
-        m_signalsManager->enqueueWait(WaitEvent::RR_DMA_WAIT_FOR_SU_RECV,
-                                      {SignalEvent::SCALEUP_RECV},
-                                      waitMethodForRR,
-                                      0);
+        m_signalsManager->enqueueWait(WaitEvent::DMA_WAIT_FOR_SU_RECV, {SignalEvent::SCALEUP_RECV}, waitMethod, 0);
 
         if (commonState.m_isMultiScaleupGroup && !isFirstBox)
         {
-            m_signalsManager->enqueueWait(waitEventForEdmaBatch, {SignalEvent::EDMA_BATCH}, waitMethodForRR, 1);
+            m_signalsManager->enqueueWait(waitEventForEdmaBatch, {SignalEvent::EDMA_BATCH}, waitMethod, 1);
         }
 
         if (commonState.m_syncUpBufferWithLtu && !isFirstBox)
         {
-            m_signalsManager->enqueueCompletion({SignalEvent::RR_SIGNAL_TO_CG});
+            m_signalsManager->enqueueCompletion({SignalEvent::SIGNAL_TO_CG});
         }
     }
 
@@ -990,12 +923,12 @@ void HclCollectiveRoutinesGen2Arch::calculateScaleupSignalsReduceScatterForOther
                                                                                     bool         isLastBox,
                                                                                     bool         isFirstBox)
 {
-    bool isMultiScaleupGroup = commonState.m_isMultiScaleupGroup;
-    bool isHierarchicalFirst = isMultiScaleupGroup && isFirstBox;
-    bool isHierarchicalLast  = isMultiScaleupGroup && isLastBox;
-    bool isPeersOnly         = isMultiScaleupGroup && commonState.m_dynamicComm.getScaleupGroupSize() == 1;
-    bool isReduceRoot        = commonState.m_collectiveOp == eHCLReduce && commonState.m_isRoot;
-    bool gatherOpsWaitForRS  = !(isReduceRoot);
+    bool       isMultiScaleupGroup = commonState.m_isMultiScaleupGroup;
+    bool       isHierarchicalFirst = isMultiScaleupGroup && isFirstBox;
+    bool       isHierarchicalLast  = isMultiScaleupGroup && isLastBox;
+    bool       isPeersOnly         = isMultiScaleupGroup && commonState.m_dynamicComm.getScaleupGroupSize() == 1;
+    bool       isReduceRoot        = commonState.m_collectiveOp == eHCLReduce && commonState.m_isRoot;
+    bool       gatherOpsWaitForRS  = !(isReduceRoot);
     BoxNumInfo myBoxNumInfo(commonState.m_dynamicComm.getMyScaleupGroup(), BoxNumInfo::boxOrientation::MY_BOX);
 
     if (isPeersOnly)
@@ -1003,12 +936,11 @@ void HclCollectiveRoutinesGen2Arch::calculateScaleupSignalsReduceScatterForOther
         if (isHierarchicalFirst)
         {
             bool     isEdgeIteration = commonState.isEdgeIteration(myBoxNumInfo);
-            unsigned longtermOffset  = isEdgeIteration ? commonState.m_reproScaleoutLongtermAmount - 1 : 0;
+            unsigned longtermOffset  = isEdgeIteration ? commonState.m_scaleoutLongtermAmount - 1 : 0;
 
             WaitEvent waitEventForSoRecv =
-                isEdgeIteration
-                    ? WaitEvent::RR_RS_SO_WAIT_FOR_ALL_RECV
-                    : (WaitEvent)((unsigned)WaitEvent::RR_RS_SO_RECV_WAIT_FOR_PREV_RECV_BASE + longtermOffset);
+                isEdgeIteration ? WaitEvent::RS_SO_WAIT_FOR_ALL_RECV
+                                : (WaitEvent)((unsigned)WaitEvent::RS_SO_RECV_WAIT_FOR_PREV_RECV_BASE + longtermOffset);
 
             m_signalsManager->enqueueWait(
                 waitEventForSoRecv,
@@ -1023,12 +955,12 @@ void HclCollectiveRoutinesGen2Arch::calculateScaleupSignalsReduceScatterForOther
             if (gatherOpsWaitForRS)
             {
                 int numExpectedFences = commonState.m_collectiveOp == eHCLReduce ? 1 : 2;
-                m_signalsManager->enqueueWait(WaitEvent::RR_GATHER_OPS_WAIT_FOR_RS,
+                m_signalsManager->enqueueWait(WaitEvent::GATHER_OPS_WAIT_FOR_RS,
                                               {SignalEvent::EDMA_BATCH_SCALEOUT},
                                               WaitMethod::GPSO_LONGTERM,
                                               1,
                                               numExpectedFences,
-                                              commonState.m_reproScaleoutLongtermAmount - 1);
+                                              commonState.m_scaleoutLongtermAmount - 1);
             }
             else  // Reduce root
             {
@@ -1042,12 +974,12 @@ void HclCollectiveRoutinesGen2Arch::calculateScaleupSignalsReduceScatterForOther
         if (gatherOpsWaitForRS)
         {
             int numExpectedFences = commonState.m_collectiveOp == eHCLReduce ? 1 : 2;
-            m_signalsManager->enqueueWait(WaitEvent::RR_GATHER_OPS_WAIT_FOR_RS,
+            m_signalsManager->enqueueWait(WaitEvent::GATHER_OPS_WAIT_FOR_RS,
                                           {SignalEvent::EDMA_BATCH_SCALEOUT},
                                           WaitMethod::GPSO_LONGTERM,
                                           1,
                                           numExpectedFences,
-                                          commonState.m_reproScaleoutLongtermAmount - 1);
+                                          commonState.m_scaleoutLongtermAmount - 1);
         }
         else  // Reduce root
         {
@@ -1060,7 +992,7 @@ void HclCollectiveRoutinesGen2Arch::calculateScaleupSignalsReduceScatterForOther
 
         if (gatherOpsWaitForRS)
         {
-            m_signalsManager->enqueueWait(WaitEvent::RR_GATHER_OPS_WAIT_FOR_RS,
+            m_signalsManager->enqueueWait(WaitEvent::GATHER_OPS_WAIT_FOR_RS,
                                           {SignalEvent::EDMA_BATCH},
                                           WaitMethod::GPSO_LONGTERM,
                                           1);
@@ -1072,16 +1004,15 @@ void HclCollectiveRoutinesGen2Arch::calculateScaleupSignalsReduceScatterForOther
     }
     else if (isFirstBox)
     {
-
         bool     isEdgeIteration = commonState.isEdgeIteration(myBoxNumInfo);
-        unsigned longtermOffset  = isEdgeIteration ? commonState.m_reproScaleoutLongtermAmount - 1 : 0;
+        unsigned longtermOffset  = isEdgeIteration ? commonState.m_scaleoutLongtermAmount - 1 : 0;
 
         WaitEvent waitEventForSoRecv =
-            isEdgeIteration ? WaitEvent::RR_RS_SO_WAIT_FOR_ALL_RECV
-                            : (WaitEvent)((unsigned)WaitEvent::RR_RS_SO_RECV_WAIT_FOR_PREV_RECV_BASE + longtermOffset);
+            isEdgeIteration ? WaitEvent::RS_SO_WAIT_FOR_ALL_RECV
+                            : (WaitEvent)((unsigned)WaitEvent::RS_SO_RECV_WAIT_FOR_PREV_RECV_BASE + longtermOffset);
 
         m_signalsManager->enqueueWait(waitEventForSoRecv,
-                                      {SignalEvent::RR_SIGNAL_TO_LONGTERM},
+                                      {SignalEvent::SIGNAL_TO_LONGTERM},
                                       WaitMethod::GPSO_LONGTERM,
                                       0,
                                       1,
@@ -1096,32 +1027,29 @@ void HclCollectiveRoutinesGen2Arch::calculateScaleupSignalsReduceScatterForOther
 
     if (!isPeersOnly)
     {
-        WaitMethod waitMethodForRR =
+        WaitMethod waitMethod =
             (!commonState.m_isMultiScaleupGroup && !isReduceRoot) ? WaitMethod::GPSO_LONGTERM : WaitMethod::GPSO_0;
 
-        m_signalsManager->enqueueWait(WaitEvent::RR_DMA_WAIT_FOR_SU_RECV,
-                                      {SignalEvent::SCALEUP_RECV},
-                                      waitMethodForRR,
-                                      0);
+        m_signalsManager->enqueueWait(WaitEvent::DMA_WAIT_FOR_SU_RECV, {SignalEvent::SCALEUP_RECV}, waitMethod, 0);
 
         if (commonState.m_isMultiScaleupGroup && !isFirstBox)
         {
             WaitEvent waitEventForEdmaBatch;
             if (commonState.m_isMultiScaleupGroup && !isFirstBox)
             {
-                waitEventForEdmaBatch = WaitEvent::RR_SCALEOUT_SEND_WAIT_FOR_DMA;
+                waitEventForEdmaBatch = WaitEvent::SCALEOUT_SEND_WAIT_FOR_DMA;
             }
             else
             {
-                waitEventForEdmaBatch = WaitEvent::RR_FINAL_DMA_WAIT_FOR_EDMA;
+                waitEventForEdmaBatch = WaitEvent::FINAL_DMA_WAIT_FOR_EDMA;
             }
 
-            m_signalsManager->enqueueWait(waitEventForEdmaBatch, {SignalEvent::EDMA_BATCH}, waitMethodForRR, 1);
+            m_signalsManager->enqueueWait(waitEventForEdmaBatch, {SignalEvent::EDMA_BATCH}, waitMethod, 1);
         }
 
         if (commonState.m_syncUpBufferWithLtu && !isFirstBox)
         {
-            m_signalsManager->enqueueCompletion({SignalEvent::RR_SIGNAL_TO_CG});
+            m_signalsManager->enqueueCompletion({SignalEvent::SIGNAL_TO_CG});
         }
     }
 
@@ -1130,9 +1058,9 @@ void HclCollectiveRoutinesGen2Arch::calculateScaleupSignalsReduceScatterForOther
         if (m_scaleoutProvider->isGaudiDirect())
         {
             m_signalsManager->enqueueWait(WaitEvent::HNIC_SIGNAL_SPLIT_WAIT_FOR_GDR_MEMCPY,
-                                            {SignalEvent::EDMA_MEMCOPY_GDR},
-                                            WaitMethod::GPSO_1,
-                                            1);
+                                          {SignalEvent::EDMA_MEMCOPY_GDR},
+                                          WaitMethod::GPSO_1,
+                                          1);
         }
     }
     else if (m_scaleoutProvider->isGaudiDirect() && !isFirstBox)
@@ -1157,20 +1085,11 @@ void HclCollectiveRoutinesGen2Arch::createScaleUpRecvProgs(SliceState&      slic
                                                            unsigned         requiredCredits,
                                                            HCL_CollectiveOp currentOp)
 {
-    hcl::ScalStream& currentStream =
-        ActiveStreamManagerGen2Arch::getActiveCollectiveStream(m_deviceController,
-                                                               currentOp,
-                                                               m_streamId,
-                                                               (unsigned)hcl::SchedulersIndex::recvScaleUp);
-    currentStream.setTargetValue(m_longSo.targetValue);
-
-    m_deviceController.waitForBarrierArm(currentStream);
-
-    hcl::ScalStream& arbitratorStream =
-        m_deviceController.getScalStream(m_streamId, currentStream.getSchedIdx(), ARB_STREAM_IDX);
-    arbitratorStream.setTargetValue(m_longSo.targetValue);
+    hcl::ScalStream& arbitratorStream = m_activeStreamManager.getArbitratorStream(hcl::SchedulersIndex::recvScaleUp);
+    hcl::ScalStream& currentStream = m_activeStreamManager.getActiveCollectiveStream(hcl::SchedulersIndex::recvScaleUp);
 
     m_deviceController.addBarrierArm(arbitratorStream, false, requiredCredits, {currentStream.getStreamIndex()});
+    m_deviceController.waitForBarrierArm(currentStream);
 
     LOG_HCL_CONTEXT_TRACE(HCL, "Serializing scaleup recv scheduler command");
 
@@ -1189,15 +1108,20 @@ void HclCollectiveRoutinesGen2Arch::createScaleUpRecvProgs(SliceState&      slic
                                 boxNumInfo.m_boxNum != sliceState.m_dynamicComm.getMyScaleupGroup())
                                    ? sliceState.getChunkCount()
                                    : sliceState.getStrideCount();
-        uint64_t offset      = sliceState.m_dynamicComm.getRankInScaleupGroup() * strideCount *
-                               sliceState.m_dataTypeSizeInBytes;
+        uint64_t offset =
+            sliceState.m_dynamicComm.getRankInScaleupGroup() * strideCount * sliceState.m_dataTypeSizeInBytes;
 
-        uint64_t baseAddress = 0;
-        uint32_t accuIndex   = 0;
-        uint32_t rrIndex     = 0;
+        uint64_t baseAddress  = 0;
+        uint32_t accuIndex    = 0;
+        uint32_t subBuffIndex = 0;
 
-        m_memHandler
-            ->generateBaseAddressOrRRIdx(sliceState, sliceIter, boxNumInfo, currentOp, offset, baseAddress, rrIndex);
+        m_memHandler->generateBaseAddressOrSubBuffIdx(sliceState,
+                                                      sliceIter,
+                                                      boxNumInfo,
+                                                      currentOp,
+                                                      offset,
+                                                      baseAddress,
+                                                      subBuffIndex);
 
         auto wraparoundBits = m_wqeTracker->getWqeWraparoundBits(
             sliceState.m_dynamicComm,
@@ -1230,7 +1154,7 @@ void HclCollectiveRoutinesGen2Arch::createScaleUpRecvProgs(SliceState&      slic
             sliceState.isComplexImplementation(),
             sliceState.m_isReductionCollective,
             sliceState.m_isMultiScaleupGroup && !(sliceState.m_collectiveOp == eHCLReduce &&
-                                         boxNumInfo.m_boxNum == sliceState.m_dynamicComm.getMyScaleupGroup()),
+                                                  boxNumInfo.m_boxNum == sliceState.m_dynamicComm.getMyScaleupGroup()),
             baseAddress,
             count,
             sliceState.m_hasBufferSize && sliceState.isLastSlice(sliceIter),
@@ -1241,7 +1165,7 @@ void HclCollectiveRoutinesGen2Arch::createScaleUpRecvProgs(SliceState&      slic
             wraparoundBits.wait_for_rndv_acks,
             sliceState.m_isReductionCollective && (currentOp != eHCLAllGather && currentOp != eHCLGather),
             accuIndex,
-            rrIndex,
+            subBuffIndex,
             sliceState.m_collectiveOp,
             sliceState.isRoot()};
 
@@ -1249,19 +1173,11 @@ void HclCollectiveRoutinesGen2Arch::createScaleUpRecvProgs(SliceState&      slic
     }
 }
 
-void HclCollectiveRoutinesGen2Arch::createScaleOutSendProgs(SliceState& sliceState,
-                                                            unsigned    requiredCredits)
+void HclCollectiveRoutinesGen2Arch::createScaleOutSendProgs(SliceState& sliceState, unsigned requiredCredits)
 {
+    hcl::ScalStream& arbitratorStream = m_activeStreamManager.getArbitratorStream(hcl::SchedulersIndex::sendScaleOut);
     hcl::ScalStream& currentStream =
-        ActiveStreamManagerGen2Arch::getActiveCollectiveStream(m_deviceController,
-                                                               sliceState.m_currentOp,
-                                                               m_streamId,
-                                                               (unsigned)hcl::SchedulersIndex::sendScaleOut);
-    currentStream.setTargetValue(m_longSo.targetValue);
-
-    hcl::ScalStream& arbitratorStream =
-        m_deviceController.getScalStream(m_streamId, currentStream.getSchedIdx(), ARB_STREAM_IDX);
-    arbitratorStream.setTargetValue(m_longSo.targetValue);
+        m_activeStreamManager.getActiveCollectiveStream(hcl::SchedulersIndex::sendScaleOut);
 
     BarrierArbitratorDescriptor desc {*this,
                                       *m_scaleoutProvider,
@@ -1278,7 +1194,7 @@ void HclCollectiveRoutinesGen2Arch::createScaleOutSendProgs(SliceState& sliceSta
 
     if (sliceState.gatherOpsWaitForRS(false))
     {
-        streamAddSingleWaitIfNeeded(currentStream, {WaitEvent::RR_GATHER_OPS_WAIT_FOR_RS});
+        streamAddSingleWaitIfNeeded(currentStream, {WaitEvent::GATHER_OPS_WAIT_FOR_RS});
     }
 
     if (m_signalsManager->isEventRegistered(SignalEvent::SCALEOUT_SEND) ||
@@ -1289,56 +1205,48 @@ void HclCollectiveRoutinesGen2Arch::createScaleOutSendProgs(SliceState& sliceSta
                                      WaitEvent::COMPLEX_BCAST_SO_SEND_WAIT_FOR_SO_RECV,
                                      WaitEvent::COMPLEX_BCAST_SO_SEND_AND_AG_SU_WAIT_FOR_SU_RECV,
                                      WaitEvent::COMPLEX_BCAST_SO_SEND_AND_AG_SU_WAIT_FOR_SO_RECV,
-                                     WaitEvent::RR_SCALEOUT_SEND_WAIT_FOR_DMA});
+                                     WaitEvent::SCALEOUT_SEND_WAIT_FOR_DMA});
 
         if (!m_scaleoutProvider->isHostNic())
         {
-            NativeScaleoutDescriptor desc {*this,
-                                           *m_scaleoutProvider,
-                                           currentStream,
-                                           m_streamId,
-                                           currentStream.getStreamIndex(),
-                                           currentStream.getSchedIdx()};
-            desc.run(sliceState);
+            NativeScaleoutDescriptor scaleoutDesc {*this,
+                                                   *m_scaleoutProvider,
+                                                   currentStream,
+                                                   m_streamId,
+                                                   currentStream.getStreamIndex(),
+                                                   currentStream.getSchedIdx()};
+            scaleoutDesc.run(sliceState);
         }
         else if (m_scaleoutProvider->isGaudiDirect())
         {
-            GaudiDirectScaleoutDescriptor desc {*this,
-                                                *m_scaleoutProvider,
-                                                currentStream,
-                                                m_streamId,
-                                                currentStream.getStreamIndex(),
-                                                currentStream.getSchedIdx(),
-                                                m_commands};
-            desc.run(sliceState);
+            GaudiDirectScaleoutDescriptor scaleoutDesc {*this,
+                                                        *m_scaleoutProvider,
+                                                        currentStream,
+                                                        m_streamId,
+                                                        currentStream.getStreamIndex(),
+                                                        currentStream.getSchedIdx(),
+                                                        m_commands};
+            scaleoutDesc.run(sliceState);
         }
         else
         {
-            LibfabricScaleoutDescriptor desc {*this,
-                                              *m_scaleoutProvider,
-                                              currentStream,
-                                              m_streamId,
-                                              currentStream.getStreamIndex(),
-                                              currentStream.getSchedIdx(),
-                                              m_commands};
-            desc.run(sliceState);
+            LibfabricScaleoutDescriptor scaleoutDesc {*this,
+                                                      *m_scaleoutProvider,
+                                                      currentStream,
+                                                      m_streamId,
+                                                      currentStream.getStreamIndex(),
+                                                      currentStream.getSchedIdx(),
+                                                      m_commands};
+            scaleoutDesc.run(sliceState);
         }
     }
 }
 
-void HclCollectiveRoutinesGen2Arch::createScaleOutRecvProgs(SliceState& sliceState,
-                                                            unsigned    requiredCredits)
+void HclCollectiveRoutinesGen2Arch::createScaleOutRecvProgs(SliceState& sliceState, unsigned requiredCredits)
 {
+    hcl::ScalStream& arbitratorStream = m_activeStreamManager.getArbitratorStream(hcl::SchedulersIndex::recvScaleOut);
     hcl::ScalStream& currentStream =
-        ActiveStreamManagerGen2Arch::getActiveCollectiveStream(m_deviceController,
-                                                               sliceState.m_currentOp,
-                                                               m_streamId,
-                                                               (unsigned)hcl::SchedulersIndex::recvScaleOut);
-    currentStream.setTargetValue(m_longSo.targetValue);
-
-    hcl::ScalStream& arbitratorStream =
-        m_deviceController.getScalStream(m_streamId, currentStream.getSchedIdx(), ARB_STREAM_IDX);
-    arbitratorStream.setTargetValue(m_longSo.targetValue);
+        m_activeStreamManager.getActiveCollectiveStream(hcl::SchedulersIndex::recvScaleOut);
 
     BarrierArbitratorDescriptor desc {*this,
                                       *m_scaleoutProvider,
@@ -1358,45 +1266,45 @@ void HclCollectiveRoutinesGen2Arch::createScaleOutRecvProgs(SliceState& sliceSta
     {
         // Needs to wait if the prev box of our slot is at a lower boxIter.
         if (sliceState.m_isReductionCollective && sliceState.m_isMultiScaleupGroup &&
-            sliceState.m_boxIter >= sliceState.m_reproScaleoutBuffersAmount)
+            sliceState.m_boxIter >= sliceState.m_scaleoutBuffersAmount)
         {
-            int longtermOffset = sliceState.m_boxIter % sliceState.m_reproScaleoutBuffersAmount;
+            int longtermOffset = sliceState.m_boxIter % sliceState.m_scaleoutBuffersAmount;
 
             streamAddSingleWaitIfNeeded(
                 currentStream,
-                {(WaitEvent)((unsigned)WaitEvent::RR_RS_SO_RECV_WAIT_FOR_PREV_RECV_BASE + longtermOffset)});
+                {(WaitEvent)((unsigned)WaitEvent::RS_SO_RECV_WAIT_FOR_PREV_RECV_BASE + longtermOffset)});
         }
         if (!m_scaleoutProvider->isHostNic())
         {
-            NativeScaleoutDescriptor desc {*this,
-                                           *m_scaleoutProvider,
-                                           currentStream,
-                                           m_streamId,
-                                           currentStream.getStreamIndex(),
-                                           currentStream.getSchedIdx()};
-            desc.run(sliceState);
+            NativeScaleoutDescriptor scaleoutDesc {*this,
+                                                   *m_scaleoutProvider,
+                                                   currentStream,
+                                                   m_streamId,
+                                                   currentStream.getStreamIndex(),
+                                                   currentStream.getSchedIdx()};
+            scaleoutDesc.run(sliceState);
         }
         else if (m_scaleoutProvider->isGaudiDirect())
         {
-            GaudiDirectScaleoutDescriptor desc {*this,
-                                                *m_scaleoutProvider,
-                                                currentStream,
-                                                m_streamId,
-                                                currentStream.getStreamIndex(),
-                                                currentStream.getSchedIdx(),
-                                                m_commands};
-            desc.run(sliceState);
+            GaudiDirectScaleoutDescriptor scaleoutDesc {*this,
+                                                        *m_scaleoutProvider,
+                                                        currentStream,
+                                                        m_streamId,
+                                                        currentStream.getStreamIndex(),
+                                                        currentStream.getSchedIdx(),
+                                                        m_commands};
+            scaleoutDesc.run(sliceState);
         }
         else
         {
-            LibfabricScaleoutDescriptor desc {*this,
-                                              *m_scaleoutProvider,
-                                              currentStream,
-                                              m_streamId,
-                                              currentStream.getStreamIndex(),
-                                              currentStream.getSchedIdx(),
-                                              m_commands};
-            desc.run(sliceState);
+            LibfabricScaleoutDescriptor scaleoutDesc {*this,
+                                                      *m_scaleoutProvider,
+                                                      currentStream,
+                                                      m_streamId,
+                                                      currentStream.getStreamIndex(),
+                                                      currentStream.getSchedIdx(),
+                                                      m_commands};
+            scaleoutDesc.run(sliceState);
         }
     }
 }
@@ -1409,16 +1317,9 @@ void HclCollectiveRoutinesGen2Arch::createScaleOutSendProgsNonCollective(
     const CommonState&                      commonState)
 {
     LOG_HCL_TRACE(HCL, "requiredCredits={}, sendVec.size={}", requiredCredits, sendVec.size());
+    hcl::ScalStream& arbitratorStream = m_activeStreamManager.getArbitratorStream(hcl::SchedulersIndex::sendScaleOut);
     hcl::ScalStream& currentStream =
-        ActiveStreamManagerGen2Arch::getActiveCollectiveStream(m_deviceController,
-                                                               eHCLNoCollective,
-                                                               m_streamId,
-                                                               (unsigned)hcl::SchedulersIndex::sendScaleOut);
-    currentStream.setTargetValue(m_longSo.targetValue);
-
-    hcl::ScalStream& arbitratorStream =
-        m_deviceController.getScalStream(m_streamId, currentStream.getSchedIdx(), ARB_STREAM_IDX);
-    arbitratorStream.setTargetValue(m_longSo.targetValue);
+        m_activeStreamManager.getActiveCollectiveStream(hcl::SchedulersIndex::sendScaleOut);
 
     const bool     isHnicsScaleout = m_scaleoutProvider->isHostNic();
     const uint16_t myBox           = commonState.m_dynamicComm.getMyScaleupGroup();
@@ -1461,16 +1362,16 @@ void HclCollectiveRoutinesGen2Arch::createScaleOutSendProgsNonCollective(
         nonCollectiveSliceState.m_setup.m_scaleoutInternalFences,
         nonCollectiveSliceState.m_setup.m_scaleoutInternalSOBs);
 
-    BarrierArbitratorDescriptor desc {*this,
-                                      *m_scaleoutProvider,
-                                      currentStream,
-                                      arbitratorStream,
-                                      m_streamId,                      // archStreamIdx
-                                      currentStream.getStreamIndex(),  // uarchStreamIdx
-                                      currentStream.getSchedIdx(),     // schedIdx
-                                      requiredCredits,
-                                      m_longSo};
-    desc.run(nonCollectiveSliceState);
+    BarrierArbitratorDescriptor {*this,
+                                 *m_scaleoutProvider,
+                                 currentStream,
+                                 arbitratorStream,
+                                 m_streamId,                      // archStreamIdx
+                                 currentStream.getStreamIndex(),  // uarchStreamIdx
+                                 currentStream.getSchedIdx(),     // schedIdx
+                                 requiredCredits,
+                                 m_longSo}
+        .run(nonCollectiveSliceState);
 
     if (!isScaleOutRequired) return;
 
@@ -1520,30 +1421,31 @@ void HclCollectiveRoutinesGen2Arch::createScaleOutSendProgsNonCollective(
             sendSliceState.m_qpSet = 0;  // for non peer remotes, do not try to optimize
         }
 
-        LOG_HCL_TRACE(HCL,
-                      "remoteBox={}, "
-                      "remoteRank={}, "
-                      "remoteRanksIter={}, "
-                      "sendSliceState:: m_sendBufferAddr=0x{:x}, m_root={}, m_count={}, "
-                      "m_isMultiScaleupGroup={}, m_boxIterations={}, m_boxStride={}, m_execution.m_deviceAddress=0x{:x}, "
-                      "m_execution.m_deviceCount={}, m_execution.m_cellCount={}, "
-                      "m_hasBufferSize={}, m_execution.m_completionSoAddr=0x{:x}, m_firstRank={}, m_qpSet={}",
-                      remoteBox,
-                      remoteRank,
-                      remoteRanksIter,
-                      sendSliceState.m_sendBufferAddr,
-                      sendSliceState.m_root,
-                      sendSliceState.m_count,
-                      sendSliceState.m_isMultiScaleupGroup,
-                      sendSliceState.m_boxIterations,
-                      sendSliceState.m_boxStrideCount,
-                      sendSliceState.m_execution.m_deviceAddress,
-                      sendSliceState.m_execution.m_deviceCount,
-                      sendSliceState.m_execution.m_cellCount,
-                      sendSliceState.m_hasBufferSize,
-                      sendSliceState.m_execution.m_completionSoAddr,
-                      sendSliceState.m_firstRank,
-                      sendSliceState.getQpSet());
+        LOG_HCL_TRACE(
+            HCL,
+            "remoteBox={}, "
+            "remoteRank={}, "
+            "remoteRanksIter={}, "
+            "sendSliceState:: m_sendBufferAddr=0x{:x}, m_root={}, m_count={}, "
+            "m_isMultiScaleupGroup={}, m_boxIterations={}, m_boxStride={}, m_execution.m_deviceAddress=0x{:x}, "
+            "m_execution.m_deviceCount={}, m_execution.m_cellCount={}, "
+            "m_hasBufferSize={}, m_execution.m_completionSoAddr=0x{:x}, m_firstRank={}, m_qpSet={}",
+            remoteBox,
+            remoteRank,
+            remoteRanksIter,
+            sendSliceState.m_sendBufferAddr,
+            sendSliceState.m_root,
+            sendSliceState.m_count,
+            sendSliceState.m_isMultiScaleupGroup,
+            sendSliceState.m_boxIterations,
+            sendSliceState.m_boxStrideCount,
+            sendSliceState.m_execution.m_deviceAddress,
+            sendSliceState.m_execution.m_deviceCount,
+            sendSliceState.m_execution.m_cellCount,
+            sendSliceState.m_hasBufferSize,
+            sendSliceState.m_execution.m_completionSoAddr,
+            sendSliceState.m_firstRank,
+            sendSliceState.getQpSet());
 
         // prepare next remoteRank to receive data from
         if (!isHnicsScaleout)
@@ -1594,16 +1496,10 @@ void HclCollectiveRoutinesGen2Arch::createScaleOutRecvProgsNonCollective(
     const CommonState&                      commonState)
 {
     LOG_HCL_TRACE(HCL, "comm={}, requiredCredits={}, recvVec.size={}", comm, requiredCredits, recvVec.size());
-    hcl::ScalStream& currentStream =
-        ActiveStreamManagerGen2Arch::getActiveCollectiveStream(m_deviceController,
-                                                               eHCLNoCollective,
-                                                               m_streamId,
-                                                               (unsigned)hcl::SchedulersIndex::recvScaleOut);
-    currentStream.setTargetValue(m_longSo.targetValue);
 
-    hcl::ScalStream& arbitratorStream =
-        m_deviceController.getScalStream(m_streamId, currentStream.getSchedIdx(), ARB_STREAM_IDX);
-    arbitratorStream.setTargetValue(m_longSo.targetValue);
+    hcl::ScalStream& arbitratorStream = m_activeStreamManager.getArbitratorStream(hcl::SchedulersIndex::recvScaleOut);
+    hcl::ScalStream& currentStream =
+        m_activeStreamManager.getActiveCollectiveStream(hcl::SchedulersIndex::recvScaleOut);
 
     const bool     isHnicsScaleout = m_scaleoutProvider->isHostNic();
     const uint16_t myBox           = commonState.m_dynamicComm.getMyScaleupGroup();
@@ -1643,16 +1539,16 @@ void HclCollectiveRoutinesGen2Arch::createScaleOutRecvProgsNonCollective(
                   nonCollectiveSliceState.m_recvFenceValue,
                   nonCollectiveSliceState.m_firstRank);
 
-    BarrierArbitratorDescriptor desc {*this,
-                                      *m_scaleoutProvider,
-                                      currentStream,
-                                      arbitratorStream,
-                                      m_streamId,                      // archStreamIdx
-                                      currentStream.getStreamIndex(),  // uarchStreamIdx
-                                      currentStream.getSchedIdx(),     // currentStream.getSchedIdx()
-                                      requiredCredits,
-                                      m_longSo};
-    desc.run(nonCollectiveSliceState);
+    BarrierArbitratorDescriptor {*this,
+                                 *m_scaleoutProvider,
+                                 currentStream,
+                                 arbitratorStream,
+                                 m_streamId,                      // archStreamIdx
+                                 currentStream.getStreamIndex(),  // uarchStreamIdx
+                                 currentStream.getSchedIdx(),     // currentStream.getSchedIdx()
+                                 requiredCredits,
+                                 m_longSo}
+        .run(nonCollectiveSliceState);
 
     if (!isScaleOutRequired) return;
 
@@ -1717,35 +1613,36 @@ void HclCollectiveRoutinesGen2Arch::createScaleOutRecvProgsNonCollective(
             recvSliceState.m_qpSet = 0;  // for non peer remotes, do not try to optimize
         }
 
-        LOG_HCL_TRACE(HCL,
-                      "remoteBox={}, "
-                      "remoteRank={}, "
-                      "remoteRanksIter={}, "
-                      "recvSliceState:: m_recvBufferAddr=0x{:x}, m_root={}, m_count={}, "
-                      "m_isMultiScaleupGroup={}, m_boxIterations={}, m_boxStride={}, m_execution.m_deviceAddress=0x{:x}, "
-                      "m_execution.m_deviceCount={}, m_execution.m_cellCount={}, "
-                      "m_hasBufferSize={}, m_execution.m_completionSoAddr=0x{:x}, m_recvFenceValue={}, "
-                      "m_firstRank={}, m_qpSet={}, "
-                      "wraparoundBits.notify_rndv_ack={}, wraparoundBits.wait_for_rndv_acks={}",
-                      remoteBox,
-                      remoteRank,
-                      remoteRanksIter,
-                      recvSliceState.m_recvBufferAddr,
-                      recvSliceState.m_root,
-                      recvSliceState.m_count,
-                      recvSliceState.m_isMultiScaleupGroup,
-                      recvSliceState.m_boxIterations,
-                      recvSliceState.m_boxStrideCount,
-                      recvSliceState.m_execution.m_deviceAddress,
-                      recvSliceState.m_execution.m_deviceCount,
-                      recvSliceState.m_execution.m_cellCount,
-                      recvSliceState.m_hasBufferSize,
-                      recvSliceState.m_execution.m_completionSoAddr,
-                      recvSliceState.m_recvFenceValue,
-                      recvSliceState.m_firstRank,
-                      recvSliceState.getQpSet(),
-                      wraparoundBits.notify_rndv_ack,
-                      wraparoundBits.wait_for_rndv_acks);
+        LOG_HCL_TRACE(
+            HCL,
+            "remoteBox={}, "
+            "remoteRank={}, "
+            "remoteRanksIter={}, "
+            "recvSliceState:: m_recvBufferAddr=0x{:x}, m_root={}, m_count={}, "
+            "m_isMultiScaleupGroup={}, m_boxIterations={}, m_boxStride={}, m_execution.m_deviceAddress=0x{:x}, "
+            "m_execution.m_deviceCount={}, m_execution.m_cellCount={}, "
+            "m_hasBufferSize={}, m_execution.m_completionSoAddr=0x{:x}, m_recvFenceValue={}, "
+            "m_firstRank={}, m_qpSet={}, "
+            "wraparoundBits.notify_rndv_ack={}, wraparoundBits.wait_for_rndv_acks={}",
+            remoteBox,
+            remoteRank,
+            remoteRanksIter,
+            recvSliceState.m_recvBufferAddr,
+            recvSliceState.m_root,
+            recvSliceState.m_count,
+            recvSliceState.m_isMultiScaleupGroup,
+            recvSliceState.m_boxIterations,
+            recvSliceState.m_boxStrideCount,
+            recvSliceState.m_execution.m_deviceAddress,
+            recvSliceState.m_execution.m_deviceCount,
+            recvSliceState.m_execution.m_cellCount,
+            recvSliceState.m_hasBufferSize,
+            recvSliceState.m_execution.m_completionSoAddr,
+            recvSliceState.m_recvFenceValue,
+            recvSliceState.m_firstRank,
+            recvSliceState.getQpSet(),
+            wraparoundBits.notify_rndv_ack,
+            wraparoundBits.wait_for_rndv_acks);
 
         // prepare next remoteRank to receive data from
         if (!isHnicsScaleout)

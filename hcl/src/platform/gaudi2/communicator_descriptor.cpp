@@ -1,12 +1,12 @@
 #include "platform/gaudi2/communicator_descriptor.h"
 
-#include <ext/alloc_traits.h>               // for __alloc_traits<>::value_type
-#include <algorithm>                        // for max, fill
-#include <cstdint>                          // for uint32_t, uint8_t
-#include <iterator>                         // for distance
-#include <memory>                           // for allocator_traits<>::value...
-#include "hcl_utils.h"                      // for VERIFY, UNUSED
-#include "platform/gaudi2/hal.h"            // for Gen2ArchHal
+#include <ext/alloc_traits.h>     // for __alloc_traits<>::value_type
+#include <algorithm>              // for max, fill
+#include <cstdint>                // for uint32_t, uint8_t
+#include <iterator>               // for distance
+#include <memory>                 // for allocator_traits<>::value...
+#include "hcl_utils.h"            // for VERIFY, UNUSED
+#include "platform/gaudi2/hal.h"  // for Gaudi2Hal
 
 static hcl::Gaudi2Hal s_hal;
 
@@ -85,8 +85,8 @@ unsigned LRU::use(HCL_Comm comm)
         else
         {
             // There's an empty comm-desc - lets use it. First, lets' find the next index to use.
-            unsigned nextIndex = m_size;
-            entry.state        = Entry::ACTIVE;
+            unsigned nextIndex    = m_size;
+            entry.state           = Entry::ACTIVE;
             entry.comm            = comm;
             entry.comm_desc_index = nextIndex;
             m_size++;

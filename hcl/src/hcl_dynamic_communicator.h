@@ -1,9 +1,9 @@
 #pragma once
 
-#include <array>                                  // for array
-#include <cstdint>                                // for uint16_t
-#include <vector>                                 // for vector
-#include <memory>                                 // for allocator, unique_ptr
+#include <array>    // for array
+#include <cstdint>  // for uint16_t
+#include <vector>   // for vector
+#include <memory>   // for allocator, unique_ptr
 #include <map>
 
 #include "hcl_api_types.h"                        // for HCL_Rank
@@ -17,11 +17,12 @@
 
 class HclStaticBuffersManager;
 class IHclDevice;
+class Gen2ArchServerDef;
 
 class HclDynamicCommunicator
 {
 public:
-    HclDynamicCommunicator(HCL_Comm comm, hcl::HalPtr hal);
+    HclDynamicCommunicator(const HCL_Comm comm, Gen2ArchServerDef& serverDef, hcl::HalPtr hal);
     virtual ~HclDynamicCommunicator() = default;
 
     bool init(const uint32_t hcclCommSize, const HCL_Rank rank, const int box_size);
@@ -37,7 +38,8 @@ public:
      * determine whether comm is a ScaleupGroup peers communicator
      */
     bool isCommunicatorScaleupGroupPeers() const;
-    bool isCommunicatorMultiScaleupGroup() const;      // determine if comm requires scaleout
+    bool isCommunicatorMultiScaleupGroup() const;  // determine if comm requires scaleout
+    bool commScaleupGroupHasMultipleRanks() const;
     bool isCommunicatorHierarchical() const;  // determine if comm requires scaleout & scaleup
 
     bool isPeer(HCL_Rank rank) const;
@@ -47,14 +49,14 @@ public:
     bool isRanksInSameScaleupGroup(HCL_Rank rank1, HCL_Rank rank2) const;
     bool isPeerOrInsideSameScaleupGroup(HCL_Rank rank);
 
-    const RankInfoHeader&                  getRemoteConnectionHeader(HCL_Rank rank) const;
-    const UniqueSortedVector&              getInnerRanksExclusive();
-    const UniqueSortedVector&              getInnerRanksInclusive();
-    const UniqueSortedVector&              getOuterRanksExclusive();
-    const UniqueSortedVector&              getOuterRanksInclusive();
-    const UniqueSortedVector&              getConnectedRanks();
-    const std::vector<uint16_t>&           getRankToScaleupGroupMap();
-    const std::vector<HCL_Rank>&           getScaleupGroupToRankMap();
+    const RankInfoHeader&        getRemoteConnectionHeader(HCL_Rank rank) const;
+    const UniqueSortedVector&    getInnerRanksExclusive();
+    const UniqueSortedVector&    getInnerRanksInclusive();
+    const UniqueSortedVector&    getOuterRanksExclusive();
+    const UniqueSortedVector&    getOuterRanksInclusive();
+    const UniqueSortedVector&    getConnectedRanks();
+    const std::vector<uint32_t>& getRankToScaleupGroupMap();
+    const std::vector<HCL_Rank>& getScaleupGroupToRankMap();
 
     HCL_Rank                  getMyRank() const;
     HCL_Rank                  getScaleUpLastRank();
@@ -62,8 +64,8 @@ public:
     bool                      isLastRankInScaleupGroup();
     uint16_t                  getMyScaleupGroup();
     const UniqueSortedVector& getRanks() const;
-    int                       getCommSize();
-    int                       getScaleupGroupSize();
+    uint32_t                  getCommSize();
+    uint32_t                  getScaleupGroupSize();
     const uint64_t            getCollectiveCtr() const;
     void                      incCollectiveCtr();
     const uint64_t            incSendCtr(int peer);
@@ -72,19 +74,17 @@ public:
     const uint64_t            getRecvCtr(int peer);
     HCL_Rank                  getRankInScaleupGroup() const;
     void                      setRankInScaleupGroup();
-    bool                      setSpotlightType(unsigned spotlightType);
-    const unsigned            getSpotlightType() const;
     unsigned                  getMaxScaleOutQpSetsNum();
     uint64_t                  getSliceSize() const;
 
-    hcclResult_t              prepareAndValidateComm(bool isLoopbackModeOrNullSubmission = false);
-    void                      AddNewRemoteDevice(HCL_Rank newRank);
-    const std::string         getCommUniqueId() const;
+    hcclResult_t      prepareAndValidateComm(bool isLoopbackModeOrNullSubmission = false);
+    void              AddNewRemoteDevice(HCL_Rank newRank);
+    const std::string getCommUniqueId() const;
 
-    HclRemoteDeviceArray      m_remoteDevices;
-    RankInfo                  m_rankInfo           = {};
-    int                       m_commSize           = -1;
-    HCL_Rank                  m_rankInScaleupGroup = -1;
+    HclRemoteDeviceArray m_remoteDevices;
+    RankInfo             m_rankInfo           = {};
+    uint32_t             m_commSize           = -1;
+    HCL_Rank             m_rankInScaleupGroup = -1;
 
     bool initializeHostNicBridge(const UniqueSortedVector& outerRanks);
 
@@ -93,15 +93,16 @@ public:
     const std::vector<HCL_Rank>& getRemoteRanks() const;
     hcclResult_t                 setCommScaleupGroupSize();
 
-    int m_scaleupGroupSize = -1;
+    uint32_t m_scaleupGroupSize = -1;
 
     mutable UniqueSortedVector m_ranksCache;
 
     std::vector<uint64_t> m_streamLatestLongSo;
 
-    operator HCL_Comm() const {return m_commId;}
+    operator HCL_Comm() const { return m_commId; }
+
 private:
-    HCL_Comm  m_commId;
+    HCL_Comm     m_commId;
     hcclResult_t validateComm();
     hcclResult_t validateRankIds();
     /**
@@ -113,22 +114,22 @@ private:
      */
     hcclResult_t setSliceSize();
 
-    UniqueSortedVector              m_innerRanksExclusiveCache;  // exclude rank itself
-    UniqueSortedVector              m_innerRanksInclusiveCache;  // include rank itself
-    UniqueSortedVector              m_outerRanksExclusiveCache;  // exclude rank itself
-    UniqueSortedVector              m_outerRanksInclusiveCache;  // include rank itself
-    UniqueSortedVector              m_connectedRanks;            // exclude rank itself (inside ScaleupGroup + peers)
-    std::vector<uint16_t>           m_rankToScaleupGroupMap = {};
-    std::vector<HCL_Rank>           m_scaleupGroupToRankMap = {};
+    UniqueSortedVector    m_innerRanksExclusiveCache;  // exclude rank itself
+    UniqueSortedVector    m_innerRanksInclusiveCache;  // include rank itself
+    UniqueSortedVector    m_outerRanksExclusiveCache;  // exclude rank itself
+    UniqueSortedVector    m_outerRanksInclusiveCache;  // include rank itself
+    UniqueSortedVector    m_connectedRanks;            // exclude rank itself (inside ScaleupGroup + peers)
+    std::vector<uint32_t> m_rankToScaleupGroupMap = {};
+    std::vector<HCL_Rank> m_scaleupGroupToRankMap = {};
 
     std::map<int, uint64_t> m_sendCounter;
     std::map<int, uint64_t> m_recvCounter;
 
-    internal_unique_id_t       m_commUniqueId;
-    std::string                m_commUniqueIdStr;
-    hcl::HalPtr                m_hal;
-    std::vector<HCL_Rank>      m_remoteRanks   = {};
-    uint64_t                   m_collectiveCtr = 0;
-    unsigned                   m_spotlightType = DEFAULT_SPOTLIGHT;
-    uint64_t                   m_sliceSize;
+    internal_unique_id_t  m_commUniqueId;
+    std::string           m_commUniqueIdStr;
+    Gen2ArchServerDef&    m_serverDef;
+    hcl::HalPtr           m_hal;
+    std::vector<HCL_Rank> m_remoteRanks   = {};
+    uint64_t              m_collectiveCtr = 0;
+    uint64_t              m_sliceSize;
 };

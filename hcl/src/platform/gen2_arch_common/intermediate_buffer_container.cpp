@@ -2,16 +2,17 @@
 
 #include <cstdint>
 #include <cstddef>
-#include "hcl_utils.h"    // for VERIFY
-#include "synapse_api.h"  // for synDeviceFree, synDeviceMalloc
+#include "hcl_utils.h"             // for VERIFY
+#include "synapse_api.h"           // for synDeviceFree, synDeviceMalloc
 #include "synapse_common_types.h"  // for synStatus
+#include "hcl_types.h"             // for SYN_VALID_DEVICE_ID
 
 using namespace hcl;
 
 // struct IntermediateBuffersAmount Moved to header file since its used by external cpp modules for G2 Hnics send/recv
 
-IntermediateBufferContainer::IntermediateBufferContainer(uint32_t deviceId, uint32_t numberOfStreams)
-: m_deviceId(deviceId), m_numberOfStreams(numberOfStreams)
+IntermediateBufferContainer::IntermediateBufferContainer(const uint32_t numberOfStreams)
+: m_numberOfStreams(numberOfStreams)
 {
     if (GCFG_HCCL_GAUDI_DIRECT.value() && !GCFG_HCL_IMB_SIZE.isSetFromUserConfig())
     {
@@ -25,11 +26,11 @@ IntermediateBufferContainer::IntermediateBufferContainer(uint32_t deviceId, uint
         m_imbSize = GCFG_HCL_IMB_SIZE.value();
     }
 
-    std::vector<e_devicePoolID> firstPool  = {SCALEOUT_RR_POOL};
-    std::vector<e_devicePoolID> secondPool = {REDUCE_RR_POOL, SCALEUP_RR_AND_ALL2ALL_POOL};
+    std::vector<e_devicePoolID> firstPool  = {SCALEOUT_POOL};
+    std::vector<e_devicePoolID> secondPool = {REDUCE_POOL, SCALEUP_AND_ALL2ALL_POOL};
 
-    m_firstPool = SCALEOUT_RR_POOL;
-    m_lastPool  = SCALEUP_RR_AND_ALL2ALL_POOL;
+    m_firstPool = SCALEOUT_POOL;
+    m_lastPool  = SCALEUP_AND_ALL2ALL_POOL;
 
     if (GCFG_HCCL_GAUDI_DIRECT.value())
     {
@@ -47,7 +48,7 @@ IntermediateBufferContainer::IntermediateBufferContainer(uint32_t deviceId, uint
                       m_bufferContainerParams[poolSizeIndex].sizeOfSIB,
                       m_bufferContainerParams[poolSizeIndex].sizeOfAllBuffers);
 
-        VERIFY(synSuccess == synDeviceMalloc(deviceId,
+        VERIFY(synSuccess == synDeviceMalloc(SYN_VALID_DEVICE_ID,
                                              m_bufferContainerParams[poolSizeIndex].sizeOfAllBuffers,
                                              0,
                                              0,
@@ -66,13 +67,13 @@ IntermediateBufferContainer::IntermediateBufferContainer(uint32_t deviceId, uint
         auto                                         secondPoolSizeParams = m_bufferContainerParams[1];
         std::array<BufferParams, MAX_NUM_POOL_SIZES> m_bufferParams       = {
             {{(firstPoolSizeParams.allBufferBaseAddr + (i * firstPoolSizeParams.sizeOfSIB)),
-              firstPoolSizeParams.sliceSize,
-              firstPoolSizeParams.countOfSIB,
-              firstPool.size()},
-             {(secondPoolSizeParams.allBufferBaseAddr + (i * secondPoolSizeParams.sizeOfSIB)),
-              secondPoolSizeParams.sliceSize,
-              secondPoolSizeParams.countOfSIB,
-              secondPool.size()}}};
+                    firstPoolSizeParams.sliceSize,
+                    firstPoolSizeParams.countOfSIB,
+                    firstPool.size()},
+                   {(secondPoolSizeParams.allBufferBaseAddr + (i * secondPoolSizeParams.sizeOfSIB)),
+                    secondPoolSizeParams.sliceSize,
+                    secondPoolSizeParams.countOfSIB,
+                    secondPool.size()}}};
 
         m_sibBuffers.emplace_back(DeviceBufferManager(m_bufferParams, getSIBVector()));
     }
@@ -82,7 +83,7 @@ IntermediateBufferContainer::IntermediateBufferContainer(uint32_t deviceId, uint
     if (GCFG_FW_IMB_SIZE.value() && GCFG_HCL_SRAM_SIZE_RESERVED_FOR_HCL.value() == 0)
     {
         uint64_t sizeOfFwBuffers = GCFG_FW_IMB_SIZE.value();
-        VERIFY(synSuccess == synDeviceMalloc(deviceId, sizeOfFwBuffers, 0, 0, &m_fwBaseAddr),
+        VERIFY(synSuccess == synDeviceMalloc(SYN_VALID_DEVICE_ID, sizeOfFwBuffers, 0, 0, &m_fwBaseAddr),
                "Failed to allocate device memory for FW");
     }
 }
@@ -91,25 +92,25 @@ IntermediateBufferContainer::~IntermediateBufferContainer()
 {
     for (unsigned poolSizeIndex = 0; poolSizeIndex < m_bufferContainerParams.size(); poolSizeIndex++)
     {
-        synDeviceFree(m_deviceId, m_bufferContainerParams[poolSizeIndex].allBufferBaseAddr, 0);
+        synDeviceFree(SYN_VALID_DEVICE_ID, m_bufferContainerParams[poolSizeIndex].allBufferBaseAddr, 0);
     }
 
     if (GCFG_FW_IMB_SIZE.value())
     {
-        synDeviceFree(m_deviceId, m_fwBaseAddr, 0);
+        synDeviceFree(SYN_VALID_DEVICE_ID, m_fwBaseAddr, 0);
     }
 }
 
 void IntermediateBufferContainer::generatePoolParams(unsigned                           sliceSize,
                                                      const std::vector<e_devicePoolID>& pools,
-                                                     BufferContainerParams&             m_bufferContainerParams)
+                                                     BufferContainerParams&             bufferContainerParams)
 {
-    m_bufferContainerParams.sliceSize        = sliceSize;
-    m_bufferContainerParams.countOfSIB       = hcl::IntermediateBufferContainer::getSIBCount(pools);
-    m_bufferContainerParams.sizeOfSIB        = sliceSize * m_bufferContainerParams.countOfSIB;
-    m_bufferContainerParams.sizeOfAllBuffers = m_bufferContainerParams.sizeOfSIB * m_numberOfStreams;
+    bufferContainerParams.sliceSize        = sliceSize;
+    bufferContainerParams.countOfSIB       = hcl::IntermediateBufferContainer::getSIBCount(pools);
+    bufferContainerParams.sizeOfSIB        = sliceSize * bufferContainerParams.countOfSIB;
+    bufferContainerParams.sizeOfAllBuffers = bufferContainerParams.sizeOfSIB * m_numberOfStreams;
 
-    // Make sure each pool number is divisible by its factor (for RR granularity)
+    // Make sure each pool number is divisible by its factor (for buffer granularity)
     VERIFY(verifySIBPoolSizes(pools));
 }
 
@@ -172,30 +173,10 @@ bool IntermediateBufferContainer::verifySIBPoolSizes(const std::vector<e_deviceP
 {
     for (const e_devicePoolID& pool : pools)
     {
-        switch (pool)
+        unsigned factor = DeviceBufferManager::getFactor(pool);
+        if ((hcl::IntermediateBuffersAmount::getBufferCount(pool) % factor) != 0)
         {
-            case REDUCE_RR_POOL:
-                if ((hcl::IntermediateBuffersAmount::getBufferCount(pool) % DEFAULT_FACTOR) != 0)
-                {
-                    return false;
-                }
-                break;
-            case SCALEUP_RR_AND_ALL2ALL_POOL:
-                if ((hcl::IntermediateBuffersAmount::getBufferCount(pool) % RR_SCALEUP_FACTOR) != 0)
-                {
-                    return false;
-                }
-                break;
-            case SCALEOUT_RR_POOL:
-            case SCALEOUT_GDR_POOL:
-                if ((hcl::IntermediateBuffersAmount::getBufferCount(pool) % RR_SCALEOUT_FACTOR) != 0)
-                {
-                    return false;
-                }
-                break;
-            default:
-                VERIFY(false, "Illegal poolIdx={}", pool);
-                break;
+            return false;
         }
     }
     return true;

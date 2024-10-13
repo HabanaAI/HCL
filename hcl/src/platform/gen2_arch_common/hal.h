@@ -2,11 +2,11 @@
 
 #include "interfaces/hcl_hal.h"
 
-#include <cstdint>              // for uint32_t, uint64_t
-#include <set>                  // for set
+#include <cstdint>  // for uint32_t, uint64_t
+#include <set>      // for set
 
 #include "platform/gen2_arch_common/types.h"  // for GEN2ARCH_HLS_BOX_SIZE
-#include "hcl_types.h"  // for DEFAULT_COMMUNICATORS_SIZE, HCL_HwModuleId, NUM_SCALEUP_PORTS_PER_CONNECTION
+#include "hcl_types.h"                        // for DEFAULT_COMMUNICATORS_SIZE, HCL_HwModuleId
 
 namespace hcl
 {
@@ -14,6 +14,9 @@ class Gen2ArchHal : public Hal
 {
 public:
     Gen2ArchHal();
+    virtual ~Gen2ArchHal()                     = default;
+    Gen2ArchHal(const Gen2ArchHal&)            = delete;
+    Gen2ArchHal& operator=(const Gen2ArchHal&) = delete;
 
     virtual uint64_t getMaxStreams() const override;
     virtual uint64_t getMaxQPsPerNic() const override;
@@ -28,8 +31,7 @@ public:
     virtual uint32_t getMaxQpPerInternalNic() const override = 0;
     virtual uint32_t getMaxQpPerExternalNic() const override = 0;
 
-    virtual const std::set<HCL_HwModuleId>& getHwModules() const override;
-    virtual unsigned getMaxNumScaleUpPortsPerConnection() const override { return NUM_SCALEUP_PORTS_PER_CONNECTION; }
+    virtual const DevicesSet& getHwModules() const override;
 
 protected:
     // multi streams
@@ -45,7 +47,7 @@ protected:
     const uint64_t m_maxNics      = 24;
     const uint64_t m_maxEDMAs     = 2;
 
-    std::set<HCL_HwModuleId> m_hwModuleIds;  // module ids inside the box with me
+    DevicesSet m_hwModuleIds;  // module ids inside the box with me
 
 private:
     const uint32_t m_defaultBoxSize          = GEN2ARCH_HLS_BOX_SIZE;

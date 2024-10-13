@@ -12,23 +12,26 @@
 
 #pragma once
 
-#include <cstddef>                  // for size_t
-#include <atomic>                   // for atomic
-#include <cstdint>                  // for uint8_t
-#include <map>                      // for map
-#include <memory>                   // for unique_ptr
-#include <mutex>                    // for mutex
-#include <string>                   // for string
-#include <thread>                   // for thread
-#include <vector>                   // for vector
-#include <set>                      // for set
-#include <future>                   // for future, async
+#include <cstddef>  // for size_t
+#include <atomic>   // for atomic
+#include <cstdint>  // for uint8_t
+#include <map>      // for map
+#include <memory>   // for unique_ptr
+#include <mutex>    // for mutex
+#include <string>   // for string
+#include <thread>   // for thread
+#include <vector>   // for vector
+#include <set>      // for set
+#include <future>   // for future, async
 
 #include "hccl_types.h"             // for hcclResult_t, hcclUniqueId
 #include "deferred_launcher_job.h"  // for deferred_launcher_job
 #include "hccl_internal_defs.h"     // for msg_header_t (ptr only)
 #include "hcl_types.h"              // for RankInfo
 #include "collective_logger.h"      // for CollectiveLogger
+#include "hcl_sockaddr.h"
+
+#include "../coordinator/coordinator_defs.h"  // IHcclCoordinator
 
 struct coord_sockets
 {
@@ -37,18 +40,14 @@ struct coord_sockets
     int log_socket;
 };
 
-class hccl_coordinator
+class hccl_coordinator : public IHcclCoordinator
 {
 public:
-    static std::unique_ptr<hccl_coordinator> create(bool use_global_comm_ip = false);
-    ~hccl_coordinator();
-    hcclResult_t run();
-    void         get_unique_id(hcclUniqueId& unique_id);
-    int          internal_id();
+    virtual ~hccl_coordinator() override;
+    virtual hcclResult_t run() override;
+    hccl_coordinator(sockaddr_t& addr);
 
 private:
-    hccl_coordinator(int server_socket, internal_unique_id_t& internal_id_s_);
-
     std::string dump_header(msg_header_t& hdr);
     // This function meant to be called from coordinator_thread_;
     void try_accept();
@@ -66,10 +65,6 @@ private:
     void processCollectiveLogErr(const CollectiveLogMessage& msg);
     bool graceful_close_bootstrap_socket(int bootstrap_socket);
 
-    size_t next_id();
-
-    static std::mutex            coord_create_mtx_;
-    std::vector<uint8_t>         unique_id_buff_;
     deferred_launcher_job        deferred_launcher_;
     std::mutex                   srv_socket_mtx_;
     int                          server_socket_;
@@ -84,23 +79,16 @@ private:
     static const int             HCCL_COMM_SIZE_UNASSIGNED = -1;
     static const int             HCCL_RANK_UNASSIGNED      = -1;
     int                          hccl_comm_size_;
-    int                          internal_id_;
     bool                         m_initialHandshakeDone;
 
-    std::vector<RankInfoHeader> m_hcclRankInfoHeaders;
+    std::vector<RankInfoHeader>                          m_hcclRankInfoHeaders;
     std::vector<std::vector<RemoteDeviceConnectionInfo>> m_hcclRemoteDevices;
-    std::map<std::string, int>  m_nodeMapping;
-    std::set<int> sync_ranks_;
+    std::map<std::string, int>                           m_nodeMapping;
+    std::set<int>                                        sync_ranks_;
     bool m_bootstrapValidationError = false;  // did any of the ranks fail, for any reason, during bootstrap
 
     CollectiveLogger m_collectiveLogger;
 };
-
-inline size_t hccl_coordinator::next_id()
-{
-    static size_t id = CORD_ID_GLOBAL_COMM;
-    return ++id;  // Start with 2, to distinguish from 0 (invalid) and 1 (global comm).
-}
 
 #define parallel_for_void(LOOP, LAMBDA)                                                                                \
     {                                                                                                                  \

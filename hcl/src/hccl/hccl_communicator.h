@@ -35,7 +35,6 @@ struct internal_unique_id_t;
 
 struct RankInfo;
 
-
 class hccl_communicator
 {
 public:
@@ -52,8 +51,6 @@ public:
     hcclResult_t comm_count(int* count);
 
     hcclResult_t get_async_error(hcclResult_t* asyncError);
-
-    hcclResult_t syn_device(int* device);
 
     hcclResult_t comm_user_rank(int* rank);
 
@@ -108,7 +105,7 @@ public:
                           void*           recvbuff,
                           size_t          count,
                           hcclDataType_t  datatype,
-                          synStreamHandle stream_handle,
+                          synStreamHandle streamHandle,
                           const uint32_t  flags,
                           uint8_t         apiId);
 
@@ -164,7 +161,7 @@ private:
 
     bool syncBetweenRanks();
 
-    int m_rank;
+    HCL_Rank m_rank;
 
     void updateRemoteDevices(std::vector<RankInfoHeader>& hcclRankInfo);
     void updateRemoteDevices(std::vector<RemoteDeviceConnectionInfo>& hcclRemoteDevices);

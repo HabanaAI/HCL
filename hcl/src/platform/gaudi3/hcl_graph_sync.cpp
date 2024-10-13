@@ -14,9 +14,9 @@ class HclCommandsGen2Arch;
 
 #define DCORE_SIZE (mmHD1_SYNC_MNGR_OBJS_BASE - mmHD0_SYNC_MNGR_OBJS_BASE)
 
-// check if sm is at the beggining or the middle of a dcore
+// check if sm is at the beginning or the middle of a dcore
 #define IS_EVEN_INDEXED_SM(smBase)                                                                                     \
-    (((smBase - mmHD0_SYNC_MNGR_OBJS_BASE) & (DCORE_SIZE - 1)) == 0)  // hack to avoid modulas
+    (((smBase - mmHD0_SYNC_MNGR_OBJS_BASE) & (DCORE_SIZE - 1)) == 0)  // hack to avoid modulus
 
 HclGraphSyncGaudi3::HclGraphSyncGaudi3(unsigned smIdx, HclCommandsGen2Arch& commands)
 : HclGraphSyncGen2Arch(smIdx, commands)
@@ -26,7 +26,7 @@ HclGraphSyncGaudi3::HclGraphSyncGaudi3(unsigned smIdx, HclCommandsGen2Arch& comm
 uint64_t HclGraphSyncGaudi3::getSyncManagerBase(unsigned smIdx)
 {
     uint64_t smBase;
-    // We have 2 SMs per dcore so if we devide it by 2 we get the dcore.
+    // We have 2 SMs per dcore so if we divide it by 2 we get the dcore.
     switch (smIdx / 2)
     {
         case 0:
@@ -58,7 +58,7 @@ uint64_t HclGraphSyncGaudi3::getSyncManagerBase(unsigned smIdx)
             return 0;
     }
 
-    // for odd indexed SMs we need to jump to its offset from the begining of the dcore
+    // for odd indexed SMs we need to jump to its offset from the beginning of the dcore
     if (smIdx & 0x1)
     {
         smBase += offsetof(gaudi3::block_sob_objs, sob_obj_1);
@@ -94,13 +94,13 @@ uint32_t HclGraphSyncGaudi3::getAddrSobObj(uint64_t smBase, unsigned Idx)
 
 uint32_t HclGraphSyncGaudi3::getRegSobObj(uint64_t smBase, unsigned Idx)
 {
-    // doesnt mater if it is index 0 or 1 since both structs are identical (reg_sob_obj_0/reg_sob_obj_1)
+    // doesn't mater if it is index 0 or 1 since both structs are identical (reg_sob_obj_0/reg_sob_obj_1)
     return smBase + sizeof(gaudi3::sob_objs::reg_sob_obj_0) * Idx;
 }
 
 uint32_t HclGraphSyncGaudi3::getOffsetMonArm(unsigned Idx)
 {
-    // doesnt mater if it is index 0 or 1 since the offset from the SMBase is the same
+    // doesn't mater if it is index 0 or 1 since the offset from the SMBase is the same
     return varoffsetof(gaudi3::block_sob_objs, mon_arm_0[Idx]);
 }
 
@@ -117,7 +117,7 @@ uint32_t HclGraphSyncGaudi3::createSchedMonExpFence(unsigned /*fenceIdx*/)
 {
     gaudi3::arc_acp_eng::reg_qsel_mask_counter maskCounter;
 
-    const int op    = 1; // ADD
+    const int op    = 1;  // ADD
     const int value = 1;
 
     maskCounter._raw  = 0;
@@ -129,7 +129,7 @@ uint32_t HclGraphSyncGaudi3::createSchedMonExpFence(unsigned /*fenceIdx*/)
 
 uint32_t HclGraphSyncGaudi3::getArmMonSize()
 {
-    // doesnt mater if it is index 0 or 1 since both structs are identical (reg_mon_arm_0/reg_mon_arm_1)
+    // doesn't mater if it is index 0 or 1 since both structs are identical (reg_mon_arm_0/reg_mon_arm_1)
     return sizeof(gaudi3::sob_objs::reg_mon_arm_0);
 }
 
@@ -140,7 +140,7 @@ uint32_t HclGraphSyncGaudi3::createMonArm(uint64_t       soValue,
                                           int            i,
                                           bool           useEqual)
 {
-    // doesnt mater if it is index 0 or 1 since both structs are identical (reg_mon_arm_0/reg_mon_arm_1)
+    // doesn't mater if it is index 0 or 1 since both structs are identical (reg_mon_arm_0/reg_mon_arm_1)
     gaudi3::sob_objs::reg_mon_arm_0 monArm;
 
     monArm.sod  = getFifteenBits(soValue, i);
@@ -152,7 +152,7 @@ uint32_t HclGraphSyncGaudi3::createMonArm(uint64_t       soValue,
 
 uint32_t HclGraphSyncGaudi3::getSoConfigValue(unsigned value, bool isReduction)
 {
-    // doesnt mater if it is index 0 or 1 since both structs are identical (reg_sob_obj_0/reg_sob_obj_1)
+    // doesn't mater if it is index 0 or 1 since both structs are identical (reg_sob_obj_0/reg_sob_obj_1)
     gaudi3::sob_objs::reg_sob_obj_0 soConfigMsg;
     soConfigMsg._raw = 0;
 

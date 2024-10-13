@@ -302,9 +302,8 @@ SmInfo Gen2ArchScalWrapper::getSmInfo(unsigned archStreamIndex) const
     assert(rc == 0);
     if (rc != 0)
     {
-        throw ScalErrorException(
-            "Failed on scal_get_so_monitor_handle_by_name with smName: " +
-            m_scalNames.smNames[archStreamIndex][SyncManagerName::networkMonitor]);
+        throw ScalErrorException("Failed on scal_get_so_monitor_handle_by_name with smName: " +
+                                 m_scalNames.smNames[archStreamIndex][SyncManagerName::networkMonitor]);
     }
 
     rc = scal_monitor_pool_get_info(monPoolHandle, &monPoolInfo);
@@ -363,13 +362,13 @@ SmInfo Gen2ArchScalWrapper::getSmInfo(unsigned archStreamIndex) const
     info.soDcoreIndex = soPoolInfo.dcoreIndex;
     info.soSize       = soPoolInfo.size;
 
-    info.monitorBaseIdx  = monPoolInfo.baseIdx;
-    info.monitorSmIndex  = monPoolInfo.smIndex;
-    info.monitorSize     = monPoolInfo.size;
+    info.monitorBaseIdx = monPoolInfo.baseIdx;
+    info.monitorSmIndex = monPoolInfo.smIndex;
+    info.monitorSize    = monPoolInfo.size;
 
-    info.longMonitorBaseIdx  = longMonPoolInfo.baseIdx;
-    info.longMonitorSmIndex  = longMonPoolInfo.smIndex;
-    info.longMonitorSize     = longMonPoolInfo.size;  // In term of regular monitors (4 monitors per long monitor)
+    info.longMonitorBaseIdx = longMonPoolInfo.baseIdx;
+    info.longMonitorSmIndex = longMonPoolInfo.smIndex;
+    info.longMonitorSize    = longMonPoolInfo.size;  // In term of regular monitors (4 monitors per long monitor)
 
     return info;
 }

@@ -1,24 +1,26 @@
 #pragma once
 
-#include <cstdint>                      // for uint32_t, uint8_t, uint16_t
-#include <functional>                   // for function
-#include <map>                          // for map
-#include <unordered_map>                // for unordered_map
-#include <unordered_set>                // for unordered_set
-#include <vector>                       // for vector
+#include <cstdint>        // for uint32_t, uint8_t, uint16_t
+#include <functional>     // for function
+#include <map>            // for map
+#include <unordered_map>  // for unordered_map
+#include <unordered_set>  // for unordered_set
+#include <vector>         // for vector
 
-#include "hcl_api_types.h"              // for HCL_Comm, HCL_Rank
-#include "hccl_types.h"                 // for hcclResult_t
-#include "hcl_config.h"                 // for HclConfig (ptr only), HclDevi...
-#include "hcl_dynamic_comms_manager.h"  // for HclDynamicCommsManager
-#include "hcl_hal.h"                    // for HalPtr
-#include "hcl_types.h"                  // for HclConfigType, NO_DEVICE_ID
-#include "synapse_api_types.h"          // for synDeviceId, synStreamHandle
-#include "synapse_common_types.h"       // for synDeviceType
+#include "hcl_api_types.h"                                // for HCL_Comm, HCL_Rank
+#include "hccl_types.h"                                   // for hcclResult_t
+#include "hcl_config.h"                                   // for HclConfig
+#include "platform/gen2_arch_common/hcl_device_config.h"  // for HclDeviceConfig
+#include "hcl_dynamic_comms_manager.h"                    // for HclDynamicCommsManager
+#include "hcl_hal.h"                                      // for HalPtr
+#include "hcl_types.h"                                    // for HclConfigType
+#include "synapse_api_types.h"                            // for synDeviceId, synStreamHandle
+#include "synapse_common_types.h"                         // for synDeviceType
 #include "hcl_nic.h"
-#include "hcl_config.h"                 // for HclDeviceConfig
 #include "infra/hcl_affinity_manager.h"
 #include "libfabric/hl_ofi_component.h"
+#include "platform/gen2_arch_common/server_connectivity_types.h"  // for DEFAULT_COMM_ID
+#include "platform/gen2_arch_common/hcl_device_config.h"          // for HclDeviceConfig
 
 class HclDynamicCommunicator;
 class HclEvent;
@@ -27,17 +29,17 @@ class ofi_t;
 
 class OfiPlugin;
 class HcclHostBufferManager;
-
+class Gen2ArchServerDef;
 
 class IHclDevice
 {
 public:
-    IHclDevice() = default;  // used for testing only
-    IHclDevice(HclDeviceConfig& deviceConfig);
-
-    synDeviceType getDeviceType() const { return m_deviceType; }
-
+    IHclDevice(HclDeviceConfig& deviceConfig);  // Used by Runtime and tests ctor
     virtual ~IHclDevice() noexcept(false);
+    IHclDevice(const IHclDevice&)            = delete;
+    IHclDevice& operator=(const IHclDevice&) = delete;
+
+    const std::string getDeviceTypeStr() const { return m_deviceConfig.getDeviceTypeStr(); }
 
     /**
      * @brief enable parametrized destruction
@@ -109,7 +111,7 @@ public:
     /**
      * get comm size - the number of devices in communicator
      */
-    virtual int getCommSize(HCL_Comm comm);
+    virtual uint32_t getCommSize(HCL_Comm comm);
 
     /**
      * get DeviceIDs set of HCL_Comm comm
@@ -127,11 +129,6 @@ public:
      * allocate a new communicator. returns allocated comm id.
      */
     virtual HCL_Comm allocateNewComm();
-
-    /**
-     * allocate HCL_COMM_WORLD communicator.
-     */
-    virtual HCL_Comm allocateCommWorld();
 
     virtual hcclResult_t networkFlush(HCL_Request* phRequest, synStreamHandle streamHandle);
 
@@ -168,16 +165,17 @@ public:
      * @return true if port is scal-out port
      * @return false otherwise
      */
-    virtual bool isScaleOutPort(uint16_t port, unsigned spotlightType = DEFAULT_SPOTLIGHT) = 0;
+    virtual bool isScaleOutPort(const uint16_t port, const HCL_Comm comm = DEFAULT_COMM_ID) const = 0;
 
-    HclDeviceConfig&   getDeviceConfig();
-    int                getFd() const;
-    inline const hcl::HalPtr  getHal() const { return m_hal; };
+    HclDeviceConfig&         getDeviceConfig() { return m_deviceConfig; }
+    const HclDeviceConfig&   getDeviceConfig() const { return m_deviceConfig; }
+    int                      getFd() const;
+    inline const hcl::HalPtr getHal() const { return m_hal; }
 
-    virtual void      openWQs();
-    virtual hcclResult_t openQps(HCL_Comm comm);
+    virtual void         openWQs();
+    hcclResult_t         openQps(HCL_Comm comm);
     virtual hcclResult_t updateQps(HCL_Comm comm);
-    virtual uint8_t   getPeerNic(HCL_Rank rank, HCL_Comm comm, uint8_t port);
+    virtual uint8_t      getPeerNic(HCL_Rank rank, HCL_Comm comm, uint8_t port);
 
     virtual bool isDramAddressValid(uint64_t addr) const = 0;
 
@@ -191,16 +189,16 @@ public:
 
     virtual int getNumActiveComms() const;
 
-    virtual int getScaleupGroupSize(HCL_Comm comm);
+    virtual uint32_t getScaleupGroupSize(HCL_Comm comm);
 
     virtual unsigned getSenderWqeTableSize()   = 0;
     virtual unsigned getReceiverWqeTableSize() = 0;
 
     virtual nics_mask_t getNicsStatusMask() const;
 
-    virtual ofi_t* getOfiHandle();
-    virtual int    getOfiDeviceId();
-    virtual HcclHostBufferManager*   getHostBufferManager() { return nullptr; }
+    virtual ofi_t*                 getOfiHandle();
+    virtual int                    getOfiDeviceId();
+    virtual HcclHostBufferManager* getHostBufferManager() { return nullptr; }
 
     int  getHwModuleId();
     bool isScaleOutAvailable() { return m_scaleoutAvailable; }
@@ -208,16 +206,21 @@ public:
     virtual spHclNic allocateNic(uint32_t nic, uint32_t max_qps) { return std::make_shared<IHclNic>(this, nic); }
 
     virtual uint32_t createQp(uint32_t port, uint8_t qpId) = 0;
-    virtual hcclResult_t setupQps(HCL_Comm comm, HCL_Rank rank, uint32_t stream, uint32_t port, uint32_t qpn, uint8_t qpSet) = 0;
-    virtual void destroyQp(uint32_t port, uint32_t qpn) = 0;
+    virtual hcclResult_t
+    setupQps(HCL_Comm comm, HCL_Rank rank, uint32_t stream, uint32_t port, uint32_t qpn, uint8_t qpSet) = 0;
+    virtual void destroyQp(uint32_t port, uint32_t qpn)                                                 = 0;
 
     virtual uint64_t getDRAMSize() { return 0; };
     virtual uint64_t getDRAMBaseAddr() { return 0; };
-    virtual bool     isACcbHalfFullForDeviceBenchMark(const unsigned archStreamIdx);
+    virtual bool     isACcbHalfFullForDeviceBenchMark(const unsigned archStreamIdx)    = 0;
+    virtual void     setTraceMarker(const synStreamHandle stream_handle, uint32_t val) = 0;
 
-    ofi_component_t*  getOfiComponent() { return m_ofiComponent; }
-    const synDeviceId m_deviceId = NO_DEVICE_ID;
-    HclDeviceConfig   m_deviceConfig;
+    ofi_component_t* getOfiComponent() { return m_ofiComponent; }
+    // The following is an indication if this device was acquired by synapse successfully and it is then sets to true.
+    const bool m_deviceAcquired = false;
+
+    virtual Gen2ArchServerDef&       getServerDef()            = 0;
+    virtual const Gen2ArchServerDef& getServerDefConst() const = 0;
 
 protected:
     virtual uint32_t allocateConnection(uint32_t port, HCL_Rank rank, HCL_Comm comm, uint8_t qpId, uint8_t qpSet = 0);
@@ -226,22 +229,33 @@ protected:
     void setHal(hcl::HalPtr ptr);
     void registerOpenQpCallback(HclConfigType configType, std::function<hcclResult_t(HCL_Comm)> callback);
     void createOfiPlugin();
-    void setScaleoutMode(const int scaleOutGNICs);
+    void setScaleoutMode(const unsigned scaleOutGNICs);
     void initNicsMask();
     void fillMacAddresses(HCL_Comm comm);
     void getMacInfo();
     void readMacInfoDriver();
     void getMacAddressInfo();
     bool readMacInfoFromFile(const char* macAddrInfoFilePath);
+    // Until This class is merged with HclDeviceGen2Arch, it is implemented at HclDeviceGen2Arch
+    virtual uint16_t getMaxNumScaleUpPortsPerConnection(const HCL_Comm hclCommId = DEFAULT_COMM_ID) const = 0;
 
     class macaddr_t
     {
     private:
         uint64_t addr_ = 0;
+
     public:
-        operator uint64_t() const {return addr_;}
-        macaddr_t& operator = (void* other) { memcpy(&addr_, other, ETH_ALEN); return *this; }
-        macaddr_t& operator = (uint64_t other) { addr_ = other; return *this; }
+        operator uint64_t() const { return addr_; }
+        macaddr_t& operator=(void* other)
+        {
+            memcpy(&addr_, other, ETH_ALEN);
+            return *this;
+        }
+        macaddr_t& operator=(uint64_t other)
+        {
+            addr_ = other;
+            return *this;
+        }
     };
 
     using nics_map = std::unordered_map<uint8_t, spHclNic>;
@@ -253,12 +267,12 @@ protected:
         nics_map    nics;
         macs_map    macs;
 
-        spHclNic& operator[] (uint8_t _nic) {return nics[_nic];}
+        spHclNic& operator[](uint8_t _nic) { return nics[_nic]; }
     } m_hclNic;
 
-    synDeviceType    m_deviceType;
-    OfiPlugin* m_ofiPlugin {nullptr};
-    int              m_ofiDeviceID = -1;
+    HclDeviceConfig& m_deviceConfig;
+    OfiPlugin*       m_ofiPlugin {nullptr};
+    int              m_ofiDeviceID       = -1;
     bool             m_scaleoutAvailable = true;
 
     HclDynamicCommsManager m_dynamicComms;

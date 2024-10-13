@@ -17,7 +17,7 @@ Gaudi3Hls3PCieHal::Gaudi3Hls3PCieHal(const uint32_t hwModuleId) : Gaudi3Hal(), m
     });
 }
 
-const std::set<HCL_HwModuleId>& Gaudi3Hls3PCieHal::getHwModules() const
+const DevicesSet& Gaudi3Hls3PCieHal::getHwModules() const
 {
     return m_hwModuleIds;
 }

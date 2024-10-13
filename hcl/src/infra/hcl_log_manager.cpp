@@ -4,8 +4,8 @@
 #include "dfa_defines.hpp"
 #include "hcl_log_manager.h"
 
-#define LOG_SIZE       200 * 1024 * 1024
-#define LOG_AMOUNT     5
+#define LOG_SIZE   200 * 1024 * 1024
+#define LOG_AMOUNT 5
 
 #define HCL_LOG_FILE               "hcl.log"
 #define HCL_COORDINATOR_LOG_FILE   "hcl_coordinator.log"

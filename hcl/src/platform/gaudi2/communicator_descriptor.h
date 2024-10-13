@@ -1,18 +1,18 @@
 #pragma once
 
-#include <cstddef>                                  // for size_t
-#include <cstdint>                                  // for uint8_t, uint32_t
-#include <array>                                    // for array
-#include <list>                                     // for list, list<>::iter...
-#include <set>                                      // for set
-#include <utility>                                  // for pair
-#include <vector>                                   // for vector
+#include <cstddef>  // for size_t
+#include <cstdint>  // for uint8_t, uint32_t
+#include <array>    // for array
+#include <list>     // for list, list<>::iter...
+#include <set>      // for set
+#include <utility>  // for pair
+#include <vector>   // for vector
 
-#include "hcl_api_types.h"                          // for HCL_Comm, HCL_Rank
-#include "hcl_types.h"                              // for MAX_QPS_SETS_PER_CONNECTION, NUM_SCALEUP_PORTS_PER_CONNECTION
-#include "sched_pkts.h"                             // for g2fw
-#include "platform/gen2_arch_common/types.h"        // for QpInfo
-#include "hcl_dynamic_communicator.h"               // for HclDynamicCommunicator
+#include "hcl_api_types.h"                    // for HCL_Comm, HCL_Rank
+#include "hcl_types.h"                        // for MAX_QPS_SETS_PER_CONNECTION, NUM_SCALEUP_PORTS_PER_CONNECTION
+#include "sched_pkts.h"                       // for g2fw
+#include "platform/gen2_arch_common/types.h"  // for MAX_NICS_GEN2ARCH
+#include "hcl_dynamic_communicator.h"         // for HclDynamicCommunicator
 
 constexpr size_t g_qpnTableSize = 11;
 
@@ -97,7 +97,7 @@ public:
     inline void markCommDownload(const HCL_Comm comm) { m_commDownloaded[comm] = true; }
 
 private:
-    std::vector<bool> m_commDownloaded; // Mark per comm when commands were download
+    std::vector<bool> m_commDownloaded;  // Mark per comm when commands were download
 
     std::vector<std::array<g2fw::nic_coll_ctxt_dword_t, MAX_NICS_GEN2ARCH>> m_remoteDescriptors;
 

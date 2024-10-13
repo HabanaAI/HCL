@@ -8,7 +8,7 @@ class ConcurrentQueue
 public:
     ConcurrentQueue() = default;
 
-    ConcurrentQueue(const ConcurrentQueue&) = delete;
+    ConcurrentQueue(const ConcurrentQueue&)            = delete;
     ConcurrentQueue& operator=(const ConcurrentQueue&) = delete;
 
     void push(const T& item)

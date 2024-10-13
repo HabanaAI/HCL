@@ -1,6 +1,6 @@
 #pragma once
 
-#include "hcl_api_types.h"
+#include "hcl_inc.h"
 
 #include <vector>
 #include <ostream>

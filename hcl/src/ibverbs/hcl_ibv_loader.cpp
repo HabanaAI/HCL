@@ -37,7 +37,7 @@ void* load_rdma_lib()
     if (handle == nullptr)
     {
         so_name = GCFG_HCL_RDMA_DEFAULT_PATH.value() + "/libhbl.so";
-        handle = dlopen(so_name.c_str(), RTLD_LOCAL | RTLD_NOW);
+        handle  = dlopen(so_name.c_str(), RTLD_LOCAL | RTLD_NOW);
     }
 
     return handle;
@@ -64,6 +64,7 @@ bool ibv_lib_t::load()
     LIBFUNC(hbldv_destroy_usr_fifo);
     LIBFUNC(hbldv_query_port);
     LIBFUNC(hbldv_is_supported);
+    LIBFUNC(hbldv_query_device);
 
     Dl_info info = {};
     dladdr((const void*)hbldv_is_supported, &info);

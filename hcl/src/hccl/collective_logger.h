@@ -12,14 +12,13 @@
 
 #pragma once
 
-#include <deque>                    // for deque
-#include <unordered_set>            // for unordered_set
-#include <unordered_map>            // for unordered_map
-#include <array>                    // for array
-#include <functional>               // for hash
+#include <deque>          // for deque
+#include <unordered_set>  // for unordered_set
+#include <unordered_map>  // for unordered_map
+#include <array>          // for array
+#include <functional>     // for hash
 
-#include "hccl_internal_defs.h"     // for hcclOp
-
+#include "hccl_internal_defs.h"
 
 namespace std
 {
@@ -27,7 +26,7 @@ namespace std
  * @brief hash function for the CollectiveParamsSignature struct
  * so it can be used as unordered_map key
  */
-template <>
+template<>
 struct hash<CollectiveParamsSignature>
 {
     size_t operator()(const CollectiveParamsSignature& k) const
@@ -60,8 +59,7 @@ struct hash<SendRecvSignature>
         return res;
     }
 };
-}   // end namespace std
-
+}  // end namespace std
 
 /**
  * @brief collective call log entry for a call with specific signature
@@ -69,9 +67,9 @@ struct hash<SendRecvSignature>
  */
 struct CollectiveCallEntry
 {
-    std::unordered_set<int> callers;      // list of calling ranks
-    int64_t                 first;        // timestamp of first call
-    int64_t                 last;         // timestamp of last call
+    std::unordered_set<HCL_Rank> callers;  // list of calling ranks
+    int64_t                      first;    // timestamp of first call
+    int64_t                      last;     // timestamp of last call
 };
 
 /**
@@ -111,7 +109,7 @@ typedef std::unordered_map<SendRecvSignature, std::deque<SendRecvCallEntry>> Sen
  */
 class CollectiveLogger
 {
-// public methods
+    // public methods
 public:
     void processLogMessage(const CollectiveLogMessage& msg);
     void setCommSize(const uint32_t size);
@@ -126,17 +124,20 @@ public:
 
     // private methods
 private:
-    bool isCollectiveOp(hcclOp op) const { return op <= eHCCLCollectiveMax; }
+    bool isCollectiveOp(HCL_CollectiveOp op) const
+    {
+        return (op < eHCLCollectiveLastValue) && (op != eHCLNoCollective);
+    }
     void processCollectiveOp(const CollectiveLogMessage& msg);
     void processSendRecvOp(const CollectiveLogMessage& msg);
 
-// private members
+    // private members
 private:
     /**
      * @brief collective calls log counters database
-     * there is one array entry for each collective API defined in hcclOp enum
+     * there is one array entry for each collective API defined in HCL_CollectiveOp enum
      */
-    std::array<CollectiveLogCounter, eHCCLCollectiveMax + 1> m_collectiveCounters;
+    std::array<CollectiveLogCounter, eHCLCollectiveLastValue + 1> m_collectiveCounters;
 
     /**
      * @brief send/recv log counters database

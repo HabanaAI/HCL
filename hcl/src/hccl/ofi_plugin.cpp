@@ -12,16 +12,15 @@ OfiPlugin::OfiPlugin(int fd, int hw_module_id)
 {
     VERIFY(initializeOFIPluginIfNeeded(), "Failed to get ofi_plugin");
 
-    p_ofi = new ofi_t(hw_module_id);
+    p_ofi = std::make_unique<ofi_t>(fd, hw_module_id);
 
-    VERIFY(!p_ofi->init(fd), "Libfabric init failed");
+    VERIFY(!p_ofi->init(), "Libfabric init failed");
     VERIFY(p_ofi->nOFIDevices() != 0, "No available OFI devices");
 }
 
 OfiPlugin::~OfiPlugin()
 {
     destroy_ofi_plugin();
-    delete p_ofi;
 }
 
 bool OfiPlugin::initialize_ofi_plugin()
@@ -45,7 +44,7 @@ bool OfiPlugin::initialize_ofi_plugin()
     else
     {
         version = (*p_get_version)();
-        if (version == 0)
+        if (static_cast<int>(version) == 0)
         {
             LOG_ERR(HCL, "Error in getting OFI wrapper version.");
             dlclose(handle_);

@@ -4,14 +4,14 @@ CollectiveLogger::~CollectiveLogger()
 {
     LOG_INFO(HCL_COORD,
              "Collective Counters [{}, {}, {}, {}, {}, {}]",
-             m_collectiveCounters[eHCCLReduce].size(),
-             m_collectiveCounters[eHCCLAllReduce].size(),
-             m_collectiveCounters[eHCCLReduceScatter].size(),
-             m_collectiveCounters[eHCCLBroadcast].size(),
-             m_collectiveCounters[eHCCLAllGather].size(),
-             m_collectiveCounters[eHCCLAllToAll].size());
+             m_collectiveCounters[eHCLReduce].size(),
+             m_collectiveCounters[eHCLAllReduce].size(),
+             m_collectiveCounters[eHCLReduceScatter].size(),
+             m_collectiveCounters[eHCLBroadcast].size(),
+             m_collectiveCounters[eHCLAllGather].size(),
+             m_collectiveCounters[eHCLAll2All].size());
 
-    for (size_t i = 0; i <= eHCCLCollectiveMax; i++)
+    for (size_t i = 0; i <= eHCLCollectiveLastValue; i++)
     {
         for (auto dq : m_collectiveCounters[i])
         {
@@ -20,7 +20,7 @@ CollectiveLogger::~CollectiveLogger()
                 LOG_ERR(HCL_COORD,
                         "Collective: Non empty deque({}) found for signature({}, {}, {}, {}, {})",
                         dq.second.size(),
-                        hcclOp(i),
+                        HCL_CollectiveOp(i),
                         dq.first.count,
                         dq.first.datatype,
                         dq.first.reduceOp,
@@ -99,7 +99,7 @@ void CollectiveLogger::processCollectiveOp(const CollectiveLogMessage& msg)
         // first call for this signature, create deque and insert first entry
         m_collectiveCounters[msg.op][msg.params] = std::deque<CollectiveCallEntry>();
         m_collectiveCounters[msg.op][msg.params].push_back(
-            {std::unordered_set<int>({msg.rank}), msg.timestamp, msg.timestamp});
+            {std::unordered_set<HCL_Rank>({msg.rank}), msg.timestamp, msg.timestamp});
         LOG_HCL_DEBUG(HCL_COORD,
                       "deque({}) created for ({}, {}, {}, {}, {}, {}), set({}) contains {} rank",
                       m_collectiveCounters[msg.op][msg.params].size(),
@@ -112,9 +112,9 @@ void CollectiveLogger::processCollectiveOp(const CollectiveLogMessage& msg)
                       msg.rank,
                       m_collectiveCounters[msg.op][msg.params][0].callers.size());
     }
-    else    // counter found for call signature
+    else  // counter found for call signature
     {
-        bool found = false;     // indicate message is handled
+        bool found = false;  // indicate message is handled
 
         // calls list for the params signature
         std::deque<CollectiveCallEntry>& calls = m_collectiveCounters[msg.op][msg.params];
@@ -205,7 +205,6 @@ void CollectiveLogger::processCollectiveOp(const CollectiveLogMessage& msg)
                              m_commSize);
                 }
 
-
                 // done with message, exit loop
                 found = true;
                 break;
@@ -215,7 +214,7 @@ void CollectiveLogger::processCollectiveOp(const CollectiveLogMessage& msg)
         // if we got here and not found, it is first of new call for this signature, insert new deque entry
         if (!found)
         {
-            calls.push_back({std::unordered_set<int>({msg.rank}), msg.timestamp, msg.timestamp});
+            calls.push_back({std::unordered_set<HCL_Rank>({msg.rank}), msg.timestamp, msg.timestamp});
             LOG_HCL_DEBUG(HCL_COORD,
                           "New call added to deque({}), Rank({}) called({}, {}, {}, {}, {}, {}), set contains {} ranks",
                           calls.size(),
@@ -245,7 +244,8 @@ void CollectiveLogger::processSendRecvOp(const CollectiveLogMessage& msg)
     int     receiver = -1;
     int64_t sendTime = std::numeric_limits<int64_t>::min();  // send timestamp
     int64_t recvTime = std::numeric_limits<int64_t>::min();  // receive timestamp
-    if (msg.op == eHCCLSend)
+
+    if (msg.params.root == 0)
     {
         sender   = msg.rank;
         sendTime = msg.timestamp;
@@ -258,6 +258,7 @@ void CollectiveLogger::processSendRecvOp(const CollectiveLogMessage& msg)
         receiver = msg.rank;
         recvTime = msg.timestamp;
     }
+
     const SendRecvSignature sign = {sender, receiver, msg.params.count, msg.params.datatype};
 
     // check if counter exist for this call signature

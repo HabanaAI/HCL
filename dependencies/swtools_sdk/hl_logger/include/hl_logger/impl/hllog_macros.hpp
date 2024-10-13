@@ -163,8 +163,26 @@
 #define HLLOG_APPLY_118(comma, sep, OP, v, ...) comma OP(v) sep() HLLOG_APPLY_117(, sep, OP, ##__VA_ARGS__)
 #define HLLOG_APPLY_119(comma, sep, OP, v, ...) comma OP(v) sep() HLLOG_APPLY_118(, sep, OP, ##__VA_ARGS__)
 #define HLLOG_APPLY_120(comma, sep, OP, v, ...) comma OP(v) sep() HLLOG_APPLY_119(, sep, OP, ##__VA_ARGS__)
-
-
+#define HLLOG_APPLY_121(comma, sep, OP, v, ...) comma OP(v) sep() HLLOG_APPLY_120(, sep, OP, ##__VA_ARGS__)
+#define HLLOG_APPLY_122(comma, sep, OP, v, ...) comma OP(v) sep() HLLOG_APPLY_121(, sep, OP, ##__VA_ARGS__)
+#define HLLOG_APPLY_123(comma, sep, OP, v, ...) comma OP(v) sep() HLLOG_APPLY_122(, sep, OP, ##__VA_ARGS__)
+#define HLLOG_APPLY_124(comma, sep, OP, v, ...) comma OP(v) sep() HLLOG_APPLY_123(, sep, OP, ##__VA_ARGS__)
+#define HLLOG_APPLY_125(comma, sep, OP, v, ...) comma OP(v) sep() HLLOG_APPLY_124(, sep, OP, ##__VA_ARGS__)
+#define HLLOG_APPLY_126(comma, sep, OP, v, ...) comma OP(v) sep() HLLOG_APPLY_125(, sep, OP, ##__VA_ARGS__)
+#define HLLOG_APPLY_127(comma, sep, OP, v, ...) comma OP(v) sep() HLLOG_APPLY_126(, sep, OP, ##__VA_ARGS__)
+#define HLLOG_APPLY_128(comma, sep, OP, v, ...) comma OP(v) sep() HLLOG_APPLY_127(, sep, OP, ##__VA_ARGS__)
+#define HLLOG_APPLY_129(comma, sep, OP, v, ...) comma OP(v) sep() HLLOG_APPLY_128(, sep, OP, ##__VA_ARGS__)
+#define HLLOG_APPLY_130(comma, sep, OP, v, ...) comma OP(v) sep() HLLOG_APPLY_129(, sep, OP, ##__VA_ARGS__)
+#define HLLOG_APPLY_131(comma, sep, OP, v, ...) comma OP(v) sep() HLLOG_APPLY_130(, sep, OP, ##__VA_ARGS__)
+#define HLLOG_APPLY_132(comma, sep, OP, v, ...) comma OP(v) sep() HLLOG_APPLY_131(, sep, OP, ##__VA_ARGS__)
+#define HLLOG_APPLY_133(comma, sep, OP, v, ...) comma OP(v) sep() HLLOG_APPLY_132(, sep, OP, ##__VA_ARGS__)
+#define HLLOG_APPLY_134(comma, sep, OP, v, ...) comma OP(v) sep() HLLOG_APPLY_133(, sep, OP, ##__VA_ARGS__)
+#define HLLOG_APPLY_135(comma, sep, OP, v, ...) comma OP(v) sep() HLLOG_APPLY_134(, sep, OP, ##__VA_ARGS__)
+#define HLLOG_APPLY_136(comma, sep, OP, v, ...) comma OP(v) sep() HLLOG_APPLY_135(, sep, OP, ##__VA_ARGS__)
+#define HLLOG_APPLY_137(comma, sep, OP, v, ...) comma OP(v) sep() HLLOG_APPLY_136(, sep, OP, ##__VA_ARGS__)
+#define HLLOG_APPLY_138(comma, sep, OP, v, ...) comma OP(v) sep() HLLOG_APPLY_137(, sep, OP, ##__VA_ARGS__)
+#define HLLOG_APPLY_139(comma, sep, OP, v, ...) comma OP(v) sep() HLLOG_APPLY_138(, sep, OP, ##__VA_ARGS__)
+#define HLLOG_APPLY_140(comma, sep, OP, v, ...) comma OP(v) sep() HLLOG_APPLY_139(, sep, OP, ##__VA_ARGS__)
 
 // comma for passing to macros as a parameter
 #define HLLOG_COMMA() ,

@@ -4,19 +4,19 @@
 using namespace hcl;
 
 CompletionGroup::CompletionGroup(Gen2ArchScalWrapper& scalWrapper, scal_comp_group_handle_t cg)
-: m_scalWrapper(scalWrapper), m_lastFinidshedTargetValue(0), m_cg(cg)
+: m_scalWrapper(scalWrapper), m_lastFinishedTargetValue(0), m_cg(cg)
 {
 }
 
 void CompletionGroup::waitOnValue(uint64_t targetValue)
 {
-    if (targetValue <= m_lastFinidshedTargetValue)
+    if (targetValue <= m_lastFinishedTargetValue)
     {
         return;
     }
 
     m_scalWrapper.waitOnCg(m_cg, targetValue);
-    m_lastFinidshedTargetValue = targetValue;
+    m_lastFinishedTargetValue = targetValue;
 }
 
 void CompletionGroup::cgRegisterTimeStemp(uint64_t targetValue, uint64_t timestampHandle, uint32_t timestampsOffset)
@@ -26,14 +26,14 @@ void CompletionGroup::cgRegisterTimeStemp(uint64_t targetValue, uint64_t timesta
 
 bool CompletionGroup::checkForTargetValue(uint64_t targetValue)
 {
-    if (targetValue <= m_lastFinidshedTargetValue)
+    if (targetValue <= m_lastFinishedTargetValue)
     {
         return true;
     }
 
     if (m_scalWrapper.checkTargetValueOnCg(m_cg, targetValue))
     {
-        m_lastFinidshedTargetValue = targetValue;
+        m_lastFinishedTargetValue = targetValue;
         return true;
     }
     return false;

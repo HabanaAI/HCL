@@ -10,6 +10,8 @@ struct g2fw
 #include "gaudi2_arc_host_packets.h"    // IWYU pragma: export
 #include "gaudi2_arc_common_packets.h"  // IWYU pragma: export
 #include "gaudi2_arc_eng_packets.h"     // IWYU pragma: export
+#include "gaudi2_arc_fw_stm_events.h"
+#include "gaudi2_arc_stm.h"
 };
 
 struct g3fw
@@ -18,6 +20,8 @@ struct g3fw
 #include "gaudi3/gaudi3_arc_host_packets.h"    // IWYU pragma: export
 #include "gaudi3/gaudi3_arc_common_packets.h"  // IWYU pragma: export
 #include "gaudi3/gaudi3_arc_eng_packets.h"     // IWYU pragma: export
+#include "gaudi3/gaudi3_arc_fw_stm_events.h"
+#include "gaudi3/gaudi3_arc_stm.h"
 };
 
 #define SET_FIELD(field, value)                                                                                        \

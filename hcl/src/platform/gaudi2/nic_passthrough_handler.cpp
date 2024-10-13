@@ -1,33 +1,33 @@
 #include "platform/gaudi2/nic_passthrough_handler.h"
 
-#include <algorithm>                                // for max_element
-#include <cstdint>                                  // for uint32_t
-#include <cstring>                                  // for memset, memcpy
-#include <map>                                      // for map
-#include <memory>                                   // for __shared_ptr_access
-#include <utility>                                  // for pair
+#include <algorithm>  // for max_element
+#include <cstdint>    // for uint32_t
+#include <cstring>    // for memset, memcpy
+#include <map>        // for map
+#include <memory>     // for __shared_ptr_access
+#include <utility>    // for pair
 
-#include "platform/gaudi2/types.h"                  // for HLS2_BOX_SIZE
-#include "sched_pkts.h"                             // for g2fw
-#include "hcl_utils.h"                              // for VERIFY
-#include "hcl_log_manager.h"                        // for LOG_*
-#include "platform/gaudi2/commands/hcl_commands.h"  // for HclCommandsGaudi2
-#include "platform/gaudi2/port_mapping.h"           // for Gaudi2DevicePortMapping
-#include "platform/gen2_arch_common/types.h"        // for MAX_NICS_GEN2ARCH
+#include "platform/gaudi2/types.h"                          // for HLS2_BOX_SIZE
+#include "sched_pkts.h"                                     // for g2fw
+#include "hcl_utils.h"                                      // for VERIFY
+#include "hcl_log_manager.h"                                // for LOG_*
+#include "platform/gaudi2/commands/hcl_commands.h"          // for HclCommandsGaudi2
+#include "platform/gen2_arch_common/types.h"                // for MAX_NICS_GEN2ARCH
+#include "platform/gen2_arch_common/server_connectivity.h"  // for Gen2ArchServerConnectivity
 
 class HclCommandsGen2Arch;
 
-NicPassthroughHandler::NicPassthroughHandler(const std::vector<unsigned>&   nicEngines,
-                                             const Gaudi2DevicePortMapping& portMapping,
-                                             HclCommandsGen2Arch&           commands)
-: NicPassthroughHandlerBase(), m_portMapping(portMapping), m_commands((HclCommandsGaudi2&)commands)
+NicPassthroughHandler::NicPassthroughHandler(const std::vector<unsigned>&      nicEngines,
+                                             const Gen2ArchServerConnectivity& serverConnectivity,
+                                             HclCommandsGen2Arch&              commands)
+: NicPassthroughHandlerBase(), m_serverConnectivity(serverConnectivity), m_commands((HclCommandsGaudi2&)commands)
 {
     memset(m_dupMasksPerDevice, 0, sizeof(m_dupMasksPerDevice));
     memset(m_dupMasksPerNic, 0, sizeof(m_dupMasksPerNic));
 
     for (unsigned deviceId = 0; deviceId < HLS2_BOX_SIZE; deviceId++)
     {
-        for (unsigned port : portMapping.getAllPorts(deviceId))
+        for (unsigned port : serverConnectivity.getAllPorts(deviceId /*, HCL_Comm comm*/))
         {
             for (unsigned i = 0; i < nicEngines.size(); i++)
             {
@@ -136,18 +136,18 @@ void NicPassthroughHandler::addNicBuffer(const NicsDwordsArray& nicBuffer)
     }
 }
 
-void NicPassthroughHandler::addDeviceBuffer(const DwordsBoxesArray& deviceBuffer)
+void NicPassthroughHandler::addDeviceBuffer(const DwordsBoxesArray& deviceBuffer, const HCL_Comm comm)
 {
     NicsDwordsArray nicBuffer;
 
     for (size_t deviceId = 0; deviceId < deviceBuffer.size(); deviceId++)
     {
-        for (unsigned nic : m_portMapping.getAllPorts(deviceId))
+        for (unsigned nic : m_serverConnectivity.getAllPorts(deviceId, comm))
         {
             for (const uint32_t val : deviceBuffer[deviceId])
             {
                 nicBuffer[nic].push_back(val);
-                LOG_HCL_TRACE(HCL, "Adding DWORD deviceId={}, nic={}, val=0x{:x}", deviceId, nic, val);
+                LOG_HCL_TRACE(HCL, "comm={}, Adding DWORD deviceId={}, nic={}, val=0x{:x}", comm, deviceId, nic, val);
             }
         }
     }
@@ -273,7 +273,7 @@ void NicPassthroughHandler::fillInNicNops(std::vector<pRecordWithMetadata>& reco
 
     for (unsigned deviceId = 0; deviceId < HLS2_BOX_SIZE; deviceId++)
     {
-        if (deviceId == (unsigned) selfModuleId) continue;
+        if (deviceId == (unsigned)selfModuleId) continue;
 
         int missingCredits = maxCredits - creditsPerDevice[deviceId];
         if (missingCredits > 0)

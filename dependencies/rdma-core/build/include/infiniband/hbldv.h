@@ -25,7 +25,7 @@ extern "C" {
 #define HBL_IB_MTU_8192				6
 
 /* Maximum amount of Collective Scheduler resources */
-#define HBLDV_MAX_NUM_COLL_SCHED_RESOURCES	128
+#define HBLDV_MAX_NUM_COLL_SCHED_RESOURCES	256
 
 /**
  * struct hbldv_qp_caps - HBL QP capabilities flags.
@@ -48,11 +48,9 @@ enum hbldv_qp_caps {
 /**
  * struct hbldv_port_ex_caps - HBL port extended capabilities flags.
  * @HBLDV_PORT_CAP_ADVANCED: Enable port advanced features like RDV, QMan, WTD, etc.
- * @HBLDV_PORT_CAP_ADAPTIVE_TIMEOUT: Enable adaptive timeout feature on this port.
  */
 enum hbldv_port_ex_caps {
 	HBLDV_PORT_CAP_ADVANCED = 0x1,
-	HBLDV_PORT_CAP_ADAPTIVE_TIMEOUT = 0x2,
 };
 
 /**
@@ -103,6 +101,7 @@ enum hbldv_swq_granularity {
  * @HBLDV_USR_FIFO_TYPE_COLL_DIR_OPS_LONG: (Gaudi3 and above) mode for direct long collective
  *                                         operations.
  * @HBLDV_USR_FIFO_TYPE_LAG: (Fs1 and above) mode for lag operations.
+ * @HBLDV_USR_FIFO_TYPE_LAG_COMPLETION: (Fs1 and above) mode for lag completion operations.
  */
 enum hbldv_usr_fifo_type {
 	HBLDV_USR_FIFO_TYPE_DB = 0,
@@ -114,6 +113,7 @@ enum hbldv_usr_fifo_type {
 	HBLDV_USR_FIFO_TYPE_COLL_DIR_OPS_SHORT,
 	HBLDV_USR_FIFO_TYPE_COLL_DIR_OPS_LONG,
 	HBLDV_USR_FIFO_TYPE_LAG,
+	HBLDV_USR_FIFO_TYPE_LAG_COMPLETION,
 };
 
 /**
@@ -498,10 +498,12 @@ struct hbldv_cc_cq {
 /**
  * struct hbldv_coll_sched_resource - Collective Scheduler resource.
  * @type: Type of the resource.
- * @id: ID of the NMS to whom the resource belongs.
+ * @id: The resource's absolute index in the chip.
+ *      If a resource has multiple copies in each NMS, each copy will be exposed with a unique ID
+ *      that can be devised through NMS index * (copies per NMS) + copy index.
  * @size: The size of the resource.
- * @pa_offs: LBW address of the resource.
- * @virt_addr: Address of mmapped resource.
+ * @pa_offs: Offset of the resource relative to the LBW address base.
+ * @virt_addr: Process memory mapped address of resource.
  */
 struct hbldv_coll_sched_resource {
 	enum hbldv_coll_sched_resource_type type;
@@ -524,13 +526,15 @@ struct hbldv_coll_sched_resources {
 /**
  * struct hbldv_device_attr - Device specific attributes.
  * @caps: Capabilities mask.
- * @ports_mask: Mask of the relevant ports for this context (should be 1-based).
- * @ext_ports_mask: Mask of relevant external ports for this context.
+ * @ports_mask: Mask of IB indexes of the relevant ports for this context (1-based).
+ * @ext_ports_mask: Mask of IB indexes of relevant external ports for this context (1-based).
+ * @hw_ports_mask: Mask of HW indexes of relevant ports for this context (0-based).
  */
 struct hbldv_device_attr {
 	uint64_t caps;
 	uint64_t ports_mask;
 	uint64_t ext_ports_mask;
+	uint64_t hw_ports_mask;
 };
 
 bool hbldv_is_supported(struct ibv_device *device);

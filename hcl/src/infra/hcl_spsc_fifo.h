@@ -21,7 +21,7 @@
 /**
  * Implementation of a lock-free Single Producer, Single Consumer FIFO queue, with possibly-continuous elements.
  *
- * The continuous support is good for allowing a serializator to serialize a variable-number of dwords to a cyclic
+ * The continuous support is good for allowing a serializer to serialize a variable-number of dwords to a cyclic
  * buffer. Example: the user wants to write a 3-dwords edma command to the scheduler. If the serialized command is
  * cut because the producer wraps-around, the data is no good.
  *
@@ -112,7 +112,7 @@ public:
                 // We don't have continuous room to write 'sizeInDwords' elements, so we need to wrap-around back to the
                 // start of the buffer. When we do, it's possible that the producer (this thread) is too far ahead of
                 // the consumer (ci) - so we wait until we're more or less aligned.
-                // However, if, for example, the producer wrote CAPACITY elemenets and is now wrapping
+                // However, if, for example, the producer wrote CAPACITY elements and is now wrapping
                 // around, but the consumer didn't read anything yet. If we don't wait here, the producer will just
                 // keep writing.
                 m_watermark = m_pi;

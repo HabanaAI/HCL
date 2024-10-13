@@ -10,8 +10,9 @@ public:
     HclAddressGeneratorGaudi3(HclCommandsGen2Arch& commands) : HclAddressGenerator(commands) {};
     virtual ~HclAddressGeneratorGaudi3() = default;
 
-    virtual uint64_t
-    recalcAddressForDisragardRank(const HCL_CollectiveOp currentOp, const uint64_t address, const uint64_t offset);
+    virtual uint64_t recalcAddressForDisregardRank(const HCL_CollectiveOp currentOp,
+                                                   const uint64_t         address,
+                                                   const uint64_t         offset) override;
 
 private:
 };

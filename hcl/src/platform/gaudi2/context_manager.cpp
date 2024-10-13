@@ -1,21 +1,21 @@
 #include "platform/gaudi2/context_manager.h"
 
-#include <string.h>                                   // for memset
-#include <algorithm>                                  // for fill
-#include <cstdint>                                    // for uint32_t, uint8_t
-#include <memory>                                     // for allocator_trait...
-#include "hcl_utils.h"                                // for VERIFY
-#include "infra/scal/gen2_arch_common/scal_stream.h"  // for ScalStreamBase
-#include "hcl_log_manager.h"                          // for LOG_*
-#include "platform/gaudi2/communicator_descriptor.h"  // for CommunicatorDes...
-#include "platform/gaudi2/hcl_packets.h"              // for serializeUpdate...
-#include "platform/gaudi2/nic_passthrough_handler.h"  // for NicPassthroughH...
-#include "platform/gaudi2/port_mapping.h"             // for Gaudi2DevicePortMapping
-#include "platform/gaudi2/hal.h"                      // for Gaudi2Hal
-#include "sched_pkts.h"                               // for g2fw
-#include "platform/gen2_arch_common/types.h"          // for reduction_datat...
-#include "platform/gen2_arch_common/port_mapping.h"   // for Gen2ArchDevicePortMapping
-#include "hcl_global_conf.h"                          // for GCFG
+#include <string.h>                                         // for memset
+#include <algorithm>                                        // for fill
+#include <cstdint>                                          // for uint32_t, uint8_t
+#include <memory>                                           // for allocator_trait...
+#include "hcl_utils.h"                                      // for VERIFY
+#include "infra/scal/gen2_arch_common/scal_stream.h"        // for ScalStreamBase
+#include "hcl_log_manager.h"                                // for LOG_*
+#include "platform/gaudi2/communicator_descriptor.h"        // for CommunicatorDes...
+#include "platform/gaudi2/hcl_packets.h"                    // for serializeUpdate...
+#include "platform/gaudi2/nic_passthrough_handler.h"        // for NicPassthroughH...
+#include "platform/gaudi2/hal.h"                            // for Gaudi2Hal
+#include "sched_pkts.h"                                     // for g2fw
+#include "platform/gen2_arch_common/types.h"                // for reduction_datat...
+#include "hcl_global_conf.h"                                // for GCFG
+#include "platform/gaudi2/hcl_device.h"                     // for HclDeviceGaudi2
+#include "platform/gen2_arch_common/server_connectivity.h"  // for Gen2ArchServerConnectivity
 
 class HclCommandsGen2Arch;
 
@@ -144,23 +144,23 @@ void RequiredCollectiveContext::dwordDiff(const RequiredCollectiveContext& requi
     }
 }
 
-CachedCollectiveContext::CachedCollectiveContext(uint8_t                        collectiveContextIndex,
-                                                 const std::vector<unsigned>&   nicEngines,
-                                                 const Gaudi2DevicePortMapping& portMapping,
-                                                 HclCommandsGen2Arch&           commands)
+CachedCollectiveContext::CachedCollectiveContext(uint8_t                           collectiveContextIndex,
+                                                 const std::vector<unsigned>&      nicEngines,
+                                                 const Gen2ArchServerConnectivity& serverConnectivity,
+                                                 HclCommandsGen2Arch&              commands)
 : m_lastSyncObjectAddressIndex(1),
-  m_nicPassthroughHandler(nicEngines, portMapping, commands),
+  m_nicPassthroughHandler(nicEngines, serverConnectivity, commands),
   m_collectiveContextIndex(collectiveContextIndex)
 
 {
     memset(&m_data, 0, sizeof(m_data));
 }
 
-CachedCollectiveContextScaleUp::CachedCollectiveContextScaleUp(uint8_t                        collectiveContextIndex,
-                                                               const std::vector<unsigned>&   nicEngines,
-                                                               const Gaudi2DevicePortMapping& portMapping,
-                                                               HclCommandsGen2Arch&           commands)
-: CachedCollectiveContext(collectiveContextIndex, nicEngines, portMapping, commands),
+CachedCollectiveContextScaleUp::CachedCollectiveContextScaleUp(uint8_t                           collectiveContextIndex,
+                                                               const std::vector<unsigned>&      nicEngines,
+                                                               const Gen2ArchServerConnectivity& serverConnectivity,
+                                                               HclCommandsGen2Arch&              commands)
+: CachedCollectiveContext(collectiveContextIndex, nicEngines, serverConnectivity, commands),
   m_activeCommunicatorDescriptor(collectiveContextIndex)
 {
 }
@@ -229,6 +229,7 @@ void CachedCollectiveContext::addNicBufferToNicPassthroughHandler(const NicsDwor
 {
     m_nicPassthroughHandler.addNicBuffer(nicBuffer);
 }
+
 void CachedCollectiveContext::flushNicPassthroughHandler(hcl::ScalStreamBase& scalStream,
                                                          ContextManager&      contextManager,
                                                          int                  selfDevice,
@@ -237,25 +238,19 @@ void CachedCollectiveContext::flushNicPassthroughHandler(hcl::ScalStreamBase& sc
                                                          bool                 isSend,
                                                          bool                 incSOBinNOP)
 {
-    m_nicPassthroughHandler.flush(scalStream,
-                                  m_collectiveContextIndex,
-                                  selfDevice,
-                                  comm,
-                                  syncObjectAddressIndex,
-                                  isSend,
-                                  incSOBinNOP);
+    m_nicPassthroughHandler
+        .flush(scalStream, m_collectiveContextIndex, selfDevice, comm, syncObjectAddressIndex, isSend, incSOBinNOP);
 }
 
-ContextManager::ContextManager(const std::vector<unsigned>&   nicEngines,
-                               Gaudi2DevicePortMapping&       portMapping,
-                               QPManagerScaleUpGaudi2Handle&  qpManagerScaleUp,
-                               QPManagerScaleOutGaudi2Handle& qpManagerScaleOut,
-                               IHclDevice&                    device)
-: m_portMapping(portMapping),
-  m_nicEngines(nicEngines),
+ContextManager::ContextManager(const std::vector<unsigned>& nicEngines,
+                               QPManager&                   qpManagerScaleUp,
+                               QPManager&                   qpManagerScaleOut,
+                               HclDeviceGaudi2&             device)
+: m_nicEngines(nicEngines),
   m_qpManagerScaleUp(qpManagerScaleUp),
   m_qpManagerScaleOut(qpManagerScaleOut),
-  m_device(device)
+  m_device(device),
+  m_serverConnectivity(device.getServerConnectivity())
 {
     std::fill(m_activeNics.begin(), m_activeNics.end(), false);
 }
@@ -263,15 +258,15 @@ ContextManager::ContextManager(const std::vector<unsigned>&   nicEngines,
 void ContextManager::serializeUpdateGlobalContext(hcl::ScalStreamBase& scalStream,
                                                   uint32_t             soAddressLSB,
                                                   uint64_t             intermediateBaseAddress,
-                                                  unsigned             intermediatSliceSize)
+                                                  unsigned             intermediateSliceSize)
 {
     SchedArcCommandsGaudi2::serializeUpdateGlobalContextCommand(scalStream,
                                                                 soAddressLSB,
                                                                 m_globalContexts,
                                                                 intermediateBaseAddress,
                                                                 intermediateBaseAddress,
-                                                                intermediatSliceSize,
-                                                                intermediatSliceSize);
+                                                                intermediateSliceSize,
+                                                                intermediateSliceSize);
 }
 
 void ContextManager::serializeUpdateGlobalContextScaleOut(hcl::ScalStreamBase& scalStream, uint32_t soAddressLSB)
@@ -343,25 +338,15 @@ void ContextManager::updateDWord(ContextValues& contextValues, eDWords dw, uint3
     contextValues.second++;
 }
 
-inline G2QP_e idx2qpi(unsigned ctxIndex)
+inline uint32_t ContextManager::idx2qpi(unsigned ctxIndex)
 {
-    //  translates collective context index to QP index
-    //    (ctxIndex % 2) == 1,                                  // Even-numbered are RS, Odd-numbered are AG
-    //    ctxIndex < (s_hal.getCollectiveContextsCount() / 2),  // 0-7 are Recv contexts, 8-15 are Send contexts
+    // (ctxIndex % 2) == 1 : Even-numbered are RS, Odd-numbered are AG
+    const HCL_CollectiveOp collectiveOp = (ctxIndex % 2) == 1 ? eHCLAllGather : eHCLReduceScatter;
 
-    bool RECV = ctxIndex < (s_hal.getCollectiveContextsCount() / 2);
-    bool SEND = !RECV;
-    bool AG   = (ctxIndex % 2) == 1;
-    bool RS   = !AG;
+    // ctxIndex < (s_hal.getCollectiveContextsCount() / 2) : 0-7 are Recv contexts, 8-15 are Send contexts
+    const bool isSend = (ctxIndex >= (s_hal.getCollectiveContextsCount() / 2));
 
-    if (RS && RECV) return QPE_RS_RECV;
-    if (AG && RECV) return QPE_AG_RECV;
-    if (RS && SEND) return QPE_RS_SEND;
-    if (AG && SEND) return QPE_AG_SEND;
-
-    VERIFY(false, "unreachable code");
-
-    return (G2QP_e)0;
+    return m_qpManagerScaleUp.getQPi(collectiveOp, isSend);
 }
 
 void ContextManager::serializeUpdateCollectiveContextScaleUp(hcl::ScalStreamBase&             scalStream,
@@ -397,9 +382,10 @@ void ContextManager::serializeUpdateCollectiveContextScaleUp(hcl::ScalStreamBase
         {
             if (m_activeNics[nic] == false) continue;
 
-            std::pair<unsigned, uint32_t> result = cachedCollectiveContext.m_activeCommunicatorDescriptor.useQP(
-                comm,
-                m_qpManagerScaleUp->getQP(comm, nic, idx2qpi(collectiveContextIndex)));
+            const QPManagerHints hints(comm, HCL_INVALID_RANK, nic, idx2qpi(collectiveContextIndex));
+
+            std::pair<unsigned, uint32_t> result =
+                cachedCollectiveContext.m_activeCommunicatorDescriptor.useQP(comm, m_qpManagerScaleUp.getQPn(hints));
             commDescWithQPs[result].push_back(nic);  // make active, get QPs
         }
 
@@ -468,9 +454,9 @@ void ContextManager::serializeMultipleQPsUpdateScaleUp(
 
     for (auto& kvPair : commDescWithQPs)
     {
-        unsigned              commDescIndex = kvPair.first.first;
-        unsigned              qpn           = kvPair.first.second;
-        std::vector<uint8_t>& nics          = kvPair.second;
+        unsigned              commDescIdx = kvPair.first.first;
+        unsigned              qpn         = kvPair.first.second;
+        std::vector<uint8_t>& nics        = kvPair.second;
 
         hcl::ScalStreamBase tmp;
         ContextValues       contextValues = {};
@@ -478,7 +464,7 @@ void ContextManager::serializeMultipleQPsUpdateScaleUp(
         SchedArcCommandsGaudi2::serializeUpdateCollectiveContextCommand(tmp,
                                                                         isSend,
                                                                         collectiveContextIndex,
-                                                                        commDescIndex,
+                                                                        commDescIdx,
                                                                         contextValues);
         // Only one command should persist - an Update Collective Command with 3 dwords. The first dword is consumed
         // by the SARC and can be ignored.
@@ -491,15 +477,15 @@ void ContextManager::serializeMultipleQPsUpdateScaleUp(
             buffer[nic].push_back(commandsBuffer[2]);
         }
     }
-    std::vector<CachedCollectiveContextScaleUp>& cache = m_cachedCollectiveContextsScaleUp;
-    CachedCollectiveContext&   cachedCollectiveContext = cache.at(collectiveContextIndex);
+    std::vector<CachedCollectiveContextScaleUp>& cache                   = m_cachedCollectiveContextsScaleUp;
+    CachedCollectiveContext&                     cachedCollectiveContext = cache.at(collectiveContextIndex);
 
     cachedCollectiveContext.addNicBufferToNicPassthroughHandler(buffer);
     cachedCollectiveContext
         .flushNicPassthroughHandler(scalStream, *this, selfModuleId, comm, syncObjectAddressIndex, isSend, false);
 }
 
-void ContextManager::createCollectiveContexts(HclCommandsGen2Arch& commands)
+void ContextManager::createCollectiveContexts(HclCommandsGen2Arch& commands, const HCL_Comm hclCommId)
 {
     m_maxNics               = s_hal.getMaxNics();
     m_maxCollectiveContexts = s_hal.getCollectiveContextsCount();
@@ -508,23 +494,24 @@ void ContextManager::createCollectiveContexts(HclCommandsGen2Arch& commands)
     {
         g2fw::nic_glbl_ctxt_t globalContext;
         std::memset(&globalContext, 0, sizeof(globalContext));
-        globalContext.remote_dev_idx  = m_portMapping.getRemoteDevice(nic);
-        globalContext.sub_nic_idx     = m_portMapping.getSubPortIndex(nic);
+        globalContext.remote_dev_idx  = m_serverConnectivity.getRemoteDevice(nic, hclCommId);
+        globalContext.sub_nic_idx     = m_serverConnectivity.getSubPortIndex(nic, hclCommId);
         globalContext.is_valid        = 1;
-        globalContext.total_nic_count = m_portMapping.getNumScaleUpPorts();  // scaleup
+        globalContext.total_nic_count = m_serverConnectivity.getNumScaleUpPorts(hclCommId);  // scaleup
         m_globalContexts.push_back(globalContext);
     }
 
     // Update global context to inform FW which scale out ports should be used
     // global contexts for all scaleout nics must be updated (even for nics that
     // are disabled and will not participate in the scaleout operations)
-    for (unsigned nic_idx = 0; nic_idx < m_portMapping.getMaxNumScaleOutPorts(); nic_idx++)
+    for (unsigned nic_idx = 0; nic_idx < m_serverConnectivity.getMaxNumScaleOutPorts(); nic_idx++)
     {
         g2fw::nic_glbl_ctxt_t scaleoutGlobalContext;
         std::memset(&scaleoutGlobalContext, 0, sizeof(scaleoutGlobalContext));
-        scaleoutGlobalContext.total_nic_count = m_portMapping.getNumScaleOutPorts();
+        scaleoutGlobalContext.total_nic_count = m_serverConnectivity.getNumScaleOutPorts(hclCommId);
         scaleoutGlobalContext.sub_nic_idx =
-            m_portMapping.getScaleoutSubPortIndex(m_portMapping.getDefaultScaleOutPortByIndex(nic_idx));
+            m_serverConnectivity.getScaleoutSubPortIndex(m_serverConnectivity.getDefaultScaleOutPortByIndex(nic_idx),
+                                                         hclCommId);
         scaleoutGlobalContext.is_valid = 1;
         m_scaleoutGlobalContexts.push_back(scaleoutGlobalContext);
     }
@@ -532,9 +519,9 @@ void ContextManager::createCollectiveContexts(HclCommandsGen2Arch& commands)
     for (int i = 0; i < m_maxCollectiveContexts; i++)
     {
         m_cachedCollectiveContextsScaleUp.push_back(
-            CachedCollectiveContextScaleUp(i, m_nicEngines, m_portMapping, commands));
+            CachedCollectiveContextScaleUp(i, m_nicEngines, m_serverConnectivity, commands));
         m_cachedCollectiveContextsScaleOut.push_back(
-            CachedCollectiveContextScaleOut(i, m_nicEngines, m_portMapping, commands));
+            CachedCollectiveContextScaleOut(i, m_nicEngines, m_serverConnectivity, commands));
     }
 }
 
@@ -543,7 +530,7 @@ void ContextManager::registerEarc(HCL_Comm comm, int nic)  // 8 (subnic0), 22 (s
     g2fw::nic_glbl_ctxt_t& globalContext = m_globalContexts.at(nic);
     globalContext.is_valid               = 1;
 
-    if (!m_portMapping.isScaleoutPort(nic))
+    if (!m_device.isScaleOutPort(nic, comm))
     {
         m_activeNics[nic] = true;
 
@@ -560,7 +547,9 @@ uint16_t ContextManager::getRemoteRankQp(unsigned collectiveContextIndex,
                                          int      nic,
                                          uint8_t  qpSet)
 {
-    return m_qpManagerScaleOut->getQP(comm, nic, idx2qpi(collectiveContextIndex), qpSet, remoteRank);
+    const QPManagerHints hints(comm, remoteRank, nic, idx2qpi(collectiveContextIndex), INVALID_QP, qpSet);
+
+    return m_qpManagerScaleOut.getQPn(hints);
 }
 
 g2fw::nic_coll_ctxt_dword_t
@@ -727,9 +716,11 @@ void ContextManager::updateCollectiveContextScaleUp(hcl::ScalStreamBase&        
             {
                 if (m_activeNics[nic] == false) continue;
 
-                std::pair<unsigned, uint32_t> result = cachedCollectiveContext.m_activeCommunicatorDescriptor.useQP(
-                    comm,
-                    m_qpManagerScaleUp->getQP(comm, nic, idx2qpi(collectiveContextIndex)));
+                const QPManagerHints hints(comm, HCL_INVALID_RANK, nic, idx2qpi(collectiveContextIndex));
+
+                std::pair<unsigned, uint32_t> result =
+                    cachedCollectiveContext.m_activeCommunicatorDescriptor.useQP(comm,
+                                                                                 m_qpManagerScaleUp.getQPn(hints));
                 commDescIndex = result.first;
                 cachedCollectiveContext.m_activeCommunicatorDescriptor.markCommDownload(comm);
             }

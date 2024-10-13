@@ -5,6 +5,7 @@
 #include "asic_reg/gaudi3_blocks.h"          // for mmHD0_SYNC_MNGR_O...
 #include "asic_reg_structs/sob_objs_regs.h"  // for block_sob_objs
 #include "hcl_utils.h"                       // for VERIFY
+#include "gaudi3/gaudi3_arc_host_packets.h"  // for gaudi3 FW COMP_SYNC_GROUP_CMAX_TARGET
 
 uint64_t hcl::Gaudi3HclScalUtils::calculateSoAddressFromIdxAndSM(unsigned smIdx, unsigned idx)
 {
@@ -41,7 +42,7 @@ uint64_t hcl::Gaudi3HclScalUtils::calculateSoAddressFromIdxAndSM(unsigned smIdx,
             return 0;
     }
 
-    // for odd indexed SMs we need to jump to its offset from the begining of the dcore
+    // for odd indexed SMs we need to jump to its offset from the beginning of the dcore
     if (smIdx & 0x1)
     {
         smBase += offsetof(gaudi3::block_sob_objs, sob_obj_1);
@@ -98,7 +99,7 @@ sob_info hcl::Gaudi3HclScalUtils::getSOBInfo(uint32_t addr)
 
     VERIFY((addr & (sizeof(gaudi3::sob_objs::reg_sob_obj_0) - 1)) == 0, "Invalid address not divisible: 0x{:x}", addr);
 
-    // devide by 4 to get the index from the offset
+    // divide by 4 to get the index from the offset
     ret.sobId = addr >> 2;  // addr / sizeof(gaudi3::sob_objs::reg_sob_obj_0)
     return ret;
 }
@@ -112,4 +113,10 @@ std::string hcl::Gaudi3HclScalUtils::printSOBInfo(sob_info sob)
 {
     return "HD" + std::to_string(sob.dcore) + "_SYNC_MNGR_OBJS SOB_OBJ_" + std::to_string(sob.ssm) + "_" +
            std::to_string(sob.sobId);
+}
+
+// return the gaudi3 value from QMAN FW gaudi3_arc_host_packets.h
+uint32_t hcl::Gaudi3HclScalUtils::getCMaxTargetValue()
+{
+    return COMP_SYNC_GROUP_CMAX_TARGET;
 }

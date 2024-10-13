@@ -8,7 +8,7 @@ namespace hcl
  * @brief
  *
  * CyclicBufferManager is responsible for managing cyclic buffer AKA MicroArchStream.
- * It responsible on adding commands to the buffer, mangaing the pi and alignment.
+ * It responsible on adding commands to the buffer, managing the pi and alignment.
  * ** FOr now, it not responsible for sending the buffer to the device.
  *
  */

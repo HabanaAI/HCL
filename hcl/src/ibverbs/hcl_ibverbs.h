@@ -22,8 +22,8 @@ class hcl_ibverbs_t
 public:
     virtual ~hcl_ibverbs_t() noexcept(false) { close(); }
 
-    hcclResult_t init(IHclDevice* device);
-    void close();
+    hcclResult_t init(const HclDeviceConfig& deviceConfig);
+    void         close();
 
     bool is_nic_up(uint32_t nic);
     void setup_nic(uint32_t nic, uint32_t num_wqes, uint32_t bp, eNicType nt);
@@ -40,13 +40,16 @@ public:
                     uint32_t dst_ip,
                     uint64_t dst_mac,
                     uint32_t dst_qp,
-                    uint8_t lagIdx,
-                    uint8_t lastInLag);
+                    uint8_t  lagIdx,
+                    uint8_t  lastInLag);
 
     void     eq_poll(bool& stop, uint32_t _usleep);
     uint32_t get_qp_offset(uint32_t nic);
 
-    void     create_fifos(scal_handle_t scal_handle);
+    void create_fifos(scal_handle_t scal_handle);
+    void get_port_mask(portMaskConfig& portsMasks);
+
+    void set_hcl_device(IHclDevice* device);
 
     operator ibv_context*() { return ibctx_; }
 
@@ -69,12 +72,16 @@ private:
     public:
         ibv_qp* operator()(uint32_t nic, uint32_t qpn) { return at(ibvqp_key_t(nic, qpn)); };
         void erase(uint32_t nic, uint32_t qpn) { std::unordered_map<uint64_t, ibv_qp*>::erase(ibvqp_key_t(nic, qpn)); };
-        void emplace(uint32_t nic, uint32_t qpn, ibv_qp* ibqp) { std::unordered_map<uint64_t, ibv_qp*>::emplace(std::make_pair(ibvqp_key_t(nic, qpn), ibqp)); };
+        void emplace(uint32_t nic, uint32_t qpn, ibv_qp* ibqp)
+        {
+            std::unordered_map<uint64_t, ibv_qp*>::emplace(std::make_pair(ibvqp_key_t(nic, qpn), ibqp));
+        };
     };
 
     using fifo_array_t = std::vector<hbldv_usr_fifo*>;
     using cq_array_t   = std::vector<ibv_cq*>;
 
+    bool         init_   = false;
     IHclDevice*  device_ = nullptr;
     ibv_context* ibctx_  = nullptr;
     ibv_pd*      ibpd_   = nullptr;
@@ -91,21 +98,21 @@ private:
 
     bool parse_ib_eqe(ibv_async_event* event);
 
-    int sgid_index(uint32_t dst_ip, uint32_t src_ip, uint64_t src_mac, uint32_t nic);
+    int     sgid_index(uint32_t dst_ip, uint32_t src_ip, uint64_t src_mac, uint32_t nic);
     ibv_gid dgid(uint32_t dst_ip, uint64_t dst_mac);
 
     struct sysfs_gid_t
     {
-        ibv_gid             gid = {};
-        ibv_gid_type_sysfs  type = IBV_GID_TYPE_SYSFS_UNDEFINED;
+        ibv_gid            gid  = {};
+        ibv_gid_type_sysfs type = IBV_GID_TYPE_SYSFS_UNDEFINED;
     };
     using sysfs_ports_t = std::map<uint32_t, std::map<uint32_t, sysfs_gid_t>>;
 
-    std::string ib_devname_;
+    std::string   ib_devname_;
     sysfs_ports_t sysfs_ports_;
-    void parse_sysfs_infiniband();
-    void walk_fs(const std::string& path, uint32_t port = 0);
-    void map_ib_ports(const nics_mask_t nics_mask);
+    void          parse_sysfs_infiniband();
+    void          walk_fs(const std::string& path, uint32_t port = 0);
+    void          map_ib_ports(const nics_mask_t nics_mask);
 
     std::vector<int32_t> nic2port_;
     std::vector<int32_t> port2nic_;

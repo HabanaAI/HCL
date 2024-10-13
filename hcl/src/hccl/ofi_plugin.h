@@ -1,6 +1,7 @@
 #pragma once
 
 #include "hccl_ofi_wrapper_interface.h"  // for ofi_plugin_interface (ptr only)
+#include <memory>                        // for std::unique_ptr
 
 class ofi_t;
 
@@ -20,8 +21,8 @@ public:
     static bool   initializeOFIPluginIfNeeded();
     static double get_wrapper_required_version();
 
-    ofi_t* p_ofi {nullptr};
+    std::unique_ptr<ofi_t> p_ofi;
 
 private:
-    static constexpr double m_wrapper_required_version = 1.1;
+    static constexpr double m_wrapper_required_version = 1.2;
 };

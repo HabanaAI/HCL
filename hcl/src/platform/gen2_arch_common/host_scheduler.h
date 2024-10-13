@@ -77,13 +77,13 @@ struct host_sched_cmd_scale_out_nic_op
 {
     uint32_t opcode : 4;
     uint16_t qpSetIndex : 4;
-    uint32_t __unused : 8;
-    uint32_t rank : 16; // HCL_Rank
-    static_assert(sizeof(HCL_Rank) == sizeof(uint16_t), "Rank size must be 16 bits");
-    uint64_t address;
-    uint64_t size;
-    HCL_Comm comm;  // uint32_t
-    uint64_t srCount;  // for debug
+    uint32_t __unused : 24;
+    uint32_t rank : 32;  // HCL_Rank
+    static_assert(sizeof(HCL_Rank) == 4, "Rank size must be 32 bits (4 bytes)");
+    uint64_t              address;
+    uint64_t              size;
+    HCL_Comm              comm;     // uint32_t
+    uint64_t              srCount;  // for debug
     OfiCompCallbackParams compParams;
 } __attribute__((aligned(4), __packed__));
 
@@ -92,14 +92,13 @@ struct host_sched_cmd_scale_out_with_fence_nic_op
     uint32_t opcode : 4;
     uint32_t qpSetIndex : 4;
     uint32_t askForCredit : 1;
-    uint32_t __unused : 7;
-    uint32_t rank : 16;  // HCL_Rank
-    static_assert(sizeof(HCL_Rank) == sizeof(uint16_t), "Rank size must be 16 bits");
-    uint64_t address;
-    uint64_t size;
-    HCL_Comm comm;  // uint32_t
-    unsigned fenceIdx;
-    uint64_t srCount;  // for debug
+    uint32_t __unused : 23;
+    uint32_t rank : 32;  // HCL_Rank
+    uint64_t              address;
+    uint64_t              size;
+    HCL_Comm              comm;  // uint32_t
+    unsigned              fenceIdx;
+    uint64_t              srCount;  // for debug
     OfiCompCallbackParams compParams;
 } __attribute__((aligned(4), __packed__));
 
@@ -123,8 +122,8 @@ struct host_sched_cmd_fence_wait
 
 struct host_sched_cmd_signal_so
 {
-    uint32_t opcode : 4;
-    uint32_t reserved : 28;
+    uint32_t              opcode : 4;
+    uint32_t              reserved : 28;
     OfiCompCallbackParams compParams;
 } __attribute__((aligned(4), __packed__));
 
@@ -134,9 +133,9 @@ public:
     HostScheduler() = default;
     virtual ~HostScheduler();
 
-    HostScheduler(HostScheduler&)  = delete;
-    HostScheduler(HostScheduler&&) = delete;
-    HostScheduler&  operator=(HostScheduler&) = delete;
+    HostScheduler(HostScheduler&)              = delete;
+    HostScheduler(HostScheduler&&)             = delete;
+    HostScheduler&  operator=(HostScheduler&)  = delete;
     HostScheduler&& operator=(HostScheduler&&) = delete;
 
     void runHostScheduler();
@@ -150,21 +149,21 @@ private:
     uint32_t*                m_hostStreamCmd = nullptr;
     HostSchedCommandNames    m_cmdNames;
 
-    HclThread          m_thread;
-    volatile bool      m_stop   = true;
-    HclDeviceGen2Arch* m_device = nullptr;
-    unsigned                m_index;
-    std::mutex              m_submittedWorkMutex;
-    volatile bool           m_submittedWork = false;
-    std::condition_variable m_submittedWorkCondVar;
-    uint64_t                m_sleepThreshold;
+    HclThread                 m_thread;
+    volatile bool             m_stop   = true;
+    HclDeviceGen2Arch*        m_device = nullptr;
+    unsigned                  m_index;
+    std::mutex                m_submittedWorkMutex;
+    volatile bool             m_submittedWork = false;
+    std::condition_variable   m_submittedWorkCondVar;
+    uint64_t                  m_sleepThreshold;
     std::chrono::milliseconds m_sleepDuration;
 
-    void processStream(HostStream* hostStream);
-    bool processScaleOutCommand(HostStream* hostStream);
-    bool processScaleOutWithFenceCommand(HostStream* hostStream);
-    bool processScaleoutWaitForCompCommand(HostStream* hostStream, uint64_t& srCount, uint64_t& submitTime);
-    bool processFenceWaitCommand(HostStream* hostStream);
-    bool processSignalSoCommand(HostStream* hostStream);
+    void     processStream(HostStream* hostStream);
+    bool     processScaleOutCommand(HostStream* hostStream);
+    bool     processScaleOutWithFenceCommand(HostStream* hostStream);
+    bool     processScaleoutWaitForCompCommand(HostStream* hostStream, uint64_t& srCount, uint64_t& submitTime);
+    bool     processFenceWaitCommand(HostStream* hostStream);
+    bool     processSignalSoCommand(HostStream* hostStream);
     uint32_t getStreamDepthProc(HostStream* hostStream);
 };

@@ -1,24 +1,22 @@
 #include "futex.h"
 
-#include <hcl_utils.h>      // for VERIFY
-#include <climits>          // for INT_MAX
-#include <linux/futex.h>    // for FUTEX_WAIT, FUTEX_WAKE
-#include <cstring>          // for strerror
-#include <syscall.h>        // for SYS_futex
-#include <unistd.h>         // for syscall
-#include <cerrno>           // for errno, EAGAIN
+#include <hcl_utils.h>    // for VERIFY
+#include <climits>        // for INT_MAX
+#include <linux/futex.h>  // for FUTEX_WAIT, FUTEX_WAKE
+#include <cstring>        // for strerror
+#include <syscall.h>      // for SYS_futex
+#include <unistd.h>       // for syscall
+#include <cerrno>         // for errno, EAGAIN
 
 /**
  * According to man futex(2), the glibc wrapper of futex is not defined, only the system call. Here it is.
  */
-static int futex(int *uaddr, int futex_op, int val, const struct timespec *timeout, int *uaddr2, int val3)
+static int futex(int* uaddr, int futex_op, int val, const struct timespec* timeout, int* uaddr2, int val3)
 {
     return syscall(SYS_futex, uaddr, futex_op, val, timeout, uaddr, val3);
 }
 
-FutexLock::FutexLock() : m_data(0)
-{
-}
+FutexLock::FutexLock() : m_data(0) {}
 
 void FutexLock::lock()
 {
@@ -63,8 +61,8 @@ void FutexLock::unlock()
         // If we reached here, the value was 2 (a concurrent thread is blocked) and is now 1. We can safely force it
         // to 0 since (even if another thread is concurrently setting it to 2 again) concurrent threads will all be
         // woken up by FUTEX_WAKE.
-        __sync_fetch_and_and(&m_data, 0); // set the value to 0 atomically.
-        int result = futex((int32_t*) &m_data, FUTEX_WAKE, INT_MAX, nullptr, nullptr, 0);
+        __sync_fetch_and_and(&m_data, 0);  // set the value to 0 atomically.
+        int result = futex((int32_t*)&m_data, FUTEX_WAKE, INT_MAX, nullptr, nullptr, 0);
         VERIFY(-1 != result, "futex(FUTEX_WAKE) failed with errno({})", strerror(errno));
     }
 }

@@ -1,13 +1,14 @@
 #include "platform/gaudi2/send_recv_aggregator.h"
 
-#include <cstdint>                                  // for uint32_t
+#include <cstdint>  // for uint32_t
 
-#include "hcl_utils.h"                              // for LOG_HCL_TRACE
-#include "hcl_log_manager.h"                        // for LOG_*
-#include "platform/gaudi2/commands/hcl_commands.h"  // for HclCommandsGaudi2
-#include "platform/gaudi2/context_manager.h"        // for ContextManager
-#include "platform/gaudi2/hcl_count_descriptor.h"   // for CountDescriptor
+#include "hcl_utils.h"                                       // for LOG_HCL_TRACE
+#include "hcl_log_manager.h"                                 // for LOG_*
+#include "platform/gaudi2/commands/hcl_commands.h"           // for HclCommandsGaudi2
+#include "platform/gaudi2/context_manager.h"                 // for ContextManager
+#include "platform/gaudi2/hcl_count_descriptor.h"            // for CountDescriptor
 #include "platform/gen2_arch_common/send_recv_aggregator.h"  // for SendRecvEntry
+#include "platform/gen2_arch_common/server_connectivity.h"   // for Gen2ArchServerConnectivity
 
 class HclCommandsGen2Arch;
 namespace hcl
@@ -15,12 +16,12 @@ namespace hcl
 class ScalStreamBase;
 }
 
-SendRecvAggregator::SendRecvAggregator(const std::vector<unsigned>&   nicEngines,
-                                       const Gaudi2DevicePortMapping& portMapping,
-                                       HclCommandsGen2Arch&           commands)
+SendRecvAggregator::SendRecvAggregator(const std::vector<unsigned>&      nicEngines,
+                                       const Gen2ArchServerConnectivity& serverConnectivity,
+                                       HclCommandsGen2Arch&              commands)
 : SendRecvAggregatorBase(),
   m_commands((HclCommandsGaudi2&)commands),
-  m_nicPassthroughHandler(nicEngines, portMapping, commands)
+  m_nicPassthroughHandler(nicEngines, serverConnectivity, commands)
 {
 }
 
@@ -40,10 +41,10 @@ void SendRecvAggregator::addSendRecvArray(const SendRecvArray&              arr,
     AggregatedEntryArray aggregatedArray {};
     for (unsigned deviceId = 0; deviceId < HLS2_BOX_SIZE; deviceId++)
     {
-        if (deviceId == (unsigned) selfModuleId) continue;
+        if (deviceId == (unsigned)selfModuleId) continue;
 
-        const SendRecvEntry& entry                    = arr[deviceId];
-        aggregatedArray[deviceId]                     = AggregatedEntry {entry, /*isLast=*/false};
+        const SendRecvEntry& entry = arr[deviceId];
+        aggregatedArray[deviceId]  = AggregatedEntry {entry, /*isLast=*/false};
     }
     m_arrays.push_back(aggregatedArray);
 
@@ -131,7 +132,7 @@ void SendRecvAggregator::flush(hcl::ScalStreamBase& scalStream,
             }
         }
 
-        m_nicPassthroughHandler.addDeviceBuffer(buffer);  // adds new items to records ("new")
+        m_nicPassthroughHandler.addDeviceBuffer(buffer, comm);  // adds new items to records ("new")
     }
 
     m_nicPassthroughHandler

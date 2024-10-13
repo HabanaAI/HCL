@@ -307,6 +307,7 @@ struct synTfBatchNormalizationParams
 struct synAssertAsyncParams
 {
     uint64_t msg_id;
+    uint32_t reserved;
 };
 
 typedef enum
@@ -452,6 +453,13 @@ typedef struct synTraceEvent
             uint16_t matches; /* @SerializedName("Match") */
         };
 
+        struct /* counter partial write args */
+        {
+            double fullWritesBlocks;    /* @SerializedName("fullWritesBlocks")    */
+            double partialWritesBlocks; /* @SerializedName("partialWritesBlocks") */
+            double emptyBlocks;         /* @SerializedName("emptyBlocks")         */
+        };
+
         struct /* metadata args */
         {
             const char* name;  /* @SerializedName("name") */
@@ -462,6 +470,9 @@ typedef struct synTraceEvent
         {
             char reserved[128];
         };
+
+        /* temperature and power */
+        double value_double;
 
         /* spmu value */
         uint64_t value;
@@ -493,7 +504,7 @@ struct synDeviceInfoV2
     uint32_t        fd;
     synDeviceType   deviceType;
     uint8_t         deviceIndex;
-    uint64_t        reserved;
+    uint64_t        globalHbmBaseAddress;
 };
 
 typedef enum

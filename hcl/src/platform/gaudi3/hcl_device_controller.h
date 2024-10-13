@@ -4,7 +4,8 @@
 class HclDeviceControllerGaudi3 : public HclDeviceControllerGen2Arch
 {
 public:
-    HclDeviceControllerGaudi3(int fd, int numOfStreams);
-
-private:
+    HclDeviceControllerGaudi3(const int fd, const unsigned numOfStreams);
+    virtual ~HclDeviceControllerGaudi3()                                   = default;
+    HclDeviceControllerGaudi3(const HclDeviceControllerGaudi3&)            = delete;
+    HclDeviceControllerGaudi3& operator=(const HclDeviceControllerGaudi3&) = delete;
 };

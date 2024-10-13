@@ -23,14 +23,10 @@ void SignalsCalculator::initialize(CommonState& commonState)
     m_costs[(unsigned)SignalEvent::EDMA_MEMCOPY]                = workDistributionGroupSize;
     m_costs[(unsigned)SignalEvent::EDMA_MEMCOPY_FOR_SCALEOUT]   = workDistributionGroupSize;
     m_costs[(unsigned)SignalEvent::EDMA_MEMSET]                 = workDistributionGroupSize;
-    m_costs[(unsigned)SignalEvent::EDMA_CAST_UP]        = workDistributionGroupSize;
-    m_costs[(unsigned)SignalEvent::EDMA_BATCH]          = workDistributionGroupSize;
-    m_costs[(unsigned)SignalEvent::EDMA_BATCH_SCALEOUT] = workDistributionGroupSize;
-    m_costs[(unsigned)SignalEvent::EDMA_MEMCOPY_GDR]    = workDistributionGroupSize;
-    m_costs[(unsigned)SignalEvent::EDMA_MEMCOPY_RR]     = workDistributionGroupSize;
-    m_costs[(unsigned)SignalEvent::EDMA_MEMCOPY_RR_LAST_BOX] =
-        commonState.m_16BitReduction ? minimumEdmaGroupSize
-                                     : workDistributionGroupSize;  // work distribution for in order
+    m_costs[(unsigned)SignalEvent::EDMA_CAST_UP]                = workDistributionGroupSize;
+    m_costs[(unsigned)SignalEvent::EDMA_BATCH]                  = workDistributionGroupSize;
+    m_costs[(unsigned)SignalEvent::EDMA_BATCH_SCALEOUT]         = workDistributionGroupSize;
+    m_costs[(unsigned)SignalEvent::EDMA_MEMCOPY_GDR]            = workDistributionGroupSize;
 
     m_costs[(unsigned)SignalEvent::SCALEUP_SEND]       = signalsSingleOp;
     m_costs[(unsigned)SignalEvent::SCALEUP_RECV]       = signalsSingleOp * (useRndvAckSignaling() ? 2 : 1);
@@ -39,30 +35,11 @@ void SignalsCalculator::initialize(CommonState& commonState)
     m_costs[(unsigned)SignalEvent::HNIC_SCALEOUT_SEND] = 1;
     m_costs[(unsigned)SignalEvent::HNIC_SCALEOUT_RECV] = 1;
     m_costs[(unsigned)SignalEvent::HNIC_PDMA]          = 1;
-    m_costs[(unsigned)SignalEvent::RR_SIGNAL_TO_LONGTERM] = workDistributionGroupSize;
-    m_costs[(unsigned)SignalEvent::RR_SIGNAL_TO_CG]       = 1;
+    m_costs[(unsigned)SignalEvent::SIGNAL_TO_LONGTERM] = workDistributionGroupSize;
+    m_costs[(unsigned)SignalEvent::SIGNAL_TO_CG]       = 1;
 }
 
 unsigned SignalsCalculator::signalToCost(SignalEvent signal)
 {
     return m_costs[(unsigned)signal];
-}
-
-SignalsCalculator* SignalsCalculatorFactory::create(bool isGaudi3)
-{
-    static SignalsCalculator* Calculator = nullptr;
-
-    if (!Calculator)
-    {
-        if (isGaudi3)
-        {
-            Calculator = new SignalsCalculatorGaudi3();
-        }
-        else
-        {
-            Calculator = new SignalsCalculatorGaudi2();
-        }
-    }
-
-    return Calculator;
 }

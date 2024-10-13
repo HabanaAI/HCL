@@ -4,16 +4,19 @@
 #include "infra/scal/gen2_arch_common/scal_utils.h"
 #include "infra/scal/gen2_arch_common/scal_names.h"
 #include "hcl_global_conf.h"  // for GCFG_*
-#include "hccl_device.h"
+#include "platform/gen2_arch_common/hccl_device.h"
+#include "infra/scal/gen2_arch_common/scal_stream.h"
 #include "hcl_math_utils.h"
 #include <algorithm>
+
+#define MIN_SIZE_OF_FW_CMD 4
 
 SignalsManager::SignalDescription::SignalDescription()
 : event(SignalEvent::SIGNAL_EVENT_MAX), consumed(true), signalWaitDesc(nullptr)
 {
 }
-SignalsManager::SignalDescription::SignalDescription(SignalEvent event, bool startConsumed)
-: event(event), consumed(startConsumed), signalWaitDesc(nullptr)
+SignalsManager::SignalDescription::SignalDescription(SignalEvent signalEvent, bool startConsumed)
+: event(signalEvent), consumed(startConsumed), signalWaitDesc(nullptr)
 {
 }
 
@@ -41,12 +44,12 @@ SignalsManager::SignalWaitEvent::SignalWaitEvent()
 {
 }
 SignalsManager::SignalWaitEvent::SignalWaitEvent(WaitEvent                                        waitEvent,
-                                                 llvm_vecsmall::SmallVector<SignalDescription, 8> signals,
+                                                 llvm_vecsmall::SmallVector<SignalDescription, 8> signalDescs,
                                                  WaitMethod                                       waitMethod,
                                                  WaitPhase                                        waitPhase,
                                                  unsigned                                         longtermSyncObjIdx)
 : event(waitEvent),
-  signals(signals),
+  signals(signalDescs),
   method(waitMethod),
   currentPhase(waitPhase),
   longtermIdx(longtermSyncObjIdx),
@@ -120,8 +123,8 @@ SignalsManager::SignalsManager(HclGraphSyncGen2Arch& graphSync,
   m_archStream(archStream),
   m_commonState(nullptr)
 {
-    m_completionTracker.resize(m_cgSize);
-    m_cuidTracker.resize(m_cgSize);
+    m_completionTracker.resize(hcl::ScalStream::getCcbSize() / MIN_SIZE_OF_FW_CMD);  // sizeofCCB/MinimumSizeOfCommand
+    m_cuidTracker.resize(hcl::ScalStream::getCcbSize() / MIN_SIZE_OF_FW_CMD);
 }
 
 SignalsManager::Graph::Graph()
@@ -148,17 +151,17 @@ bool SignalsManager::isCachingRequired(CommonState& commonState)
 
 void SignalsManager::initialize(CommonState* commonState, uint64_t cuid)
 {
-    Graph*   old     = m_graph;
-    bool     created = updateGraph(cuid, commonState);
+    Graph* old     = m_graph;
+    bool   created = updateGraph(cuid, commonState);
 
     m_commonState = commonState;
 
     if (created || !m_usingCache)
     {
         // number of boxes defines the numbers of used events and phases
-        uint32_t nBoxes      = div((uint32_t)m_commonState->m_dynamicComm.getCommSize(),
-                                   (uint32_t)m_commonState->m_dynamicComm.getScaleupGroupSize());
-        uint64_t nPhases     = div(nBoxes, m_commonState->m_reproScaleoutBuffersAmount);
+        uint32_t nBoxes  = div((uint32_t)m_commonState->m_dynamicComm.getCommSize(),
+                              (uint32_t)m_commonState->m_dynamicComm.getScaleupGroupSize());
+        uint64_t nPhases = div(nBoxes, m_commonState->m_scaleoutBuffersAmount);
 
         m_graph->m_maxPhases = std::max(MIN_PHASES, nPhases);
         LOG_HCL_DEBUG(HCL, "for ({}) boxes setup, and m_max_Phases is ({})", nBoxes, m_graph->m_maxPhases);
@@ -177,7 +180,7 @@ void SignalsManager::initialize(CommonState* commonState, uint64_t cuid)
 bool SignalsManager::updateGraph(uint64_t cuid, CommonState* commonState)
 {
     bool isCreated = false;
-    m_usingCache = isCachingRequired(*commonState);
+    m_usingCache   = isCachingRequired(*commonState);
     if (m_usingCache)
     {
         if (unlikely(m_cache.count(cuid) == 0))
@@ -233,7 +236,7 @@ void SignalsManager::handleLongtermOnGraphSwitch(bool created, Graph* oldGraph)
                                   desc->event,
                                   i,
                                   phase);
-                    m_graph->m_events[(unsigned)desc->event] = oldGraph->m_events[(unsigned)desc->event];
+                    m_graph->m_events[(unsigned)desc->event]     = oldGraph->m_events[(unsigned)desc->event];
                     m_graph->m_methods[i][phase].waitEvent       = &m_graph->m_events[(unsigned)desc->event];
                     m_graph->m_methods[i][phase].signalsPerPhase = oldGraph->m_methods[i][phase].signalsPerPhase;
                     if (phase > 0)
@@ -556,9 +559,9 @@ void SignalsManager::updateCompletionTracker(uint64_t targetValue, uint64_t cuid
 
     for (size_t i = 0; i < m_graph->m_methods.size(); i++)
     {
-        std::array<WaitPhaseEntry, WAIT_PHASE_MAX>&   phases             = m_graph->m_methods[i];
-        WaitPhase                                     lastPhaseForMethod = getLastPhase((WaitMethod)i, *m_graph);
-        if(lastPhaseForMethod != WAIT_PHASE_MAX)
+        std::array<WaitPhaseEntry, WAIT_PHASE_MAX>& phases             = m_graph->m_methods[i];
+        WaitPhase                                   lastPhaseForMethod = getLastPhase((WaitMethod)i, *m_graph);
+        if (lastPhaseForMethod != WAIT_PHASE_MAX)
         {
             SignalWaitEvent* desc = phases[(int)lastPhaseForMethod].waitEvent;
 
@@ -679,8 +682,8 @@ SyncObjectDescriptor SignalsManager::getSobDesc(WaitEvent waitEvent)
 uint32_t SignalsManager::dequeueSoAddress(SignalEvent signalEvent)
 {
     // Lookup the SignalDescription (which has a pointer to a SignalWaitEvent instance) that matches this signalEvent.
-    // An issue arrises where there are more than one of the same event, for example, eHCLAllReduce has 2 SCALEUP_SEND
-    // and 2 SCALEUP_RECV, but some may signal to different resoures (RS's SCALEUP_RECV should signal to a GPSO, which
+    // An issue arises where there are more than one of the same event, for example, eHCLAllReduce has 2 SCALEUP_SEND
+    // and 2 SCALEUP_RECV, but some may signal to different resources (RS's SCALEUP_RECV should signal to a GPSO, which
     // the AG's SCALEUP_SEND is blocked on).
     // We chose to handle this as a queue - the first instance that is not yet consumed will be returned (so an instance
     // cannot be returned more than once). This implies that enqueueWait() needs to be invoked in the order of
@@ -758,8 +761,12 @@ void SignalsManager::DFA(uint64_t deviceTargetValue)
     }
     auto&    arr  = m_completionTracker[(deviceTargetValue + 1) & (m_cgSize - 1)];
     uint64_t cuid = m_cuidTracker[(deviceTargetValue + 1) & (m_cgSize - 1)];
-    LOG_HCL_CONTEXT_CRITICAL(HCL, "ArchStream {} is stuck on Long So value {} (0x{:x}), CUID 0x{:x}",
-                             m_archStream, deviceTargetValue, deviceTargetValue, cuid);
+    LOG_HCL_CONTEXT_CRITICAL(HCL,
+                             "ArchStream {} is stuck on Long So value {} (0x{:x}), CUID 0x{:x}",
+                             m_archStream,
+                             deviceTargetValue,
+                             deviceTargetValue,
+                             cuid);
 
     for (unsigned i = 0; i < arr.size(); i++)
     {
@@ -768,11 +775,7 @@ void SignalsManager::DFA(uint64_t deviceTargetValue)
 
         uint64_t addr = m_utils->calculateSoAddressFromIdxAndSM(desc.sob.dcore, desc.sob.sobId);
         uint32_t val;
-        int      rc = hlthunk_device_memory_read_block_experimental(hccl_device()->getFd(),
-                                                               &val,
-                                                               addr,
-                                                               sizeof(uint32_t),
-                                                               0);
+        int rc = hlthunk_device_memory_read_block_experimental(hccl_device()->getFd(), &val, addr, sizeof(uint32_t), 0);
         VERIFY(rc == 0);
 
         WaitMethod waitMethod = (WaitMethod)i;
@@ -784,10 +787,10 @@ void SignalsManager::DFA(uint64_t deviceTargetValue)
                                  "current value: 0x{:x} (missing {} signals)",
                                  waitMethod,
                                  m_utils->printSOBInfo(desc.sob),
-                                 COMP_SYNC_GROUP_CMAX_TARGET,
+                                 m_utils->getCMaxTargetValue(),
                                  desc.value,
                                  val,
-                                 COMP_SYNC_GROUP_CMAX_TARGET - val);
+                                 m_utils->getCMaxTargetValue() - val);
                 break;
             case WaitMethod::GPSO_0:  // FALLTHROUGH
             case WaitMethod::GPSO_1:  // FALLTHROUGH

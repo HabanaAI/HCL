@@ -13,7 +13,7 @@ HclAddressGenerator::HclAddressGenerator(HclCommandsGen2Arch& commands) : m_comm
 
 uint64_t HclAddressGenerator::generateScaleUpRecvIndices(CommonState& commonState, uint32_t streamId)
 {
-    return commonState.m_intermediateBufferManager.getSliceId(SCALEUP_RR_AND_ALL2ALL_POOL,
+    return commonState.m_intermediateBufferManager.getSliceId(SCALEUP_AND_ALL2ALL_POOL,
                                                               streamId);  // Accu buffer
 }
 
@@ -27,11 +27,11 @@ uint64_t HclAddressGenerator::generateScaleUpRecvAddress(CommonState&     common
                                                                                  commonState.m_boxStrideCount *
                                                                                  commonState.m_dataTypeSizeInBytes;
 
-    uint64_t   addr = 0;
+    uint64_t addr = 0;
     switch (currentOp)
     {
         case eHCLReduceScatter:
-            addr = commonState.getIntermediateBuffer(SCALEUP_RR_AND_ALL2ALL_POOL);
+            addr = commonState.getIntermediateBuffer(SCALEUP_AND_ALL2ALL_POOL);
             break;
         case eHCLGather:
         case eHCLAllGather:
@@ -44,7 +44,7 @@ uint64_t HclAddressGenerator::generateScaleUpRecvAddress(CommonState&     common
             }
             else
             {
-                addr = commonState.getIntermediateBuffer(SCALEUP_RR_AND_ALL2ALL_POOL);
+                addr = commonState.getIntermediateBuffer(SCALEUP_AND_ALL2ALL_POOL);
             }
             break;
         case eHCLScatter:
@@ -53,7 +53,7 @@ uint64_t HclAddressGenerator::generateScaleUpRecvAddress(CommonState&     common
             // configure only the offsets for the nics that are connected to the sender. all these nics require the same
             // offset from the beginning of the buffer. we can use disregard rank and calculate the addresses
             // specifically for those nics.
-            addr = recalcAddressForDisragardRank(currentOp, commonState.getRecvAddress(sliceIter), offset);
+            addr = recalcAddressForDisregardRank(currentOp, commonState.getRecvAddress(sliceIter), offset);
             break;
         case eHCLSimpleBroadcast:
             addr = commonState.getRecvAddress(sliceIter);
@@ -125,7 +125,7 @@ uint64_t HclAddressGenerator::generateScaleUpSendAddress(CommonState&     common
         case eHCLGather:
             if (boxNumInfo.m_boxNum != commonState.m_dynamicComm.getMyScaleupGroup())
             {
-                addr = commonState.getIntermediateBuffer(REDUCE_RR_POOL);
+                addr = commonState.getIntermediateBuffer(REDUCE_POOL);
             }
             else if (commonState.m_collectiveOp == eHCLGather)
             {
@@ -133,15 +133,15 @@ uint64_t HclAddressGenerator::generateScaleUpSendAddress(CommonState&     common
             }
             else if (!commonState.m_isMultiScaleupGroup)
             {
-                addr = commonState.getIntermediateBuffer(SCALEUP_RR_AND_ALL2ALL_POOL);
+                addr = commonState.getIntermediateBuffer(SCALEUP_AND_ALL2ALL_POOL);
             }
             else if (commonState.m_16BitReduction)
             {
-                addr = commonState.getIntermediateBuffer(REDUCE_RR_POOL);
+                addr = commonState.getIntermediateBuffer(REDUCE_POOL);
             }
             else
             {
-                addr = commonState.getIntermediateBuffer(SCALEOUT_RR_POOL);
+                addr = commonState.getIntermediateBuffer(SCALEOUT_POOL);
             }
             break;
         case eHCLScatter:
@@ -150,7 +150,7 @@ uint64_t HclAddressGenerator::generateScaleUpSendAddress(CommonState&     common
             {
                 addr = commonState.getSendAddress(sliceIter);
             }
-            else // single peer broadcast: root peers scatter within their box from output buffer
+            else  // single peer broadcast: root peers scatter within their box from output buffer
             {
                 addr = commonState.getRecvAddress(sliceIter);
             }
@@ -190,9 +190,9 @@ uint64_t HclAddressGenerator::generateScaleOutSendAddress(CommonState&     commo
         case eHCLAll2All:
             if (commonState.m_dynamicComm.getScaleupGroupSize() != 1)
             {
-                addr = commonState.getIntermediateBuffer(SCALEUP_RR_AND_ALL2ALL_POOL);
+                addr = commonState.getIntermediateBuffer(SCALEUP_AND_ALL2ALL_POOL);
             }
-            else // peers only
+            else  // peers only
             {
                 addr = currentBoxSendAddress + offset;
             }
@@ -214,11 +214,11 @@ uint64_t HclAddressGenerator::generateScaleOutSendAddress(CommonState&     commo
             }
             else if (commonState.m_16BitReduction)
             {
-                addr = commonState.getIntermediateBuffer(REDUCE_RR_POOL);
+                addr = commonState.getIntermediateBuffer(REDUCE_POOL);
             }
             else
             {
-                addr = commonState.getIntermediateBuffer(SCALEOUT_RR_POOL);
+                addr = commonState.getIntermediateBuffer(SCALEOUT_POOL);
             }
             break;
         case eHCLScatter:
@@ -275,8 +275,8 @@ uint64_t HclAddressGenerator::generateScaleOutRecvAddress(CommonState&     commo
             {
                 addr = generateIntermediateAddress(
                     commonState,
-                    SCALEOUT_RR_POOL,
-                    mod(commonState.calcBoxIterRecv(boxNumInfo), commonState.m_reproScaleoutBuffersAmount));
+                    SCALEOUT_POOL,
+                    mod(commonState.calcBoxIterRecv(boxNumInfo), commonState.m_scaleoutBuffersAmount));
             }
             break;
         case eHCLAllGather:
@@ -292,7 +292,7 @@ uint64_t HclAddressGenerator::generateScaleOutRecvAddress(CommonState&     commo
             }
             else
             {
-                addr = commonState.getIntermediateBuffer(REDUCE_RR_POOL);
+                addr = commonState.getIntermediateBuffer(REDUCE_POOL);
             }
             break;
         case eHCLScatter:
@@ -326,16 +326,15 @@ uint64_t HclAddressGenerator::generateMemcpySrcAddress(CommonState& commonState,
                                                        bool         reductionSignalToCg,
                                                        uint32_t     dmaType,
                                                        uint64_t     offset,
-                                                       bool         isReproReduction,
+                                                       bool         isReduction,
                                                        bool         useSibo,
-                                                       bool         isRRLast,
                                                        bool         isForScaleOut,
                                                        bool         isReductionStream,
                                                        bool         isGDRMemcpy)
 {
     if (isGDRMemcpy)
     {
-        return generateReproducibleIntermediateAddress(commonState, isForScaleOut, isGDRMemcpy, 0);
+        return generateIntermediateAddress(commonState, isForScaleOut, isGDRMemcpy, 0);
     }
 
     uint64_t currentBoxSendAddress = commonState.getSendAddress(sliceIter) + boxNumInfo.m_boxNum *
@@ -349,7 +348,7 @@ uint64_t HclAddressGenerator::generateMemcpySrcAddress(CommonState& commonState,
         case eHCLReduceScatter:
             if (isForScaleOut)
             {
-                addr = commonState.getIntermediateBuffer(SCALEOUT_RR_POOL);
+                addr = commonState.getIntermediateBuffer(SCALEOUT_POOL);
             }
             else
             {
@@ -390,9 +389,8 @@ uint64_t HclAddressGenerator::generateMemcpyDstAddress(CommonState& commonState,
                                                        uint32_t     dmaType,
                                                        uint64_t     offset,
                                                        bool         reductionIsFirstBoxMemcpy,
-                                                       bool         isReproReduction,
+                                                       bool         isReduction,
                                                        bool         useSibo,
-                                                       bool         isRRLast,
                                                        bool         isForScaleout,
                                                        bool         isReductionStream,
                                                        bool         isGDRMemcpy)
@@ -402,13 +400,13 @@ uint64_t HclAddressGenerator::generateMemcpyDstAddress(CommonState& commonState,
         unsigned bufferOffset = 0;
         if (isGDRMemcpy)
         {
-            bufferOffset = mod(commonState.calcBoxIterRecv(boxNumInfo), commonState.m_reproScaleoutBuffersAmount);
+            bufferOffset = mod(commonState.calcBoxIterRecv(boxNumInfo), commonState.m_scaleoutBuffersAmount);
         }
         else
         {
             bufferOffset = useSibo ? 0 : commonState.m_dynamicComm.getRankInScaleupGroup();
         }
-        return generateReproducibleIntermediateAddress(commonState, isForScaleout, false, bufferOffset);
+        return generateIntermediateAddress(commonState, isForScaleout, false, bufferOffset);
     }
 
     uint64_t currentBoxRecvAddress = commonState.getRecvAddress(sliceIter) + boxNumInfo.m_boxNum *
@@ -428,7 +426,7 @@ uint64_t HclAddressGenerator::generateMemcpyDstAddress(CommonState& commonState,
             {
                 if (commonState.m_collectiveOp == eHCLReduce && !commonState.isRoot())
                 {
-                    addr = commonState.getIntermediateBuffer(SCALEUP_RR_AND_ALL2ALL_POOL);
+                    addr = commonState.getIntermediateBuffer(SCALEUP_AND_ALL2ALL_POOL);
                 }
                 else
                 {
@@ -444,11 +442,11 @@ uint64_t HclAddressGenerator::generateMemcpyDstAddress(CommonState& commonState,
             {
                 if (boxNumInfo.m_boxNum == commonState.m_dynamicComm.getMyScaleupGroup())
                 {
-                    addr = commonState.getIntermediateBuffer(SCALEOUT_RR_POOL);
+                    addr = commonState.getIntermediateBuffer(SCALEOUT_POOL);
                 }
                 else
                 {
-                    addr = commonState.getIntermediateBuffer(SCALEUP_RR_AND_ALL2ALL_POOL);
+                    addr = commonState.getIntermediateBuffer(SCALEUP_AND_ALL2ALL_POOL);
                 }
             }
             else  // scaleout
@@ -457,11 +455,11 @@ uint64_t HclAddressGenerator::generateMemcpyDstAddress(CommonState& commonState,
                 {
                     if (commonState.m_16BitReduction)
                     {
-                        addr = commonState.getIntermediateBuffer(REDUCE_RR_POOL);
+                        addr = commonState.getIntermediateBuffer(REDUCE_POOL);
                     }
                     else
                     {
-                        addr = commonState.getIntermediateBuffer(SCALEOUT_RR_POOL);
+                        addr = commonState.getIntermediateBuffer(SCALEOUT_POOL);
                     }
                 }
                 else if (commonState.m_collectiveOp == eHCLReduceScatter)
@@ -485,7 +483,7 @@ uint64_t HclAddressGenerator::generateMemcpyDstAddress(CommonState& commonState,
             }
             else
             {
-                addr = commonState.getIntermediateBuffer(SCALEUP_RR_AND_ALL2ALL_POOL) + offset;
+                addr = commonState.getIntermediateBuffer(SCALEUP_AND_ALL2ALL_POOL) + offset;
             }
             break;
         case eHCLScatter:
@@ -511,15 +509,13 @@ uint64_t HclAddressGenerator::generateMemcpyDstAddress(CommonState& commonState,
     return addr;
 }
 
-uint64_t HclAddressGenerator::generateReproducibleIntermediateAddress(CommonState& commonState,
-                                                                      bool         isForScaleOut,
-                                                                      bool         useGDRPool,
-                                                                      unsigned     bufferOffset)
+uint64_t HclAddressGenerator::generateIntermediateAddress(CommonState& commonState,
+                                                          bool         isForScaleOut,
+                                                          bool         useGDRPool,
+                                                          unsigned     bufferOffset)
 {
-    e_devicePoolID soPoolID = useGDRPool ? SCALEOUT_GDR_POOL : SCALEOUT_RR_POOL;
-    return generateIntermediateAddress(commonState,
-                                       isForScaleOut ? soPoolID : SCALEUP_RR_AND_ALL2ALL_POOL,
-                                       bufferOffset);
+    e_devicePoolID soPoolID = useGDRPool ? SCALEOUT_GDR_POOL : SCALEOUT_POOL;
+    return generateIntermediateAddress(commonState, isForScaleOut ? soPoolID : SCALEUP_AND_ALL2ALL_POOL, bufferOffset);
 }
 
 uint64_t HclAddressGenerator::generateIntermediateAddress(CommonState&   commonState,
@@ -527,12 +523,12 @@ uint64_t HclAddressGenerator::generateIntermediateAddress(CommonState&   commonS
                                                           unsigned       bufferOffset)
 {
     // Use stream 0 anyway, as the offset to the current stream will be added with the base
-    unsigned indexOfReproBuffer = commonState.m_intermediateBufferManager.getSliceId(poolIdx, 0) + bufferOffset;
+    unsigned indexOfSubBuffer = commonState.m_intermediateBufferManager.getSliceId(poolIdx, 0) + bufferOffset;
     uint64_t intermediateBufferBaseAddress = commonState.m_intermediateBufferManager.getBufferBaseAddr(poolIdx);
     uint64_t sizeOfSlice                   = commonState.m_intermediateBufferManager.getSingleBufferSize(poolIdx);
 
     // BASE_ADDRESS + SLICE * INDEX + SLICE*MY_RANK
-    uint64_t calculatedAddress = intermediateBufferBaseAddress + sizeOfSlice * indexOfReproBuffer;
+    uint64_t calculatedAddress = intermediateBufferBaseAddress + sizeOfSlice * indexOfSubBuffer;
 
     return calculatedAddress;
 }

@@ -6,19 +6,17 @@
 #include <map>      // for map
 #include <memory>   // for allocator, unique_ptr
 
-#include "hcl_api_types.h"           // for HCL_Rank
-#include "hcl_types.h"               // for RankInfo
-
+#include "hcl_api_types.h"  // for HCL_Rank
+#include "hcl_types.h"      // for RankInfo
 
 struct HclRemoteDevice : public RemoteDeviceConnectionInfo
 {
-    bool m_initialized = false;
-    HclRemoteDevice& operator = (const RemoteDeviceConnectionInfo& other)
+    bool             m_initialized = false;
+    HclRemoteDevice& operator=(const RemoteDeviceConnectionInfo& other)
     {
         *((RemoteDeviceConnectionInfo*)this) = other;
         return *this;
     }
-
 };
 
 using HclRemoteDeviceArray = std::vector<std::unique_ptr<HclRemoteDevice>>;

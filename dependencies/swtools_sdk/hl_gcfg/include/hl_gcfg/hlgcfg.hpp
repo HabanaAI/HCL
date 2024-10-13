@@ -19,8 +19,22 @@ HLGCFG_NAMESPACE{
  */
 
 /**
+ * 1. if it was initialized - return
+ * 2. call reset amd mark gcfg library as initialized
+ * 3. if gcfg lib is initialized then if a module is loaded its config variables are loaded from the environment at creation
+ */
+HLGCFG_API void initialize();
+
+/**
+ *
+ * @return true if gcfg lib was initialized
+ */
+HLGCFG_API bool isInitialized();
+
+/**
  * 1. reset all the values to their defaults
  * 2. read new values from env vars
+ * 3. set gcfg lib  in initialized state
  */
 HLGCFG_API void reset();
 
@@ -86,6 +100,17 @@ HLGCFG_API void setDeviceType(uint32_t deviceType);
  * @return current device type
  */
 HLGCFG_API uint32_t getDeviceType();
+
+/**
+ * get mode type that was set by setModeType
+ * @return current mode type
+ */
+HLGCFG_API NNExecutionMode getModeType();
+/**
+ * set mode type for the current thread only. It defines which mode to use
+ * @param modeType mode type
+ */
+HLGCFG_API void setModeType(NNExecutionMode modeType);
 
 /**
  * print full configuration into a logger (all the registered gcfg items)

@@ -22,7 +22,7 @@ enum HostStreamType
 struct innerQueueMsg
 {
     hcclOfiHandle handle;
-    uint64_t            submitTime =
+    uint64_t      submitTime =
         0;  // For debug, time when message was put into queue, used by consuming wait for completion stream
     uint64_t srCount =
         0;  // For debug, s/r ops counter when msg submitted, used by consuming wait for completion stream
@@ -38,9 +38,9 @@ public:
                HostStreamType     type);
     virtual ~HostStream() = default;
 
-    HostStream(HostStream&)  = delete;
-    HostStream(HostStream&&) = delete;
-    HostStream&  operator=(HostStream&) = delete;
+    HostStream(HostStream&)              = delete;
+    HostStream(HostStream&&)             = delete;
+    HostStream&  operator=(HostStream&)  = delete;
     HostStream&& operator=(HostStream&&) = delete;
 
     spHostStreamFifo   getOuterQueue() { return m_outerQueue; }
@@ -54,10 +54,10 @@ public:
     inline void     setCurrentSrCountProcessing(uint64_t newSrCount) { m_currentSrCountProcessing = newSrCount; }
 
     // for Debug
-    inline bool        getOnGoingProcessing() const { return m_ongoingProcessing; }
-    inline void        setOnGoingProcessing(bool isOngoing) { m_ongoingProcessing = isOngoing; }
-    inline std::string getOnGoingFuncName() const { return m_funcName; }
-    inline void        setOnGoingFuncName(std::string funcName) { m_funcName = funcName; }
+    inline bool           getOnGoingProcessing() const { return m_ongoingProcessing; }
+    inline void           setOnGoingProcessing(bool isOngoing) { m_ongoingProcessing = isOngoing; }
+    inline std::string    getOnGoingFuncName() const { return m_funcName; }
+    inline void           setOnGoingFuncName(std::string funcName) { m_funcName = funcName; }
     const HostStreamType& getType() const { return m_type; }
 
     inline uint64_t getCurrTimeMsec() const
@@ -73,11 +73,11 @@ public:
     inline void     incSrCount() { m_srCount++; }             // used by s/r submit stream
 
 private:
-    std::string      m_streamName;  // For Debug
-    spHostStreamFifo m_innerQueue;  // For passing info between 2 host streams (Example: ofi_req)
-    spHostStreamFifo m_outerQueue;
-    unsigned         m_archStreamIdx;
-    unsigned         m_uarchStreamIdx;
+    std::string          m_streamName;  // For Debug
+    spHostStreamFifo     m_innerQueue;  // For passing info between 2 host streams (Example: ofi_req)
+    spHostStreamFifo     m_outerQueue;
+    unsigned             m_archStreamIdx;
+    unsigned             m_uarchStreamIdx;
     const HostStreamType m_type;
 
     // for Debug
@@ -87,8 +87,8 @@ private:
 
     uint64_t m_srCount = 0;  // For debug, counts s/r ops in host main thread, transferred to scheduler thread
 
-    bool                                  m_ongoingProcessing = false;
-    std::string                           m_funcName;
+    bool        m_ongoingProcessing = false;
+    std::string m_funcName;
 
     uint64_t m_currentSrCountProcessing = 0;
 };

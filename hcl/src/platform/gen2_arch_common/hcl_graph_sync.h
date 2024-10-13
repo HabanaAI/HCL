@@ -7,6 +7,7 @@
 #include "infra/scal/gen2_arch_common/scal_types.h"  // for CgInfo
 #include "platform/gen2_arch_common/signals/types.h"
 
+class HclLbwWriteAggregator;
 class HclCommandsGen2Arch;
 namespace hcl
 {
@@ -40,9 +41,9 @@ class HclGraphSyncGen2Arch
 {
 public:
     HclGraphSyncGen2Arch(unsigned syncSmIdx, HclCommandsGen2Arch& commands);
-    HclGraphSyncGen2Arch(HclGraphSyncGen2Arch&&)      = delete;
-    HclGraphSyncGen2Arch(const HclGraphSyncGen2Arch&) = delete;
-    HclGraphSyncGen2Arch& operator=(HclGraphSyncGen2Arch&&) = delete;
+    HclGraphSyncGen2Arch(HclGraphSyncGen2Arch&&)                 = delete;
+    HclGraphSyncGen2Arch(const HclGraphSyncGen2Arch&)            = delete;
+    HclGraphSyncGen2Arch& operator=(HclGraphSyncGen2Arch&&)      = delete;
     HclGraphSyncGen2Arch& operator=(const HclGraphSyncGen2Arch&) = delete;
     virtual ~HclGraphSyncGen2Arch()                              = default;
 
@@ -120,36 +121,35 @@ public:
                                    unsigned         fenceIdx,
                                    bool             useEqual);
 
-    void createResetSoMessages(hcl::ScalStream&                                               scalStream,
-                               unsigned                                                       schedIdx,
+    void createResetSoMessages(HclLbwWriteAggregator&                                         aggregator,
                                uint32_t                                                       dcoreIdx,
                                const std::array<bool, (unsigned)WaitMethod::WAIT_METHOD_MAX>& methodsToClean);
 
     bool isForceOrder(bool external);
 
-    virtual uint64_t getSyncManagerBase(unsigned)                      = 0;
-    virtual uint32_t getRegSobObj(uint64_t smBase, unsigned Idx)       = 0;
+    virtual uint64_t getSyncManagerBase(unsigned)                = 0;
+    virtual uint32_t getRegSobObj(uint64_t smBase, unsigned Idx) = 0;
     unsigned         getSoPoolSize(GpsoPool pool);
 
-    void setNullSubmit(bool nullSubmit) { m_nullSubmit = nullSubmit; }
+    void                                       setNullSubmit(bool nullSubmit) { m_nullSubmit = nullSubmit; }
     inline std::vector<std::pair<bool, bool>>& getLtuData() { return m_ltuValid; }
 
 protected:
-    virtual uint32_t getAddrMonPayAddrl(uint64_t smBase, unsigned Idx) = 0;
-    virtual uint32_t getAddrMonPayAddrh(uint64_t smBase, unsigned Idx) = 0;
-    virtual uint32_t getAddrMonPayData(uint64_t smBase, unsigned Idx)  = 0;
-    virtual uint32_t getAddrMonConfig(uint64_t smBase, unsigned Idx)   = 0;
-    virtual uint32_t getAddrSobObj(uint64_t smBase, unsigned Idx)      = 0;
-    virtual uint32_t getOffsetMonArm(unsigned Idx)                     = 0;
-    virtual uint32_t createMonConfig(bool isLong, unsigned soQuarter)  = 0;
-    virtual uint32_t getArmMonSize()                                   = 0;
+    virtual uint32_t     getAddrMonPayAddrl(uint64_t smBase, unsigned Idx) = 0;
+    virtual uint32_t     getAddrMonPayAddrh(uint64_t smBase, unsigned Idx) = 0;
+    virtual uint32_t     getAddrMonPayData(uint64_t smBase, unsigned Idx)  = 0;
+    virtual uint32_t     getAddrMonConfig(uint64_t smBase, unsigned Idx)   = 0;
+    virtual uint32_t     getAddrSobObj(uint64_t smBase, unsigned Idx)      = 0;
+    virtual uint32_t     getOffsetMonArm(unsigned Idx)                     = 0;
+    virtual uint32_t     createMonConfig(bool isLong, unsigned soQuarter)  = 0;
+    virtual uint32_t     getArmMonSize()                                   = 0;
     virtual uint32_t     createMonArm(uint64_t       soValue,
                                       bool           longMon,
                                       const uint8_t  mask,
                                       const unsigned soIdxNoMask,
                                       int            i,
-                                      bool           useEqual)                                                    = 0;
-    virtual uint32_t     createSchedMonExpFence(unsigned fenceIdx)                                      = 0;
+                                      bool           useEqual)                       = 0;
+    virtual uint32_t     createSchedMonExpFence(unsigned fenceIdx)         = 0;
     virtual void         createSetupMonMessages(hcl::ScalStream& scalStream,
                                                 uint64_t         address,
                                                 unsigned         fenceIdx,
@@ -165,9 +165,16 @@ private:
                               unsigned         soIdx,
                               unsigned         monitorIdx,
                               uint64_t         smBase,
-                              bool             longMon,
                               unsigned         fenceIdx,
                               bool             useEqual = false);
+
+    void createArmLongMonMessages(hcl::ScalStream& scalStream,
+                                  uint64_t         soValue,
+                                  unsigned         soIdx,
+                                  unsigned         monitorIdx,
+                                  uint64_t         smBase,
+                                  unsigned         fenceIdx,
+                                  bool             useEqual = false);
 
     void createSoSignalMessage(hcl::ScalStream& scalStream,
                                unsigned         schedIdx,

@@ -13,15 +13,13 @@ class Gaudi3Hls3PCieHal : public Gaudi3Hal
 {
 public:
     Gaudi3Hls3PCieHal(const uint32_t hwModuleId);
-    virtual ~Gaudi3Hls3PCieHal() = default;
+    virtual ~Gaudi3Hls3PCieHal()                           = default;
+    Gaudi3Hls3PCieHal(const Gaudi3Hls3PCieHal&)            = delete;
+    Gaudi3Hls3PCieHal& operator=(const Gaudi3Hls3PCieHal&) = delete;
 
-    virtual uint32_t getDefaultBoxSize() const override { return m_defaultBoxSize; }
-    virtual uint32_t getDefaultScaleupGroupSize() const override { return m_defaultScaleupGroupSize; }
-    virtual const std::set<HCL_HwModuleId>& getHwModules() const override;
-    virtual unsigned                        getMaxNumScaleUpPortsPerConnection() const override
-    {
-        return HLS3PCIE_NUM_SCALEUP_PORTS_PER_CONNECTION;
-    }
+    virtual uint32_t          getDefaultBoxSize() const override { return m_defaultBoxSize; }
+    virtual uint32_t          getDefaultScaleupGroupSize() const override { return m_defaultScaleupGroupSize; }
+    virtual const DevicesSet& getHwModules() const override;
 
 private:
     const uint32_t m_defaultBoxSize = HLS3PCIE_BOX_SIZE;  // Amount of Gaudis with any to any connectivity in each box

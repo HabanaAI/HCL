@@ -7,7 +7,7 @@
 #define HLGCFG_API __attribute__((visibility("default")))
 
 #define HLGCFG_VER 1
-#define HLGCFG_INLINE_VER 1_4
+#define HLGCFG_INLINE_VER 1_6
 
 #define HLGCFG_CONCAT_(a, b) a##b
 #define HLGCFG_CONCAT(a, b) HLGCFG_CONCAT_(a,b)
@@ -17,7 +17,14 @@
 #define HLGCFG_INLINE_NAMESPACE inline namespace HLGCFG_CONCAT(inline_ver_, HLGCFG_INLINE_VER)
 
 namespace hl_gcfg{
+
 HLGCFG_NAMESPACE{
+
+enum class NNExecutionMode
+{
+    training,
+    inference
+};
 
 const uint32_t InvalidDeviceType = std::numeric_limits<uint32_t>::max();
 enum class ErrorCode

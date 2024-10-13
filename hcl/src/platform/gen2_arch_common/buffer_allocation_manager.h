@@ -1,6 +1,5 @@
 #pragma once
 
-
 #include "buffer_manager_base.h"
 #include "device_buffer_manager.h"
 #include "hcl_public_streams.h"
@@ -15,7 +14,6 @@ struct BufferAllocation
     unsigned       m_iterations;
     bool           dontWaitOnCg;
 };
-
 
 class BufferAllocationManager
 {

@@ -3,13 +3,13 @@
 #include "hcl_types.h"             // for BACK_2_BACK, UNKNOWN, DEFAULT_BOX...
 #include "synapse_common_types.h"  // for synDeviceType
 
-using hl_gcfg::DfltInt64;
-using hl_gcfg::DfltUint64;
+using hl_gcfg::deviceValue;
 using hl_gcfg::DfltBool;
 using hl_gcfg::DfltFloat;
-using hl_gcfg::DfltString;
+using hl_gcfg::DfltInt64;
 using hl_gcfg::DfltSize;
-using hl_gcfg::deviceValue;
+using hl_gcfg::DfltString;
+using hl_gcfg::DfltUint64;
 
 using hl_gcfg::MakePrivate;
 using hl_gcfg::MakePublic;
@@ -31,6 +31,12 @@ GlobalConfUint64 GCFG_HCL_MIN_IMB_SIZE_FACTOR(
         2,
         MakePrivate
 );
+
+GlobalConfUint64 GCFG_HCL_SCALEOUT_BUFFER_FACTOR(
+        "HCL_SCALEOUT_BUFFER_FACTOR",
+        "The granularity of a buffer from SCALEOUT_POOL (must be > 1)",
+        8,
+        MakePrivate);
 
 GlobalConfSize GCFG_HCL_IMB_SIZE(
         "HCL_IMB_SIZE",
@@ -153,7 +159,7 @@ GlobalConfBool GCFG_WEAK_ORDER(
 
 GlobalConfBool GCFG_NOTIFY_ON_CCB_HALF_FULL_FOR_DBM(
         "NOTIFY_ON_CCB_HALF_FULL_FOR_DBM",
-        "Device bench mark: turn on CCB back presure signaling",
+        "Device bench mark: turn on CCB back pressure signaling",
         false,
         MakePrivate);
 
@@ -163,15 +169,15 @@ GlobalConfBool GCFG_ENABLE_DEPENDENCY_CHECKER(
     true,
     MakePrivate);
 
-GlobalConfString GCFG_HCL_DEVICE_CONFIG(
-    "GCFG_HCL_DEVICE_CONFIG",
-    "Path to a JSON device config file",
-    std::string(),
-    MakePublic);
-
 GlobalConfUint64 GCFG_LOOPBACK_COMMUNICATOR_SIZE(
         "LOOPBACK_COMMUNICATOR_SIZE",
         "For loopback tests only - determines the communicator size (Min: 2, Max: 8)",
+        8,
+        MakePublic);
+
+GlobalConfUint64 GCFG_LOOPBACK_SCALEUP_GROUP_SIZE(
+        "LOOPBACK_SCALEUP_GROUP_SIZE",
+        "For loopback tests only - determines the scaleup size (Min: 1, Max: 8)",
         8,
         MakePublic);
 
@@ -204,6 +210,12 @@ GlobalConfBool GCFG_HCL_HNIC_IPV6(
         "HCL_HNIC_IPV6",
         "When true, enforce IPv6 communication",
         false,
+        MakePrivate);
+
+GlobalConfBool GCFG_HCL_HNIC_LTU(
+        "HCL_HNIC_LTU",
+        "When true, use ltu for RS scaleup buffers in hnic flow",
+        true,
         MakePrivate);
 
 GlobalConfBool GCFG_HCCL_ASYNC_EXCHANGE(
@@ -242,9 +254,15 @@ GlobalConfBool GCFG_HCL_USE_SINGLE_PEER_BROADCAST(
         false,
         MakePrivate);
 
+GlobalConfBool GCFG_HCL_IS_SINGLE_PEER_BROADCAST_ALLOWED(
+        "HCL_IS_SINGLE_PEER_BROADCAST_ALLOWED",
+        "Is single peer broadcast allowed",
+        DfltBool(false) << deviceValue(synDeviceGaudi2, true),
+        MakePrivate);
+
 GlobalConfBool GCFG_HCL_LOG_CONTEXT(
         "HCL_LOG_CONTEXT",
-        "Indent contexted log lines for easier debugability",
+        "Indent in context log lines for easier debug",
         true,
         MakePublic);
 
@@ -302,6 +320,12 @@ GlobalConfBool GCFG_HCL_IBV_GID_SYSFS(
         "HCL_IBV_GID_SYSFS",
         "use sysfs for GID data (instead of verbs API)",
         true,
+        MakePrivate);
+
+GlobalConfBool GCFG_HCL_USE_NIC_COMPRESSION(
+        "HCL_USE_NIC_COMPRESSION",
+        "use NIC compression",
+        false,
         MakePrivate);
 
 GlobalConfBool GCFG_HCL_FAIL_ON_CHECK_SIGNALS(
@@ -367,16 +391,22 @@ GlobalConfUint64 GCFG_HCL_MAX_RANKS(
     DfltUint64(8192) << deviceValue(synDeviceGaudi , 1024),
     MakePrivate);
 
-GlobalConfUint64 GCFG_SPOTLIGHT_PORT_SCHEME_GAUDI3(
-        "SPOTLIGHT_PORT_SCHEME_GAUDI3",
-        "Chosen spotlight port scheme: 0 default, 1 scaleup spotlight, 2 scaleout spotlight",
-        DEFAULT_SPOTLIGHT,
-        MakePrivate);
-
 GlobalConfUint64 GCFG_HOST_SCHEDULER_OFI_DELAY_MSG_THRESHOLD(
     "HOST_SCHEDULER_OFI_DELAY_MSG_THRESHOLD",
-    "OFI Delayed processing threshold (msec) to report",
+    "OFI delayed processing threshold (msec) to report",
     DfltUint64(1000),
+    MakePrivate);
+
+GlobalConfUint64 GCFG_HOST_SCHEDULER_OFI_DELAY_ACK_THRESHOLD(
+    "HOST_SCHEDULER_OFI_DELAY_ACK_THRESHOLD",
+    "OFI delayed ack threshold (msec) to report",
+    DfltUint64(10000),
+    MakePrivate);
+
+GlobalConfUint64 GCFG_HOST_SCHEDULER_OFI_DELAY_ACK_THRESHOLD_LOG_INTERVAL(
+    "HOST_SCHEDULER_OFI_DELAY_ACK_THRESHOLD_LOG_INTERVAL",
+    "OFI delayed ack logging threshold (msec), protects against log flooding",
+    DfltUint64(10000),
     MakePrivate);
 
 GlobalConfUint64 GCFG_HCL_SUBMIT_THRESHOLD(
@@ -400,7 +430,7 @@ GlobalConfUint64 GCFG_HCL_GNIC_SCALE_OUT_QP_SETS(
 GlobalConfUint64 GCFG_HCL_HNIC_SCALE_OUT_QP_SETS(
     "HCL_HNIC_SCALE_OUT_QP_SETS",
     "Number of HNIC Scale-out QP sets per connection with rank",
-    DfltUint64(1),
+    DfltUint64(4),
     MakePrivate);
 
 GlobalConfUint64 GCFG_HCL_GNIC_QP_SETS_COMM_SIZE_THRESHOLD(
@@ -413,6 +443,12 @@ GlobalConfUint64 GCFG_HCL_HNIC_QP_SETS_COMM_SIZE_THRESHOLD(
     "HCL_HNIC_QP_SETS_COMM_SIZE_THRESHOLD",
     "Size of World Communicator from which, each HNIC connection gets only single QP set",
     DfltUint64(2000),
+    MakePrivate);
+
+GlobalConfSize GCFG_HCL_HNIC_QP_SPRAY_THRESHOLD(
+    "HCL_HNIC_QP_SPRAY_THRESHOLD",
+    "Threshold of transaction size from which HNIC QP packet spray is enabled",
+    DfltSize(hl_gcfg::SizeParam("256kb")),
     MakePrivate);
 
 GlobalConfBool GCFG_HCL_ENABLE_G3_SR_AGG(
@@ -444,3 +480,52 @@ GlobalConfBool GCFG_HCCL_GET_MACS_FROM_DRIVER(
         "When false, unless the user passed MAC Addr Info file, hcl will retrieve the MAC addresses",
         false,
         MakePrivate);
+
+
+GlobalConfBool GCFG_HCL_ENABLE_HLCP(
+        "HCL_ENABLE_HLCP",
+        "use new coordinator",
+        true,
+        MakePublic);
+
+GlobalConfUint64 GCFG_HCL_HLCP_CLIENT_IO_THREADS(
+        "HCL_HLCP_CLIENT_IO_THREADS",
+        "HLCP client IO thread count",
+        2,
+        MakePrivate);
+
+GlobalConfUint64 GCFG_HCL_HLCP_SERVER_IO_THREADS(
+        "HCL_HLCP_SERVER_IO_THREADS",
+        "HLCP server IO thread count",
+        4,
+        MakePrivate);
+
+GlobalConfUint64 GCFG_HCL_HLCP_SERVER_SEND_THREAD_RANKS(
+        "HCL_HLCP_SERVER_SEND_THREAD_RANKS",
+        "Number of ranks to handle in one send thread. (num of threads == comm_size / ranks_in_thread)",
+        8,
+        MakePrivate);
+
+GlobalConfUint64 GCFG_HCL_HLCP_OPS_TIMEOUT(
+        "HCL_HLCP_OPS_TIMEOUT",
+        "HLCP operation timeout (seconds)",
+        120,
+        MakePrivate);
+
+GlobalConfBool GCFG_HCL_SINGLE_QP_PER_SET(
+        "HCL_SINGLE_QP_PER_SET",
+        "When true each QP set will contain a single QP, as opposed to 4 QPs when false",
+        true,
+        MakePrivate);
+
+GlobalConfBool GCFG_HCL_PROFILER_DEBUG_MODE(
+        "HCL_PROFILER_DEBUG_MODE",
+        "use debug mode when running with profiler",
+        false,
+        MakePublic);
+
+GlobalConfBool GCFG_HCL_GEN_UNIQUE_SERVER_ID(
+        "HCL_GEN_UNIQUE_SERVER_ID",
+        "use unique server ID to distinguish between hosts",
+        false,
+        MakePublic);

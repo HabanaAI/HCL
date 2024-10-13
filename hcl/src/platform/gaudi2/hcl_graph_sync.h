@@ -12,9 +12,9 @@ class HclGraphSyncGaudi2 : public HclGraphSyncGen2Arch
 {
 public:
     HclGraphSyncGaudi2(unsigned smIdx, HclCommandsGen2Arch& commands);
-    HclGraphSyncGaudi2(HclGraphSyncGaudi2&&)      = delete;
-    HclGraphSyncGaudi2(const HclGraphSyncGaudi2&) = delete;
-    HclGraphSyncGaudi2& operator=(HclGraphSyncGaudi2&&) = delete;
+    HclGraphSyncGaudi2(HclGraphSyncGaudi2&&)                 = delete;
+    HclGraphSyncGaudi2(const HclGraphSyncGaudi2&)            = delete;
+    HclGraphSyncGaudi2& operator=(HclGraphSyncGaudi2&&)      = delete;
     HclGraphSyncGaudi2& operator=(const HclGraphSyncGaudi2&) = delete;
     virtual ~HclGraphSyncGaudi2()                            = default;
     virtual uint32_t getSoConfigValue(unsigned value, bool isReduction) override;

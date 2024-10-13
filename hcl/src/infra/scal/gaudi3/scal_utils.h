@@ -13,6 +13,7 @@ public:
     virtual sob_info    getSOBInfo(uint32_t addr) override;
     virtual std::string printSOBInfo(uint32_t addr) override;
     virtual std::string printSOBInfo(sob_info sob) override;
+    virtual uint32_t    getCMaxTargetValue() override;
 };
 
 };  // namespace hcl

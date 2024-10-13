@@ -1,28 +1,32 @@
 #pragma once
 
-#include <cstddef>                                  // for size_t
-#include <cstdint>                                  // for uint32_t
-#include <array>                                    // for array
-#include <vector>                                   // for vector
-#include <memory>                                   // for shared_ptr
+#include <cstddef>  // for size_t
+#include <cstdint>  // for uint32_t
+#include <array>    // for array
+#include <vector>   // for vector
+#include <memory>   // for shared_ptr
 
-#include "hcl_api_types.h"                          // for HCL_Comm
-#include "platform/gaudi2/types.h"                  // for HLS2_BOX_SIZE
-#include "platform/gen2_arch_common/types.h"        // for MAX_NICS_GEN2ARCH, GEN2ARCH_HLS_BOX_SIZE
-#include "sched_pkts.h"                             // for g2fw
-#include "gaudi2_arc_sched_packets.h"               // for g2fw::nic_passthro...
+#include "hcl_api_types.h"                                           // for HCL_Comm
+#include "platform/gaudi2/types.h"                                   // for HLS2_BOX_SIZE
+#include "platform/gen2_arch_common/types.h"                         // for MAX_NICS_GEN2ARCH, GEN2ARCH_HLS_BOX_SIZE
+#include "sched_pkts.h"                                              // for g2fw
+#include "gaudi2_arc_sched_packets.h"                                // for g2fw::nic_passthro...
 #include "platform/gen2_arch_common/nic_passthrough_handler_base.h"  // for NicPassthroughHandlerBase
 
-class Gaudi2DevicePortMapping;
 class HclCommandsGen2Arch;
 class ContextManager;
-namespace hcl { class ScalStreamBase; }
+class Gen2ArchServerConnectivity;
+
+namespace hcl
+{
+class ScalStreamBase;
+}
 class HclCommandsGaudi2;
 
 struct RecordWithMetadata
 {
-    unsigned                      graphIndex;
-    struct RecordWithMetadata*    next;
+    unsigned                            graphIndex;
+    struct RecordWithMetadata*          next;
     struct g2fw::nic_passthrough_data_t data;
 };
 
@@ -34,9 +38,9 @@ class NicPassthroughHandler : public NicPassthroughHandlerBase
 {
 public:
     // nicEngines is the return value of hcl::ScalManager->getNicsScaleUpEngines();
-    NicPassthroughHandler(const std::vector<unsigned>&   nicEngines,
-                          const Gaudi2DevicePortMapping& portMapping,
-                          HclCommandsGen2Arch&           commands);
+    NicPassthroughHandler(const std::vector<unsigned>&      nicEngines,
+                          const Gen2ArchServerConnectivity& serverConnectivity,
+                          HclCommandsGen2Arch&              commands);
     virtual ~NicPassthroughHandler() = default;
 
     static_assert(GEN2ARCH_HLS_BOX_SIZE == HLS2_BOX_SIZE, "G2 must match Gen2Arch box size");
@@ -44,7 +48,7 @@ public:
     virtual uint32_t getDupMask(const int deviceId);
 
     void addNicBuffer(const NicsDwordsArray& nicBuffer) override;
-    void addDeviceBuffer(const DwordsBoxesArray& deviceBuffer);
+    void addDeviceBuffer(const DwordsBoxesArray& deviceBuffer, const HCL_Comm comm);
 
     void flush(hcl::ScalStreamBase& scalStream,
                unsigned             collectiveContextIndex,
@@ -72,7 +76,7 @@ private:
 
     void pushToRecordVector(uint32_t dupMask, uint32_t payload);
 
-    const Gaudi2DevicePortMapping& m_portMapping;
+    const Gen2ArchServerConnectivity& m_serverConnectivity;
 
     uint32_t m_dupMasksPerNic[MAX_NICS_GEN2ARCH];
     uint32_t m_dupMasksPerDevice[HLS2_BOX_SIZE];

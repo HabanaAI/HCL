@@ -1,12 +1,12 @@
 #include "socket_thread.h"
 
-#include <cstdlib>                       // for free, size_t
-#include <sys/socket.h>                  // for shutdown, SHUT_RD
-#include <chrono>                        // for operator-, operator>, high_r...
-#include <type_traits>                   // for __success_type<>::type
-#include "hcl_tcp_utils.h"               // for recvAllFromSocket, sendAllTo...
-#include "hcl_utils.h"                   // for LOG_HCL_ERR, LOG_HCL_DEBUG
-#include "hcl_log_manager.h"             // for LOG_ERR, LOG_DEBUG, LOG_TRACE
+#include <cstdlib>            // for free, size_t
+#include <sys/socket.h>       // for shutdown, SHUT_RD
+#include <chrono>             // for operator-, operator>, high_r...
+#include <type_traits>        // for __success_type<>::type
+#include "hcl_tcp_utils.h"    // for recvAllFromSocket, sendAllTo...
+#include "hcl_utils.h"        // for LOG_HCL_ERR, LOG_HCL_DEBUG
+#include "hcl_log_manager.h"  // for LOG_ERR, LOG_DEBUG, LOG_TRACE
 
 static constexpr auto MAX_ASYNC_RECV_TIMEOUT = std::chrono::seconds(5);
 static const Ack      g_ack_send_buff        = ACK_VALID;
@@ -66,16 +66,17 @@ void SocketThread::runPendingJobs()
 
             if (job.m_size != itr->hdr.payload_size || job.m_sequence != itr->hdr.sequence)
             {
-                LOG_HCL_ERR(HCL,
-                            "Rank({}) AsyncThread({}) received unexpected job from peer={} got seq={}, size={}, expected "
-                            "seq={}, size={}",
-                            m_globalRank,
-                            m_socketThreadId,
-                            itr->hdr.source_peer,
-                            itr->hdr.sequence,
-                            itr->hdr.payload_size,
-                            job.m_sequence,
-                            job.m_size);
+                LOG_HCL_ERR(
+                    HCL,
+                    "Rank({}) AsyncThread({}) received unexpected job from peer={} got seq={}, size={}, expected "
+                    "seq={}, size={}",
+                    m_globalRank,
+                    m_socketThreadId,
+                    itr->hdr.source_peer,
+                    itr->hdr.sequence,
+                    itr->hdr.payload_size,
+                    job.m_sequence,
+                    job.m_size);
                 job.m_handle->result = false;
                 job.m_handle->setHandleAsDone();
                 return;
@@ -175,7 +176,7 @@ void SocketThread::runAsyncThread()
             return;
         }
 
-        const auto start_time = std::chrono::high_resolution_clock::now();
+        const auto start_time   = std::chrono::high_resolution_clock::now();
         unsigned   loopsCounter = 0;
         while (!pushedToPendingJobs)
         {

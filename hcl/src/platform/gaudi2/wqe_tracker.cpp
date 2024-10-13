@@ -1,5 +1,5 @@
 #include "platform/gaudi2/wqe_tracker.h"
-#include "hccl_device.h"
+#include "platform/gaudi2/hccl_device.h"
 #include "hcl_types.h"
 #include "hcl_dynamic_communicator.h"  // for HclDynamicCommunicator
 #include "hcl_utils.h"                 // for VERIFY
@@ -21,7 +21,7 @@ void WqeTrackerGaudi2::incWqe(const HCL_Comm commId, const unsigned rank, const 
 {
     unsigned qpTypeIdx = (unsigned)qpType;
     VERIFY(qpTypeIdx < (unsigned)QpType::QPTypeSize);
-    VERIFY((int) qpType >= (int) QpType::ScaleOutAllGather || rank < DEFAULT_BOX_SIZE);
+    VERIFY((int)qpType >= (int)QpType::ScaleOutAllGather || rank < DEFAULT_BOX_SIZE);
 
     if (((++m_wqePerConnection[qpTypeIdx][commId][rank]) & (m_recvWqeEntriesNum - 1)) == 0)
     {

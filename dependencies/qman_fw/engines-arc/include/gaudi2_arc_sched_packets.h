@@ -636,6 +636,15 @@ struct sched_arc_cmd_alloc_barrier_v2_t {
 	 * Array of engine group types to which the alloc barrier
 	 * needs to be sent
 	 */
+	uint32_t watch_dog_sig_value:15;
+	/**<
+	 * Value to be used by firmware to increment the watchdog SOB.
+	 * Watchdog SOB ID is sent as part of Engine Config.
+	 */
+	uint32_t reserved2:17;
+	/**<
+	 * reserved
+	 */
 } __attribute__ ((aligned(4), __packed__));
 
 /**<

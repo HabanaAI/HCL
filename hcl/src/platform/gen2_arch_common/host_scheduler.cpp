@@ -17,9 +17,9 @@
 
 void HostScheduler::startThread(HclDeviceGen2Arch* device, unsigned index, std::vector<HostStream*>& hostStreams)
 {
-    m_hostStreams   = hostStreams;
-    m_stop          = false;
-    m_device        = device;
+    m_hostStreams    = hostStreams;
+    m_stop           = false;
+    m_device         = device;
     m_index          = index;
     m_sleepThreshold = GCFG_HOST_SCHEDULER_SLEEP_THRESHOLD.value();
     m_sleepDuration  = std::chrono::milliseconds(GCFG_HOST_SCHEDULER_SLEEP_DURATION.value());
@@ -117,8 +117,8 @@ void HostScheduler::runHostScheduler()
 
 void HostScheduler::processStream(HostStream* hostStream)
 {
-    uint64_t size = 0;
-    bool     done        = false;
+    uint64_t size            = 0;
+    bool     done            = false;
     uint32_t streamDepthProc = getStreamDepthProc(hostStream);
 
     do
@@ -158,10 +158,12 @@ void HostScheduler::processStream(HostStream* hostStream)
 
             case HOST_SCHED_CMD_WAIT_FOR_COMP:
             {
-                uint64_t srCount    = 0;
-                uint64_t submitTime = 0;
-                done                = processScaleoutWaitForCompCommand(hostStream, srCount, submitTime);
-                commandSize         = sizeof(host_sched_cmd_wait_for_completion);
+                uint64_t srCount            = 0;
+                uint64_t submitTime         = 0;
+                done                        = processScaleoutWaitForCompCommand(hostStream, srCount, submitTime);
+                commandSize                 = sizeof(host_sched_cmd_wait_for_completion);
+                const uint64_t currTime     = hostStream->getCurrTimeMsec();
+                const uint64_t durationMsec = currTime - submitTime;
 
                 if (done && unlikely(LOG_LEVEL_AT_LEAST_WARN(HCL_OFI)))
                 {
@@ -170,8 +172,6 @@ void HostScheduler::processStream(HostStream* hostStream)
                            hostStream->getStreamName(),
                            srCount,
                            submitTime);
-                    const uint64_t currTime           = hostStream->getCurrTimeMsec();
-                    const uint64_t durationMsec       = currTime - submitTime;
                     const uint64_t timerThresholdMsec = GCFG_HOST_SCHEDULER_OFI_DELAY_MSG_THRESHOLD.value();
                     if (unlikely(durationMsec >= timerThresholdMsec))
                     {
@@ -184,6 +184,30 @@ void HostScheduler::processStream(HostStream* hostStream)
                     }
                     break;
                 }
+                if (!done && submitTime != 0)
+                {
+                    // This code will log a critical error if we are waiting on the SO send ACK for more then threshold
+                    // milliseconds
+                    if (unlikely(durationMsec >= GCFG_HOST_SCHEDULER_OFI_DELAY_ACK_THRESHOLD.value()))
+                    {
+                        // We need to save the the last log time to prevent log flooding
+                        static uint64_t lastLogTime      = submitTime;
+                        const uint64_t  timeSinceLastLog = currTime - lastLogTime;
+
+                        // Print to log only if the time since the last log exceeded the threshold
+                        if (timeSinceLastLog > GCFG_HOST_SCHEDULER_OFI_DELAY_ACK_THRESHOLD_LOG_INTERVAL.value() ||
+                            lastLogTime == submitTime)
+                        {
+                            LOG_HCL_CRITICAL(HCL_OFI,
+                                             "Stream {} transaction #{} is stuck for {} milliseconds",
+                                             hostStream->getStreamName(),
+                                             srCount,
+                                             durationMsec);
+                            lastLogTime = currTime;
+                        }
+                    }
+                }
+
                 break;
             }
 
@@ -248,12 +272,13 @@ bool HostScheduler::processScaleoutWaitForCompCommand(HostStream* hostStream, ui
     bool status = m_device->getComm(waitForCompCommand->comm)
                       .m_hostNicBridge->waitForCompletionNb(&internalStreamInfo->handle, done);
     VERIFY(status == true, "waitForCompletion returned with an error");
+
     if (done)
     {
         hostStream->getInnerQueue()->free(sizeof(innerQueueMsg) >> 2);
-        submitTime = internalStreamInfo->submitTime;
-        srCount    = internalStreamInfo->srCount;
+        srCount = internalStreamInfo->srCount;
     }
+    submitTime = internalStreamInfo->submitTime;
 
     return done;
 }
@@ -293,8 +318,8 @@ bool HostScheduler::processScaleOutWithFenceCommand(HostStream* hostStream)
     uint64_t size    = scaleOutCommand->size;
     HCL_Comm comm    = scaleOutCommand->comm;
 
-    hcclHandle handle;
-    hcclResult_t     status;
+    hcclHandle   handle;
+    hcclResult_t status;
 
     if (isSend)
     {
@@ -323,7 +348,7 @@ bool HostScheduler::processScaleOutWithFenceCommand(HostStream* hostStream)
     }
 
     innerQueueMsg innerMsg;
-    innerMsg.handle = handle.ofi;
+    innerMsg.handle     = handle.ofi;
     innerMsg.submitTime = hostStream->getCurrTimeMsec();
     innerMsg.srCount    = scaleOutCommand->srCount;
 
@@ -355,8 +380,8 @@ bool HostScheduler::processScaleOutCommand(HostStream* hostStream)
     uint64_t size    = scaleOutCommand->size;
     HCL_Comm comm    = scaleOutCommand->comm;
 
-    hcclHandle handle;
-    hcclResult_t     status;
+    hcclHandle   handle;
+    hcclResult_t status;
 
     if (isSend)
     {
@@ -385,7 +410,7 @@ bool HostScheduler::processScaleOutCommand(HostStream* hostStream)
     }
 
     innerQueueMsg innerMsg;
-    innerMsg.handle = handle.ofi;
+    innerMsg.handle     = handle.ofi;
     innerMsg.submitTime = hostStream->getCurrTimeMsec();
     innerMsg.srCount    = scaleOutCommand->srCount;
 

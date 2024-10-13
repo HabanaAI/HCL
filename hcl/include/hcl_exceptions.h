@@ -18,7 +18,7 @@ public:
         addToStream(s, std::forward<Args>(a_args)...);
         m_exceptionString = s.str();
     }
-    const char* what() const noexcept { return m_exceptionString.c_str(); }
+    const char* what() const noexcept override { return m_exceptionString.c_str(); }
 
 private:
     template<typename T, typename... Args>

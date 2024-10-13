@@ -15,8 +15,8 @@ namespace hl_topo
  * @param accel current gaudi accel name
  * @return Index of best provider in the providers vector and a match type string
  */
-    std::tuple<size_t, std::string> getBestProvider(const std::vector<struct fi_info *> &providers,
-                                                    const std::string &accel);
+std::tuple<size_t, std::string> getBestProvider(const std::vector<struct fi_info*>& providers,
+                                                const std::string&                  accel);
 
 /**
  * @brief Find network interfaces names of providers.

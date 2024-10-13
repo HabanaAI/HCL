@@ -205,6 +205,7 @@ struct ModuleLoggerData
     std::array<RecentLogQueueUPtr, nbEnumItems>    lazyLoggerQueues;
     std::array<std::function<void()>, nbEnumItems> loggerOnDemandCreators;
     std::array<bool, nbEnumItems>                  registered;
+    std::array<uint8_t, nbEnumItems>               consoleLevels;
     unsigned                                       maxLoggerNameLen = 0;
     hl_logger::ResourceGuard                       signalHandlerResourceGuard;
     hl_logger::ResourceGuard                       flushHandlerResourceGuard;
@@ -311,6 +312,7 @@ inline ModuleLoggerData<TLoggerEnum>::ModuleLoggerData(std::string_view moduleNa
     const LogLevelInfo levelsOff{HLLOG_LEVEL_OFF, HLLOG_LEVEL_OFF};
     levels.fill(levelsOff);
     registered.fill(false);
+    consoleLevels.fill(HLLOG_LEVEL_INVALID);
     lazyQueueSizes.fill(HLLOG_DEFAULT_LAZY_QUEUE_SIZE);
     std::string_view ::size_type maxLoggerNameLen = 0;
     for (unsigned i = 0 ; i < hl_logger::getNbLoggers<TLoggerEnum>(); ++i)
@@ -494,7 +496,7 @@ inline void createLogger(TLoggerEnum loggerEnumItem, hl_logger::LoggerCreatePara
     hl_logger::LoggerSPtr newLogger = hl_logger::createLogger(hl_logger::getLoggerEnumItemName(loggerEnumItem), params);
     moduleLoggerData<TLoggerEnum>.loggers[loggerIdx].logger = newLogger;
     moduleLoggerData<TLoggerEnum>.loggers[loggerIdx].initialized.store(true, std::memory_order_release);
-    if (params.defaultLoggingLevel != defaultLoggingLevel)
+    if (params.defaultLoggingLevel != HLLOG_LEVEL_INVALID)
     {
         moduleLoggerData<TLoggerEnum>.levels[loggerIdx].logLevel = hl_logger::getLoggingLevel(newLogger);
     }
@@ -502,7 +504,15 @@ inline void createLogger(TLoggerEnum loggerEnumItem, hl_logger::LoggerCreatePara
     {
         hl_logger::setLoggingLevel(newLogger, moduleLoggerData<TLoggerEnum>.levels[loggerIdx].logLevel);
     }
-    if (params.defaultLazyLoggingLevel != defaultLoggingLevel)
+    if (params.defaultConsoleLoggingLevel != HLLOG_LEVEL_INVALID)
+    {
+        moduleLoggerData<TLoggerEnum>.consoleLevels[loggerIdx] = hl_logger::getConsoleLoggingLevel(newLogger);
+    }
+    else
+    {
+        hl_logger::setConsoleLoggingLevel(newLogger, moduleLoggerData<TLoggerEnum>.consoleLevels[loggerIdx]);
+    }
+    if (params.defaultLazyLoggingLevel != HLLOG_LEVEL_INVALID)
     {
         moduleLoggerData<TLoggerEnum>.levels[loggerIdx].lazyLogLevel = hl_logger::getLazyLoggingLevel(newLogger);
     }
@@ -529,16 +539,22 @@ inline void createLoggerOnDemand(TLoggerEnum loggerEnumItem, hl_logger::LoggerCr
     const int defaultLogLevel = hl_logger::getDefaultLoggingLevel(hl_logger::getLoggerEnumItemName(loggerEnumItem), params.defaultLoggingLevel);
     const int logLevel = params.forceDefaultLoggingLevel ? params.defaultLoggingLevel : defaultLogLevel;
     moduleLoggerData<TLoggerEnum>.levels[loggerIdx].logLevel = logLevel;
+
+    const int defaultConsoleLogLevel = hl_logger::getDefaultConsoleLoggingLevel(hl_logger::getLoggerEnumItemName(loggerEnumItem), params.defaultConsoleLoggingLevel);
+    const int consoleLogLevel = params.forceDefaultConsoleLoggingLevel ? params.defaultConsoleLoggingLevel : defaultConsoleLogLevel;
+    moduleLoggerData<TLoggerEnum>.consoleLevels[loggerIdx] = consoleLogLevel;
+
     const int defaultLazyLogLevel = hl_logger::getDefaultLazyLoggingLevel(hl_logger::getLoggerEnumItemName(loggerEnumItem), params.defaultLazyLoggingLevel);
     const int lazyLogLevel = params.forceDefaultLazyLoggingLevel ? params.defaultLazyLoggingLevel : defaultLazyLogLevel;
     moduleLoggerData<TLoggerEnum>.levels[loggerIdx].lazyLogLevel  = lazyLogLevel;
-    params.defaultLoggingLevel = defaultLoggingLevel;
-    params.defaultLazyLoggingLevel = defaultLoggingLevel;
+
+    params.defaultLoggingLevel = HLLOG_LEVEL_INVALID;
+    params.defaultConsoleLoggingLevel = HLLOG_LEVEL_INVALID;
+    params.defaultLazyLoggingLevel = HLLOG_LEVEL_INVALID;
     updateLazyLoggerRecentLogsQueue(loggerEnumItem, params_);
     HLLOG_INTERNAL_INFO("loggerName: {} defaultLogLevel: {} defaultLazyLoggingLevel: {}",
                         getLoggerEnumItemName(loggerEnumItem), params_.defaultLoggingLevel, params_.defaultLazyLoggingLevel);
     moduleLoggerData<TLoggerEnum>.loggerOnDemandCreators[loggerIdx] = [=](){
-        hl_logger::LoggerCreateParams params_ = params;
         createLogger(loggerEnumItem, params);
         setLoggerRecentLogsQueue(loggerEnumItem);
         auto logger = moduleLoggerData<TLoggerEnum>.loggers[loggerIdx].logger;
@@ -574,6 +590,17 @@ void setLoggingLevel(TLoggerEnum loggerEnumItem, int newLevel)
     }
 }
 
+template<class TLoggerEnum>
+void setConsoleLoggingLevel(TLoggerEnum loggerEnumItem, int newLevel)
+{
+    auto loggerIdx = unsigned(loggerEnumItem);
+    moduleLoggerData<TLoggerEnum>.consoleLevels[loggerIdx] = newLevel;
+    if (isLoggerInstantiated(loggerEnumItem))
+    {
+        hl_logger::setConsoleLoggingLevel(hl_logger::getLogger(loggerEnumItem), newLevel);
+    }
+}
+
 template <class TLoggerEnum>
 void setLazyLoggingLevel(TLoggerEnum loggerEnumItem, int newLevel)
 {
@@ -595,6 +622,17 @@ int getLoggingLevel(TLoggerEnum loggerEnumItem)
 {
     auto loggerIdx = unsigned(loggerEnumItem);
     return moduleLoggerData<TLoggerEnum>.levels[loggerIdx].logLevel;
+}
+
+template<class TLoggerEnum>
+int getConsoleLoggingLevel(TLoggerEnum loggerEnumItem)
+{
+    auto loggerIdx = unsigned(loggerEnumItem);
+    if (moduleLoggerData<TLoggerEnum>.consoleLevels[loggerIdx] != HLLOG_LEVEL_INVALID)
+    {
+        return moduleLoggerData<TLoggerEnum>.consoleLevels[loggerIdx];
+    }
+    return HLLOG_LEVEL_OFF;
 }
 
 template <class TLoggerEnum>

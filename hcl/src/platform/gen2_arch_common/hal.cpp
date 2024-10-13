@@ -47,7 +47,7 @@ uint32_t Gen2ArchHal::getDefaultScaleupGroupSize() const
     return m_defaultScaleupGroupSize;
 }
 
-const std::set<HCL_HwModuleId>& Gen2ArchHal::getHwModules() const
+const DevicesSet& Gen2ArchHal::getHwModules() const
 {
     return m_hwModuleIds;
 }

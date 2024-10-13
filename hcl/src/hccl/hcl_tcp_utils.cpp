@@ -1,20 +1,19 @@
 #include "hcl_tcp_utils.h"
 
-#include <arpa/inet.h>                  // for inet_pton
-#include <cerrno>                       // for errno, EINTR
-#include <netinet/in.h>                 // for sockaddr_in, htons, in_port_t
-#include <sys/socket.h>                 // for setsockopt, socket, AF_INET
-#include <unistd.h>                     // for close, read, sleep
-#include <cstring>                      // for strerror, memset, size_t
-#include <iostream>                     // for basic_ostream::operator<<
-#include <string>                       // for operator!=, string, basic_st...
-#include "hcl_global_conf.h"            // for GCFG_HCCL_TRIALS
-#include "hcl_utils.h"                  // for VERIFY
-#include "hcl_log_manager.h"            // for LOG_ERR, LOG_DEBUG
+#include <arpa/inet.h>        // for inet_pton
+#include <cerrno>             // for errno, EINTR
+#include <netinet/in.h>       // for sockaddr_in, htons, in_port_t
+#include <sys/socket.h>       // for setsockopt, socket, AF_INET
+#include <unistd.h>           // for close, read, sleep
+#include <cstring>            // for strerror, memset, size_t
+#include <iostream>           // for basic_ostream::operator<<
+#include <string>             // for operator!=, string, basic_st...
+#include "hcl_global_conf.h"  // for GCFG_HCCL_TRIALS
+#include "hcl_utils.h"        // for VERIFY
+#include "hcl_log_manager.h"  // for LOG_ERR, LOG_DEBUG
 
 #include <sys/types.h>
 #include <dirent.h>
-
 
 #define SERVER_SOCKET_MAX_CONNECTIONS 5120
 #define SYS_CALL_ERR                  -1
@@ -41,7 +40,6 @@ enum HcclSocketOperations
     HCCL_SOCKET_RECV,
 };
 
-
 int createServerSocket(sockaddr_t& address)
 {
     in_port_t port = address.port();
@@ -49,7 +47,7 @@ int createServerSocket(sockaddr_t& address)
     int socket_fd = socket(address, SOCK_STREAM, 0);
     if (socket_fd < 0)
     {
-        LOG_ERR(HCL,"Failed to open a socket");
+        LOG_ERR(HCL, "Failed to open a socket");
         RETURN_SYS_FAILURE("socket")
     }
 
@@ -68,19 +66,19 @@ int createServerSocket(sockaddr_t& address)
                            socket_fd);
 
     sockaddr_t open_sock(open_socket_addr);
-    in_port_t opened_port = open_sock.port();
+    in_port_t  opened_port = open_sock.port();
 
     if (port == 0)
     {
         address = open_socket_addr;
-        LOG_DEBUG(HCL,"Binded socket to port={}", opened_port);
+        LOG_DEBUG(HCL, "Bound socket to port={}", opened_port);
     }
     else
     {
         if (port != opened_port)
         {
             close(socket_fd);
-            LOG_ERR(HCL,"Failed to bind the socket to port: {} | {}", address.str(), open_sock.str());
+            LOG_ERR(HCL, "Failed to bind the socket to port: {} | {}", address.str(), open_sock.str());
             return SYS_CALL_ERR;
         }
     }
@@ -108,7 +106,7 @@ int socketConnect(sockaddr_t& ip_addr, std::string if_name)
     retval         = setsockopt(socket_fd, SOL_SOCKET, SO_KEEPALIVE, &socket_opt, sizeof(socket_opt));
     if (retval != 0)
     {
-        LOG_ERR(HCL,"Setting SO_KEEPALIVE socket option failed. Retval: {} errno: {}", retval, std::strerror(errno));
+        LOG_ERR(HCL, "Setting SO_KEEPALIVE socket option failed. Retval: {} errno: {}", retval, std::strerror(errno));
         close(socket_fd);
         return SYS_CALL_ERR;
     }
@@ -120,12 +118,12 @@ int socketConnect(sockaddr_t& ip_addr, std::string if_name)
         connectResult = connect(socket_fd, ip_addr, ip_addr.size_of());
         if (connectResult == 0) break;
         connectionTrials--;
-        LOG_DEBUG(HCL,"Connect to server ended with timeout. ip {}. Trying again.", ip_addr.str());
+        LOG_DEBUG(HCL, "Connect to server ended with timeout. ip {}. Trying again.", ip_addr.str());
         sleep(1);
     }
     if (connectResult == -1)
     {
-        LOG_ERR(HCL,"Connect to server ended with timeout. ip {}", ip_addr.str());
+        LOG_ERR(HCL, "Connect to server ended with timeout. ip {}", ip_addr.str());
         close(socket_fd);
         return connectResult;
     }
@@ -155,7 +153,7 @@ int readXBytes(const int socket, void* buffer, const unsigned int x)
 size_t socketOp(HcclSocketOperations sockOp, const int socket_fd, const void* buff, const size_t size)
 {
     ssize_t dataBytes = 0;
-    size_t offset    = 0;
+    size_t  offset    = 0;
     while (true)
     {
         if (sockOp == HCCL_SOCKET_SEND)
@@ -170,7 +168,7 @@ size_t socketOp(HcclSocketOperations sockOp, const int socket_fd, const void* bu
         if (dataBytes == 0 && sockOp == HCCL_SOCKET_RECV)
         {
             // Connection has been closed.
-            LOG_DEBUG(HCL,"Socket={} has been closed", socket_fd);
+            LOG_DEBUG(HCL, "Socket={} has been closed", socket_fd);
             return dataBytes;
         }
 
@@ -178,7 +176,7 @@ size_t socketOp(HcclSocketOperations sockOp, const int socket_fd, const void* bu
         {
             if (errno != EINTR)
             {
-                LOG_ERR(HCL,"Socket={} returned with error={}", socket_fd, strerror(errno));
+                LOG_ERR(HCL, "Socket={} returned with error={}", socket_fd, strerror(errno));
             }
 
             return dataBytes;
@@ -212,7 +210,7 @@ bool recvAllFromSocket(const int socket_fd, const void* buff, const size_t size)
     size_t bytes_recv = socketOp(HCCL_SOCKET_RECV, socket_fd, buff, size);
     if (bytes_recv != size)
     {
-        LOG_ERR(HCL,"recvAllFromSocket: Socket receive failed, expected({}), received({}).", size, bytes_recv);
+        LOG_ERR(HCL, "recvAllFromSocket: Socket receive failed, expected({}), received({}).", size, bytes_recv);
         return false;
     }
 
@@ -228,7 +226,7 @@ bool sendAllToSocket(const int socket_fd, const void* buff, const size_t size)
     size_t bytes_sent = socketOp(HCCL_SOCKET_SEND, socket_fd, buff, size);
     if (bytes_sent != size)
     {
-        LOG_ERR(HCL,"Socket send failed.");
+        LOG_ERR(HCL, "Socket send failed.");
 
         return false;
     }
@@ -245,7 +243,7 @@ bool sendAllToSocket(const int socket_fd, const void* buff, const size_t size)
  */
 bool setNonBlockingSocket(const int socket)
 {
-    int flags  = fcntl(socket, F_GETFL, 0) | O_NONBLOCK;
+    int flags = fcntl(socket, F_GETFL, 0) | O_NONBLOCK;
     if (flags < 0)
     {
         return false;
@@ -259,8 +257,8 @@ bool setNonBlockingSocket(const int socket)
 
 std::string getListenPorts()
 {
-    char psBuffer[256];
-    FILE* pPipe;
+    char        psBuffer[256];
+    FILE*       pPipe;
     std::string result;
 
     if ((pPipe = popen("netstat -ltnp", "r")) == NULL)
@@ -269,7 +267,7 @@ std::string getListenPorts()
     }
 
     while (fgets(psBuffer, sizeof(psBuffer), pPipe) != NULL)
-            result += psBuffer;
+        result += psBuffer;
 
     pclose(pPipe);
     return result;

@@ -4,8 +4,9 @@
 #include "ibverbs/hcl_ibverbs.h"
 
 Gaudi3Nic::Gaudi3Nic(IHclDevice* device, uint32_t nic, uint32_t nQPN, bool scaleOut, uint32_t bp)
-: Gen2ArchNic(device, nic, nQPN, bp, scaleOut ? ntScaleOut : ntCollective)
+: Gen2ArchNic(device, nic)
 {
+    g_ibv.setup_nic(nic, nQPN, bp, scaleOut ? ntScaleOut : ntCollective);
 };
 
 void Gaudi3Nic::init()

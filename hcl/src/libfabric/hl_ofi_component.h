@@ -182,21 +182,21 @@ public:
     listen(uint64_t tag, void* handle, listenComm_t** listenComm, unsigned hostConnIdx, uint16_t qpSetIndex) = 0;
     virtual int
     connect(const void* handle, ofiComm_t** ofiComm, void* localAddr, unsigned hostConnIdx, uint16_t qpSetIndex) = 0;
-    virtual int accept(listenComm_t* listenComm, ofiComm_t** ofiComm)         = 0;
+    virtual int accept(listenComm_t* listenComm, ofiComm_t** ofiComm)                                            = 0;
     virtual int isend(ofiComm_t*             ofiComm,
                       void*                  data,
                       size_t                 size,
                       fid_mr*                mHandle,
                       ofi_req_t**            request,
-                      OfiCompCallbackParams& compParams)                      = 0;
+                      OfiCompCallbackParams& compParams)                                                         = 0;
     virtual int irecv(ofiComm_t*             ofiComm,
                       void*                  data,
                       size_t                 size,
                       fid_mr*                mHandle,
                       ofi_req_t**            request,
-                      OfiCompCallbackParams& compParams)                      = 0;
-    virtual int close(ofiComm_t* ofiComm)                                     = 0;
-    virtual int close(listenComm_t* listenComm)                               = 0;
+                      OfiCompCallbackParams& compParams)                                                         = 0;
+    virtual int close(ofiComm_t* ofiComm)                                                                        = 0;
+    virtual int close(listenComm_t* listenComm)                                                                  = 0;
 
     int test(ofi_req_t* req, int* done, size_t* size);
     int _flush(ofiComm_t* ofiComm, uint64_t data, struct fid_mr* mrHandle, ofi_req_t& request);
@@ -204,7 +204,7 @@ public:
     int        register_mr(void*           data,
                            size_t          size,
                            fi_hmem_iface   fi_hmem_iface,
-                           int             device_fd,
+                           int             dmabuf_fd,
                            struct fid_mr** mHandle,
                            bool            isFlush = false);
     static int deregister_mr(struct fid_mr* mHandle);
@@ -216,7 +216,6 @@ protected:
     int         process_first_recv_completion(ofi_req_t* req);
 
 protected:
-    static fi_info*                     get_flush_provider();
     static FiObject<struct fid_fabric*> create_fabric(const struct fi_info* provider);
     static FiObject<struct fid_domain*> create_domain(struct fi_info* provider, struct fid_fabric* fabric);
     static FiObject<struct fid_cq*>     create_cq(struct fid_domain* domain, int cpuid, enum fi_cq_format format);

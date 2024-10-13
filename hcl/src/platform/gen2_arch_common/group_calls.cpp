@@ -1,16 +1,16 @@
 
 #include "group_calls.h"
 
-#include <algorithm>                            // for max, none_of
+#include <algorithm>  // for max, none_of
 #include <unordered_map>
 #include <ostream>  // for operator<<, ostream
 
-#include "hcl_api_types.h"                      // for HCL_Rank
-#include "hcl_api_entry.h"                      // for SendRecvApiEntry
-#include "hcl_utils.h"                          // for VERIFY
-#include "platform/gen2_arch_common/types.h"    // for GEN2ARCH_HLS_BOX_SIZE
-#include "hcl_log_manager.h"                    // for LOG_*
-#include "platform/gen2_arch_common/collective_utils.h"  // for getNextBox, getPrevBox
+#include "hcl_api_types.h"                                   // for HCL_Rank
+#include "hcl_api_entry.h"                                   // for SendRecvApiEntry
+#include "hcl_utils.h"                                       // for VERIFY
+#include "platform/gen2_arch_common/types.h"                 // for GEN2ARCH_HLS_BOX_SIZE
+#include "hcl_log_manager.h"                                 // for LOG_*
+#include "platform/gen2_arch_common/collective_utils.h"      // for getNextBox, getPrevBox
 #include "platform/gen2_arch_common/send_recv_aggregator.h"  // for SendRecvEntry
 
 using namespace hcl;

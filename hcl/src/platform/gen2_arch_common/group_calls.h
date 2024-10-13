@@ -1,13 +1,13 @@
 #pragma once
 
-#include <cstdint>                                  // for uint32_t
-#include <map>                                      // for map
-#include <vector>                                   // for vector
-#include <iosfwd>                                   // for ostream
+#include <cstdint>  // for uint32_t
+#include <map>      // for map
+#include <vector>   // for vector
+#include <iosfwd>   // for ostream
 
-#include "infra/scal/gen2_arch_common/scal_names.h" // for SchedulersIndex
+#include "infra/scal/gen2_arch_common/scal_names.h"          // for SchedulersIndex
 #include "platform/gen2_arch_common/send_recv_aggregator.h"  // for SendRecvEntry
-#include "hcl_api_types.h"                          // for HCL_Rank
+#include "hcl_api_types.h"                                   // for HCL_Rank
 
 struct SendRecvApiEntry;
 
@@ -27,7 +27,7 @@ public:
 
     const GroupCallsAggregation& getGroupCalls() const { return m_groupCalls; };
 
-    SendRecvVector createScaleoutIterationEntries(const unsigned iter) const;
+    SendRecvVector        createScaleoutIterationEntries(const unsigned iter) const;
     const SendRecvVector& buildIterationsLayout(
         const bool     isSend,
         const HCL_Rank currRank,

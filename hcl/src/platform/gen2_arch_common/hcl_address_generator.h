@@ -46,9 +46,8 @@ public:
                                       bool         reductionSignalToCg,
                                       uint32_t     dmaType,
                                       uint64_t     offset,
-                                      bool         isReproReduction,
+                                      bool         isReduction,
                                       bool         useSibo,
-                                      bool         isRRLast,
                                       bool         isForScaleOut,
                                       bool         isReductionStream = false,
                                       bool         isGDRMemcpy       = false);
@@ -60,21 +59,18 @@ public:
                                       uint32_t     dmaType,
                                       uint64_t     offset,
                                       bool         reductionIsFirstBoxMemcpy,
-                                      bool         isReproReduction  = false,
+                                      bool         isReduction       = false,
                                       bool         useSibo           = false,
-                                      bool         isRRLast          = false,
                                       bool         isForScaleout     = false,
                                       bool         isReductionStream = false,
                                       bool         isGDRMemcpy       = false);
 
-    uint64_t generateReproducibleIntermediateAddress(CommonState& commonState,
-                                                     bool         isForScaleOut,
-                                                     bool         useGDRPool,
-                                                     unsigned     bufferOffset);
+    uint64_t
+    generateIntermediateAddress(CommonState& commonState, bool isForScaleOut, bool useGDRPool, unsigned bufferOffset);
 
     uint64_t generateIntermediateAddress(CommonState& commonState, e_devicePoolID poolIdx, unsigned bufferOffset);
 
-    virtual uint64_t recalcAddressForDisragardRank(HCL_CollectiveOp currentOp, uint64_t address, uint64_t offset) = 0;
+    virtual uint64_t recalcAddressForDisregardRank(HCL_CollectiveOp currentOp, uint64_t address, uint64_t offset) = 0;
 
 private:
     HclCommandsGen2Arch& m_commands;

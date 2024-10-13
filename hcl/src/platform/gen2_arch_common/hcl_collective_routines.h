@@ -13,14 +13,16 @@
 #include "platform/gen2_arch_common/hcl_address_generator.h"  // for HclAddressGenerator
 #include "llvm/small_vector.h"                                // for SmallVector
 #include "hcl_types.h"
-#include "platform/gen2_arch_common/types.h"                  // for GEN2ARCH_HLS_BOX_SIZE
-#include "intermediate_buffer_container.h"                    // for IntermediateBuffersAmount
-#include "platform/gen2_arch_common/signals/types.h"          // for WaitEvent
-#include "platform/gen2_arch_common/wqe_tracker.h"            // for WqeWraparoundBits
+#include "platform/gen2_arch_common/types.h"          // for GEN2ARCH_HLS_BOX_SIZE
+#include "intermediate_buffer_container.h"            // for IntermediateBuffersAmount
+#include "platform/gen2_arch_common/signals/types.h"  // for WaitEvent
+#include "platform/gen2_arch_common/wqe_tracker.h"    // for WqeWraparoundBits
 #include "platform/gen2_arch_common/collective_states.h"
 #include "platform/gen2_arch_common/commands/hcl_commands.h"
 #include "platform/gen2_arch_common/hcl_device_controller.h"
 #include "platform/gen2_arch_common/hcl_mem_handler.h"
+#include "platform/gen2_arch_common/server_connectivity.h"  // for Gen2ArchServerConnectivity
+#include "platform/gen2_arch_common/active_stream_manager.h"
 
 #include "buffer_allocation_manager.h"
 
@@ -39,7 +41,7 @@ namespace hcl
 class Gen2ArchScalManager;
 class ScalStream;
 class ScalStreamBase;
-}
+}  // namespace hcl
 
 class CommonState;
 class NonCollectiveState;
@@ -55,6 +57,9 @@ class HclCollectiveRoutinesGen2Arch : public IHclCollectiveRoutines
 public:
     HclCollectiveRoutinesGen2Arch(HclDeviceGen2Arch* device, int streamId, WqeTracker* wqeTracker);
     ~HclCollectiveRoutinesGen2Arch();
+
+    void barrierArmSchedulers(unsigned requiredCredits, HCL_CollectiveOp currentOp);
+    void configureExternalSoForCompletion(unsigned numSignals);
 
     void                 onCommInit(const HCL_Comm commId);
     virtual hcclResult_t hclCollectiveCall(HclCollectiveParams& params) override;
@@ -97,10 +102,10 @@ public:
     uint64_t           getCurrentTargetValue() { return m_longSo.targetValue; }
     int                getArchStream() { return m_streamId; }
 
-    void     setGroupContext(const bool value);
-    bool     getGroupContext() const { return m_groupContext; }
+    void setGroupContext(const bool value);
+    bool getGroupContext() const { return m_groupContext; }
 
-    WqeWraparoundBits getWraparoundBits(HCL_Comm commId, unsigned rank, QpType qpType);
+    WqeWraparoundBits    getWraparoundBits(HCL_Comm commId, unsigned rank, QpType qpType);
     DeviceBufferManager& getIntermediateBufferManager() { return m_intermediateBufferManager; }
     HclDeviceGen2Arch*   getDevice() { return m_device; }
     uint64_t             getGroupMaxTargetValue() const { return m_groupMaxTargetValue; }
@@ -115,15 +120,17 @@ protected:
                                 unsigned       requiredCredits,
                                 hcclDataType_t dataType);
 
-    uint64_t     getBufferClearSize(SliceState& sendSliceState, uint64_t scaleOutRecvCount,
-                                    uint64_t sizeInBytes, e_devicePoolID bufferId);
+    uint64_t getBufferClearSize(SliceState&    sendSliceState,
+                                uint64_t       scaleOutRecvCount,
+                                uint64_t       sizeInBytes,
+                                e_devicePoolID bufferId);
 
     void createScaleUpSendProgs(SliceState&      sliceState,
                                 unsigned         sliceIter,
                                 BoxNumInfo&      boxNumInfo,
                                 unsigned         requiredCredits,
                                 HCL_CollectiveOp currentOp,
-                                unsigned         numSignals = 0);
+                                unsigned         numSignals);
 
     void createScaleUpRecvProgs(SliceState&      sliceState,
                                 unsigned         sliceIter,
@@ -213,13 +220,19 @@ protected:
                                                  const uint32_t numberOfSendBuckets,
                                                  const uint32_t numberOfRecvBuckets,
                                                  const uint32_t numberOfSends,
-                                                 const uint32_t numberOfRecvs) = 0;
+                                                 const uint32_t numberOfRecvs,
+                                                 const HCL_Comm comm) = 0;
 
-    virtual unsigned countScaleOutSignalsSendRecv(const uint32_t numberOfSends,
-                                                  const uint32_t numberOfRecvs,
-                                                  unsigned       spotlightType = DEFAULT_SPOTLIGHT) = 0;
+    virtual unsigned
+    countScaleOutSignalsSendRecv(const uint32_t numberOfSends, const uint32_t numberOfRecvs, const HCL_Comm comm) = 0;
 
     void syncWithLtuIfNeeded(SliceState& sliceState, hcl::ScalStream& scalStream);
+
+    virtual void memsetIMBsIfNeeded(SliceState&      sendSliceState,
+                                    SliceState&      recvSliceState,
+                                    unsigned int     sizeInBytes,
+                                    hcclDataType_t   dataType,
+                                    hcl::ScalStream* garbageStream) = 0;
 
     HclDeviceGen2Arch*    m_device;
     int                   m_streamId = 0;
@@ -234,19 +247,21 @@ protected:
     DeviceBufferManager&    m_intermediateBufferManager;
     Gen2ArchScalUtils*      m_utils = NULL;
 
-    HclCommandsGen2Arch& m_commands;
+    HclCommandsGen2Arch&                             m_commands;
     std::unique_ptr<HclCollectiveMemHandlerGen2Arch> m_memHandler;
 
-    ScaleoutProvider* m_scaleoutProvider;
+    ScaleoutProvider*           m_scaleoutProvider;
+    ActiveStreamManagerGen2Arch m_activeStreamManager;
 
     WqeTracker* m_wqeTracker = nullptr;
 
-    SignalsManager*                    m_signalsManager = nullptr;
-    std::unique_ptr<DependencyChecker> m_dependencyChecker;
+    SignalsManager*                      m_signalsManager = nullptr;
+    std::unique_ptr<DependencyChecker>   m_dependencyChecker;
     std::unique_ptr<HclAddressGenerator> m_addressGenerator = nullptr;
 
-    bool                     m_groupContext            = false;
-    bool                     m_groupContextStrongOrder = false;
-    uint64_t                 m_groupMaxTargetValue     = 0;
-    std::vector<e_devicePoolID> m_memset_buffers          = {SCALEOUT_RR_POOL, REDUCE_RR_POOL};
+    bool                              m_groupContext            = false;
+    bool                              m_groupContextStrongOrder = false;
+    uint64_t                          m_groupMaxTargetValue     = 0;
+    std::vector<e_devicePoolID>       m_memset_buffers          = {SCALEOUT_POOL, REDUCE_POOL};
+    const Gen2ArchServerConnectivity& m_serverConnectivity;
 };

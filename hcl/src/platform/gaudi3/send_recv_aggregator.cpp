@@ -7,29 +7,32 @@
 #include <utility>        // for tuple_size
 #include <set>            // for set
 
-#include "hcl_utils.h"                                       // for LOG_HCL_TRACE
-#include "hcl_log_manager.h"                                 // for LOG_*
-#include "platform/gaudi3/commands/hcl_commands.h"           // for HclCommandsGaudi4
-#include "platform/gen2_arch_common/send_recv_aggregator.h"  // for SendRecvEntry
-#include "platform/gaudi3/port_mapping.h"                    // for Gaudi3DevicePortMapping
-#include "hcl_types.h"                                       // for HCL_HwModuleId
+#include "hcl_api_types.h"                                    // for HCL_Comm
+#include "hcl_utils.h"                                        // for LOG_HCL_TRACE
+#include "hcl_log_manager.h"                                  // for LOG_*
+#include "platform/gaudi3/commands/hcl_commands.h"            // for HclCommandsGaudi4
+#include "platform/gen2_arch_common/send_recv_aggregator.h"   // for SendRecvEntry
+#include "hcl_types.h"                                        // for HCL_HwModuleId
+#include "platform/gaudi3/gaudi3_base_server_connectivity.h"  // for Gaudi3BaseServerConnectivity
 
 namespace hcl
 {
 class ScalStreamBase;
 }
 
-SendRecvAggregatorGaudi3::SendRecvAggregatorGaudi3(const bool                     isSend,
-                                                   const uint32_t                 selfModuleId,
-                                                   const Gaudi3DevicePortMapping& portMapping,
-                                                   HclCommandsGaudi3&             commands)
+SendRecvAggregatorGaudi3::SendRecvAggregatorGaudi3(const bool                          isSend,
+                                                   const uint32_t                      selfModuleId,
+                                                   const Gaudi3BaseServerConnectivity& serverConnectivity,
+                                                   const DevicesSet&                   hwModules,
+                                                   HclCommandsGaudi3&                  commands)
 : SendRecvAggregatorBase(),
   m_isSend(isSend),
   m_selfModuleId(selfModuleId),
-  m_portMapping(portMapping),
+  m_serverConnectivity(serverConnectivity),
+  m_hwModules(hwModules),
   m_commands(commands),
-  m_nicPassthroughHandlerSet0(isSend, true /*isSet0*/, portMapping, commands),
-  m_nicPassthroughHandlerSet1(isSend, false /*isSet0*/, portMapping, commands)
+  m_nicPassthroughHandlerSet0(isSend, true /*isSet0*/, serverConnectivity, commands),
+  m_nicPassthroughHandlerSet1(isSend, false /*isSet0*/, serverConnectivity, commands)
 {
 }
 
@@ -54,17 +57,20 @@ void SendRecvAggregatorGaudi3::addSendRecvArray(const SendRecvArray& arr)
 }
 
 void SendRecvAggregatorGaudi3::flush(hcl::ScalStreamBase& scalStream,
+                                     const HCL_Comm       comm,
                                      const uint8_t        dcore,
                                      const uint8_t        ssm,
                                      const uint16_t       sobId,
                                      const uint32_t       qpn)
 {
-    LOG_HCL_TRACE(HCL,
-                  "Flush for send/recv aggregator triggered for {} arrays, m_selfModuleId={}, m_isSend={}, qpn={}",
-                  m_arrays.size(),
-                  m_selfModuleId,
-                  m_isSend,
-                  qpn);
+    LOG_HCL_TRACE(
+        HCL,
+        "Flush for send/recv aggregator triggered for comm={}, {} arrays, m_selfModuleId={}, m_isSend={}, qpn={}",
+        comm,
+        m_arrays.size(),
+        m_selfModuleId,
+        m_isSend,
+        qpn);
 
     uint16_t set0DupMask = 0;
     uint16_t set1DupMask = 0;
@@ -75,24 +81,23 @@ void SendRecvAggregatorGaudi3::flush(hcl::ScalStreamBase& scalStream,
     uint32_t set0PortEnableMask = 0;
     uint32_t set1PortEnableMask = 0;
 
-    const std::set<HCL_HwModuleId>& hwModules = m_portMapping.getHal().getHwModules();
-    LOG_HCL_TRACE(HCL, "hwModules=[ {} ]", hwModules);
+    LOG_HCL_TRACE(HCL, "m_hwModules=[ {} ]", m_hwModules);
 
     for (unsigned i = 0; i < m_arrays.size(); i++)
     {
         const AggregatedEntryArray& arr = m_arrays[i];
 
-        for (const HCL_HwModuleId deviceId : hwModules)
+        for (const HCL_HwModuleId deviceId : m_hwModules)
         {
             if (deviceId == m_selfModuleId) continue;
 
-            VERIFY(m_portMapping.getDevicesSet(true).count(deviceId) ||
-                       m_portMapping.getDevicesSet(false).count(deviceId),
+            VERIFY(m_serverConnectivity.getDevicesSet(true, comm).count(deviceId) ||
+                       m_serverConnectivity.getDevicesSet(false, comm).count(deviceId),
                    "Device {} not in any nic macro set!",
                    deviceId);
 
             // a device can only belong to first or second set, not both
-            const bool             isSet0 = (m_portMapping.getDevicesSet(true).count(deviceId) == 1);
+            const bool             isSet0 = (m_serverConnectivity.getDevicesSet(true, comm).count(deviceId) == 1);
             const AggregatedEntry& entry  = arr[deviceId];
             if (entry.data.isValid)
             {
@@ -108,15 +113,15 @@ void SendRecvAggregatorGaudi3::flush(hcl::ScalStreamBase& scalStream,
                 {
                     VERIFY(devicesInSet1.count(deviceId) == 0, "device {} is in set1!", deviceId);
                     devicesInSet0.insert(deviceId);
-                    set0DupMask |= m_portMapping.getNicsMacrosDupMask(deviceId);
-                    set0PortEnableMask |= m_portMapping.getRemoteDevicesPortMasks()[deviceId];
+                    set0DupMask |= m_serverConnectivity.getNicsMacrosDupMask(deviceId, comm);
+                    set0PortEnableMask |= m_serverConnectivity.getRemoteDevicesPortMasks(comm)[deviceId];
                 }
                 else
                 {
                     VERIFY(devicesInSet0.count(deviceId) == 0, "device {} is in set0", deviceId);
                     devicesInSet1.insert(deviceId);
-                    set1DupMask |= m_portMapping.getNicsMacrosDupMask(deviceId);
-                    set1PortEnableMask |= m_portMapping.getRemoteDevicesPortMasks()[deviceId];
+                    set1DupMask |= m_serverConnectivity.getNicsMacrosDupMask(deviceId, comm);
+                    set1PortEnableMask |= m_serverConnectivity.getRemoteDevicesPortMasks(comm)[deviceId];
                 }
             }
         }
@@ -151,9 +156,9 @@ void SendRecvAggregatorGaudi3::flush(hcl::ScalStreamBase& scalStream,
         set1PortEnableMask = 0;
     }
 
-    const uint16_t     bitmask        = (1 << m_portMapping.getScaleupNicsMacrosCount()) - 1;
-    uint16_t           set0NopDupMask = set0DupMask ^ bitmask;
-    uint16_t           set1NopDupMask = set1DupMask ^ bitmask;
+    const uint16_t bitmask        = (1 << m_serverConnectivity.getScaleupNicsMacrosCount(comm)) - 1;
+    uint16_t       set0NopDupMask = set0DupMask ^ bitmask;
+    uint16_t       set1NopDupMask = set1DupMask ^ bitmask;
 
     // Check if its worth the cost to use dup mask with each set.
     bool useAggSet0 = true;
@@ -228,7 +233,7 @@ void SendRecvAggregatorGaudi3::flush(hcl::ScalStreamBase& scalStream,
                         isSet0 ? set0PortEnableMask
                                : set1PortEnableMask,  // merged port mask for all devices in the set
                         entry.data.dataType,
-                        m_portMapping.getHal().getMaxNumScaleUpPortsPerConnection(),
+                        m_serverConnectivity.getMaxNumScaleUpPortsPerConnection(comm),
                         buffer[deviceId]);
                     LOG_HCL_TRACE(HCL,
                                   "Added to aggregation buffer.size()={} DWORDS for deviceId={}",
@@ -247,9 +252,9 @@ void SendRecvAggregatorGaudi3::flush(hcl::ScalStreamBase& scalStream,
                         dcore,
                         ssm,
                         sobId,
-                        m_portMapping.getRemoteDevicesPortMasks()[deviceId],
+                        m_serverConnectivity.getRemoteDevicesPortMasks(comm)[deviceId],
                         entry.data.dataType,
-                        m_portMapping.getHal().getMaxNumScaleUpPortsPerConnection());
+                        m_serverConnectivity.getMaxNumScaleUpPortsPerConnection(comm));
                 }
             }
         }
@@ -257,12 +262,12 @@ void SendRecvAggregatorGaudi3::flush(hcl::ScalStreamBase& scalStream,
         // adds new items to records ("new") if aggregating
         if (useAggSet0)
         {
-            savings += m_nicPassthroughHandlerSet0.addDeviceBuffer(bufferPair0, devicesInSet0);
+            savings += m_nicPassthroughHandlerSet0.addDeviceBuffer(bufferPair0, devicesInSet0, comm);
         }
 
         if (useAggSet1)
         {
-            savings += m_nicPassthroughHandlerSet1.addDeviceBuffer(bufferPair1, devicesInSet1);
+            savings += m_nicPassthroughHandlerSet1.addDeviceBuffer(bufferPair1, devicesInSet1, comm);
         }
     }
 

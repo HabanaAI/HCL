@@ -7,7 +7,7 @@
 #include "platform/gen2_arch_common/types.h"
 #include "hccl_types.h"  // for hcclRedOp_t
 
-#define HLS2_BOX_SIZE   8
+#define HLS2_BOX_SIZE 8
 
 enum eDWords
 {
@@ -53,16 +53,16 @@ union edwords_t
 {
     struct
     {
-        bool DW0            : 1; // 0 - 0
-        bool DW1            : 1; // 1 - 1
-        bool DW2            : 1; // 2 - 2
-        bool DW3            : 1; // 3 - 3
-        bool DW4            : 1; // 4 - 4
-        bool DW_COMM_QP     : 1; // 5 - 5
-        bool DW_REMOTE_RANK : 1; // 6 - 6
+        bool DW0 : 1;             // 0 - 0
+        bool DW1 : 1;             // 1 - 1
+        bool DW2 : 1;             // 2 - 2
+        bool DW3 : 1;             // 3 - 3
+        bool DW4 : 1;             // 4 - 4
+        bool DW_COMM_QP : 1;      // 5 - 5
+        bool DW_REMOTE_RANK : 1;  // 6 - 6
     };
     uint64_t raw = 0;
-    operator uint64_t() {return raw;}
+    operator uint64_t() { return raw; }
 } __attribute__((packed));
 
 union g2_nic_engine_reduction_opcode_t  // sizeof() == 16 bits

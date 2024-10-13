@@ -20,25 +20,27 @@ namespace hcl
 class Hal
 {
 public:
-    virtual ~Hal() = default;
+    Hal()                      = default;
+    virtual ~Hal()             = default;
+    Hal(const Hal&)            = delete;
+    Hal& operator=(const Hal&) = delete;
 
     // getters
     virtual uint64_t getMaxStreams() const   = 0;
     virtual uint64_t getMaxQPsPerNic() const = 0;
     virtual uint64_t getMaxNics() const      = 0;
 
-    virtual uint32_t getMaxEDMAs() const              = 0;
+    virtual uint32_t getMaxEDMAs() const = 0;
 
-    virtual uint32_t getDefaultBoxSize() const       = 0;
-    virtual uint32_t getDefaultScaleupGroupSize() const       = 0;
+    virtual uint32_t getDefaultBoxSize() const          = 0;
+    virtual uint32_t getDefaultScaleupGroupSize() const = 0;
 
-    virtual uint64_t getFlushPCIeReg() const            = 0;
+    virtual uint64_t getFlushPCIeReg() const = 0;
 
     virtual uint32_t getMaxQpPerInternalNic() const = 0;
     virtual uint32_t getMaxQpPerExternalNic() const = 0;
 
-    virtual const std::set<HCL_HwModuleId>& getHwModules() const                       = 0;
-    virtual unsigned                        getMaxNumScaleUpPortsPerConnection() const = 0;
+    virtual const DevicesSet& getHwModules() const = 0;
 };
 
 using HalPtr = std::shared_ptr<Hal>;

@@ -35,7 +35,7 @@ CyclicBufferManager::CyclicBufferManager(ScalStreamBase*       scalStream,
   m_streamInfo(streamInfo),
   m_divAlignment(bufferSize / m_numberOfDivisions),
   m_divIndex(m_numberOfDivisions - 1),
-  m_targtValueOfBufferChunk(),
+  m_targetValueOfBufferChunk(),
   m_streamName(streamName),
   m_streamHandle(streamHandle),
   m_scalWrapper(scalWrapper),
@@ -47,8 +47,8 @@ CyclicBufferManager::CyclicBufferManager(ScalStreamBase*       scalStream,
 
     for (unsigned i = 0; i < m_numberOfDivisions; ++i)
     {
-        m_targtValueOfBufferChunk[i] = 0;
-        m_targtValueOfBufferSet[i]   = true;
+        m_targetValueOfBufferChunk[i] = 0;
+        m_targetValueOfBufferSet[i]   = true;
     }
 }
 
@@ -101,16 +101,16 @@ void CyclicBufferManager::advanceAlignment(size_t size)
         moveToNextDivision();
     }
 
-    m_targtValueOfBufferChunk[m_divIndex] = m_targetValue;
+    m_targetValueOfBufferChunk[m_divIndex] = m_targetValue;
 
     uint64_t prevDivIndex = m_divIndex - 1;
     if (m_divIndex == 0) prevDivIndex = m_numberOfDivisions - 1;
 
     // workaround to ci/pi updating FW delay
-    if (((getPi() - m_divAlignment * m_divIndex) >= 512) && m_targtValueOfBufferSet[prevDivIndex])
+    if (((getPi() - m_divAlignment * m_divIndex) >= 512) && m_targetValueOfBufferSet[prevDivIndex])
     {
-        m_targtValueOfBufferChunk[prevDivIndex] = m_targetValue;
-        m_targtValueOfBufferSet[prevDivIndex]   = false;
+        m_targetValueOfBufferChunk[prevDivIndex] = m_targetValue;
+        m_targetValueOfBufferSet[prevDivIndex]   = false;
     }
 
     m_sizeLeftInAlignment = (1 << commandAlignmentShift);
@@ -118,7 +118,7 @@ void CyclicBufferManager::advanceAlignment(size_t size)
 
 void* CyclicBufferManager::getNextPtr(size_t size)
 {
-    constexpr int dummyBuffSize = 256; // big enough for any packet
+    constexpr int  dummyBuffSize = 256;  // big enough for any packet
     static uint8_t dummyBuff[dummyBuffSize];
 
     if (m_disableCcb)
@@ -234,20 +234,20 @@ So this code raises a flag for the hpt when we have filled half of the ccb.
 ccbFillRoundForCurrStream, indicates how many times we have filled half of the ccb for a specific stream.
 We assume that there is 1 stream that gets filled faster than the rest.
 This stream will always have a higher or equal round as the others.
-Using the round machanism we allow only this stream to change the flag since it will always fill up first.
+Using the round mechanism we allow only this stream to change the flag since it will always fill up first.
 */
 void CyclicBufferManager::updateCcbHalfFullMechanism()
 {
     // check if we are writing to the middle or last division
     if (m_divIndex == (m_numberOfDivisions - 1) || m_divIndex == ((m_numberOfDivisions >> 1) - 1))
     {
-        // claculate this streams round
+        // calculate this streams round
         const int ccbFillRoundForCurrStream = (int)(m_pi >> (m_logOfBufferSize - 1));
 
         // if the round is greater than the last round that raised the flag
         if (CyclicBufferManager::s_ccbFillRoundForCurrStream < ccbFillRoundForCurrStream)
         {
-            // update the round and rais the flag
+            // update the round and raise the flag
             CyclicBufferManager::s_ccbFillRoundForCurrStream   = ccbFillRoundForCurrStream;
             CyclicBufferManager::s_ccbIsFullForDeviceBenchMark = true;
         }
@@ -266,15 +266,15 @@ void CyclicBufferManager::moveToNextDivision()
         updateCcbHalfFullMechanism();
     }
 
-    m_cg.waitOnValue(m_targtValueOfBufferChunk[m_divIndex]);  // this call blocking on host
-    m_targtValueOfBufferChunk[m_divIndex] = 0;
-    m_targtValueOfBufferSet[prevDivIndex] = true;
+    m_cg.waitOnValue(m_targetValueOfBufferChunk[m_divIndex]);  // this call blocking on host
+    m_targetValueOfBufferChunk[m_divIndex] = 0;
+    m_targetValueOfBufferSet[prevDivIndex] = true;
 
     LOG_HCL_TRACE(HCL_SCAL,
                   "On microStream {} Moved to next division {} division value {}",
                   m_streamName,
                   m_divIndex,
-                  m_targtValueOfBufferChunk[m_divIndex]);
+                  m_targetValueOfBufferChunk[m_divIndex]);
 }
 
 void CyclicBufferManager::dfaLog(hl_logger::LoggerSPtr synDevFailLog)

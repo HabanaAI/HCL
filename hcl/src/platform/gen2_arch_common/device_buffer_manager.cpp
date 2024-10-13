@@ -7,14 +7,14 @@
 #include "hcl_utils.h"        // for VERIFY
 #include "hcl_log_manager.h"  // for LOG_*
 #include "hcl_math_utils.h"
-#include "infra/scal/gen2_arch_common/scal_manager.h"                 // for getHBMBaseVAAddress
-#include "libfabric/mr_mapping.h"                                     // for MRMapping
+#include "infra/scal/gen2_arch_common/scal_manager.h"  // for getHBMBaseVAAddress
+#include "libfabric/mr_mapping.h"                      // for MRMapping
 #include "platform/gen2_arch_common/buffer_manager_base.h"
 #include "platform/gen2_arch_common/intermediate_buffer_container.h"  // for IntermediateBufferContainer
 
-DeviceBufferManager::DeviceBufferManager(std::array<BufferParams, MAX_NUM_POOL_SIZES> m_bufferParams,
+DeviceBufferManager::DeviceBufferManager(std::array<BufferParams, MAX_NUM_POOL_SIZES> bufferParams,
                                          const std::vector<unsigned>&                 sizes)
-: BufferManagerBase(m_bufferParams, sizes)
+: BufferManagerBase(bufferParams, sizes)
 {
     unsigned poolIndex = 0;
     for (size_t index = 0; index < m_bufferParams.size(); index++)
@@ -29,18 +29,25 @@ DeviceBufferManager::DeviceBufferManager(std::array<BufferParams, MAX_NUM_POOL_S
             poolIndex++;
         }
     }
+    VERIFY(GCFG_HCL_SCALEOUT_BUFFER_FACTOR.value() <= MAX_SCALEOUT_FACTOR,
+           "HCL_SCALEOUT_BUFFER_FACTOR({}) is expected to be <= {}",
+           GCFG_HCL_SCALEOUT_BUFFER_FACTOR.value(),
+           MAX_SCALEOUT_FACTOR);
+    VERIFY(GCFG_HCL_SCALEOUT_BUFFER_FACTOR.value() > 1,
+           "HCL_SCALEOUT_BUFFER_FACTOR({}) is expected to be > 1",
+           GCFG_HCL_SCALEOUT_BUFFER_FACTOR.value());
 }
 
-unsigned DeviceBufferManager::getFactor(const e_devicePoolID poolIdx) const
+const unsigned DeviceBufferManager::getFactor(const e_devicePoolID poolIdx)
 {
-    unsigned factor = DEFAULT_FACTOR;
-    if (poolIdx == SCALEUP_RR_AND_ALL2ALL_POOL)
+    unsigned factor = s_defaultFactor;
+    if (poolIdx == SCALEUP_AND_ALL2ALL_POOL)
     {
-        factor = RR_SCALEUP_FACTOR;
+        factor = s_scaleupFactor;
     }
-    else if (poolIdx == SCALEOUT_RR_POOL)
+    else if (poolIdx == SCALEOUT_POOL)
     {
-        factor = RR_SCALEOUT_FACTOR;
+        factor = GCFG_HCL_SCALEOUT_BUFFER_FACTOR.value();
     }
 
     return factor;
@@ -48,8 +55,8 @@ unsigned DeviceBufferManager::getFactor(const e_devicePoolID poolIdx) const
 
 uint32_t DeviceBufferManager::getSliceId(e_devicePoolID poolIdx, uint32_t streamId)
 {
-    unsigned currentCredit   = getCurrentBufferIdx(poolIdx);
-    unsigned poolSizeIndex   = getPoolSizeIndex(poolIdx);
+    unsigned currentCredit = getCurrentBufferIdx(poolIdx);
+    unsigned poolSizeIndex = getPoolSizeIndex(poolIdx);
 
     uint32_t sliceId = currentCredit * getFactor(poolIdx) + m_poolBases[poolIdx];
     sliceId +=
@@ -127,7 +134,7 @@ uint64_t DeviceBufferManager::allocNextBuffer(uint64_t targetValue, const e_devi
 
 unsigned DeviceBufferManager::getPoolSizeIndex(const e_devicePoolID poolIdx)
 {
-    if (poolIdx == SCALEOUT_RR_POOL)
+    if (poolIdx == SCALEOUT_POOL)
     {
         return 0;
     }

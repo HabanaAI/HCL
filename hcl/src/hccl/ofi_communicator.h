@@ -59,7 +59,7 @@ public:
     ofi_communicator&& operator=(ofi_communicator&&) = delete;
 
 private:
-    int      my_rank_;
+    HCL_Rank my_rank_;
     uint16_t m_qpSetCount;
     using QpSet = std::array<allConnectionComm_t, MAX_HNIC_CONNECTIONS>;
     std::vector<std::array<QpSet, MAX_HNIC_CONNECTION_SETS>> m_peerRankToConnectionInfo;

@@ -17,7 +17,7 @@ namespace hcl
 {
 class ScalStream;
 class IntermediateBufferContainer;
-}
+}  // namespace hcl
 
 class HclCollectiveMemHandlerGen2Arch
 {
@@ -40,10 +40,9 @@ public:
                                hcl::ScalStream& scalStream,
                                uint32_t         dmaType,
                                bool             reductionSignalToCg,
-                               uint32_t         indexOfReproBuffer,
+                               uint32_t         indexOfSubBuffer,
                                bool             useSibo,
                                bool             isForScaleout,
-                               bool             isRRLast,
                                e_devicePoolID   poolIdx,
                                bool             isReductionStream = false);
 
@@ -51,8 +50,7 @@ public:
                                    uint32_t     dmaType,
                                    BoxNumInfo&  boxNumInfo,
                                    bool         useSibo,
-                                   bool         isForScaleout,
-                                   bool         isRRLast);
+                                   bool         isForScaleout);
 
     void createMemCopyCommandsNonCollective(hcl::ScalStream& scalStream,
                                             HCL_Rank         myRank,
@@ -78,13 +76,13 @@ public:
                             uint8_t                           streamCtxtID,
                             hcclDataType_t                    dataType) {};
 
-    virtual void generateBaseAddressOrRRIdx(SliceState&       sliceState,
-                                            unsigned int&     sliceIter,
-                                            BoxNumInfo&       boxNumInfo,
-                                            HCL_CollectiveOp& currentOp,
-                                            uint64_t&         offset,
-                                            uint64_t&         baseAddress,
-                                            uint32_t&         rrIndex) = 0;
+    virtual void generateBaseAddressOrSubBuffIdx(SliceState&       sliceState,
+                                                 unsigned int&     sliceIter,
+                                                 BoxNumInfo&       boxNumInfo,
+                                                 HCL_CollectiveOp& currentOp,
+                                                 uint64_t&         offset,
+                                                 uint64_t&         baseAddress,
+                                                 uint32_t&         subBuffIndex) = 0;
 
 protected:
     int                   m_archStreamId;

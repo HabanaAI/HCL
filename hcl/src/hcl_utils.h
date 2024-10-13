@@ -44,12 +44,12 @@
  * @brief Aligns the given base value up to the nearest multiple of the given size
  *
  */
-#define _ALIGN_UP(base, size) (((base) + ((size)-1)) & (~((size)-1)))
+#define _ALIGN_UP(base, size) (((base) + ((size) - 1)) & (~((size) - 1)))
 /**
  * @brief Aligns the given base value down to the nearest multiple of the given size
  *
  */
-#define _ALIGN_DOWN(base, size) ((base) & (~((size)-1)))
+#define _ALIGN_DOWN(base, size) ((base) & (~((size) - 1)))
 /**
  * LOG_HCL_COMMON will invoke typeid(*this).name() and demangle the returned value (i.e. "7MyClass" -> "MyClass").
  * However, abi::__cxa_demangle (a libstdc++ function) is a bit costly (does a malloc, executes strcmp(), etc). In
@@ -146,11 +146,12 @@ private:
     int m_logTypeIndex;
 };
 
-#define LOG_CONTEXT_INIT(log_type)                                                                                     \
-    LogContext _log_context                                                                                            \
-    {                                                                                                                  \
-        HLLOG_ENUM_TYPE_NAME::log_type                                                                                 \
-    }
+// One level of macro indirection is required in order to resolve __COUNTER__,
+// and get varname1 instead of varname__COUNTER__.
+#define CONCAT(a, b)               CONCAT_INNER(a, b)
+#define CONCAT_INNER(a, b)         a##b
+#define UNIQUE_NAME(base)          CONCAT(base, __COUNTER__)
+#define LOG_CONTEXT_INIT(log_type) LogContext UNIQUE_NAME(_log_context) {HLLOG_ENUM_TYPE_NAME::log_type};
 #define LOG_HCL_CONTEXT_TRACE(log_type, msg, ...)                                                                      \
     _HCL_LOG_(TRACE, log_type, msg, ##__VA_ARGS__);                                                                    \
     LOG_CONTEXT_INIT(log_type)
@@ -391,10 +392,10 @@ private:
     {                                                                                                                  \
         if (unlikely(!(condition)))                                                                                    \
         {                                                                                                              \
-            std::stringstream ss;                                                                                      \
-            ss << __FILE__ << "::" << __LINE__ << "(" << __func__ << "): The condition [ " << #condition               \
-               << " ] failed. " << msg << " ";                                                                         \
-            std::string error = ss.str();                                                                              \
+            std::stringstream _ss;                                                                                     \
+            _ss << __FILE__ << "::" << __LINE__ << "(" << __func__ << "): The condition [ " << #condition              \
+                << " ] failed. " << msg << " ";                                                                        \
+            std::string error = _ss.str();                                                                             \
             std::cerr << error << std::endl;                                                                           \
             LOG_CRITICAL(HCL, "{}: The condition [ {} ] failed. {}", __func__, #condition, msg);                       \
             if (GCFG_HCL_ALIVE_ON_FAILURE.value())                                                                     \
@@ -432,7 +433,7 @@ private:
  * because we would like to allow the user to call VERIFY(false) without any arguments, and also allow any number of
  * other arguments.
  * If you need more than 10 format arguments - just add another VERIFY_n() call to the definition of VERIFY(), and
- * add another argument to VERIFY_X (one of the capital alphabetics).
+ * add another argument to VERIFY_X (one of the capital alphabets).
  */
 #define VERIFY_X(x, A, B, C, D, E, F, G, I, J, K, L, M, FUNC, ...) FUNC
 
@@ -677,7 +678,7 @@ inline bool isFileExist(const std::string& path)
     return std::ifstream(path).good();
 }
 
-inline std::string getHLDevice(int fd)
+inline std::string getHLDevice(const int fd)
 {
     std::string path = "/proc/self/fd/" + std::to_string(fd);
     // 32 bytes is sufficient to capture "/dev/accel/accel[0-7]"

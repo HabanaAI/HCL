@@ -1,14 +1,14 @@
 #include "infra/hcl_affinity_manager.h"
 
-#include <sched.h>              // for sched_setaffinity, cpu_set_t, CPU_ZERO
-#include <cstring>              // for strerror
-#include <sys/sysinfo.h>        // for get_nprocs
-#include <unistd.h>             // for getpid
-#include <cstdint>              // for uint32_t, uint8_t
-#include <vector>               // for vector
-#include <cerrno>               // for errno
-#include "hcl_global_conf.h"    // for GCFG_USE_CPU_AFFINITY
-#include "hcl_log_manager.h"    // for LOG_*
+#include <sched.h>            // for sched_setaffinity, cpu_set_t, CPU_ZERO
+#include <cstring>            // for strerror
+#include <sys/sysinfo.h>      // for get_nprocs
+#include <unistd.h>           // for getpid
+#include <cstdint>            // for uint32_t, uint8_t
+#include <vector>             // for vector
+#include <cerrno>             // for errno
+#include "hcl_global_conf.h"  // for GCFG_USE_CPU_AFFINITY
+#include "hcl_log_manager.h"  // for LOG_*
 #include "hcl_utils.h"
 
 struct HclAffinityManager
@@ -28,7 +28,7 @@ void initializeCpuPinning(uint8_t priorityThreadsCount)
 {
     g_affinityManager.m_priorityThreadsRequired = priorityThreadsCount;
 
-    uint32_t cpuCount = get_nprocs();
+    uint32_t  cpuCount = get_nprocs();
     cpu_set_t set;
 
     // Get affinity mask of the current process
@@ -80,13 +80,11 @@ void initializeCpuPinning(uint8_t priorityThreadsCount)
     }
 }
 
-
 void HclThread::setCpuAffinity()
 {
     VERIFY(m_threadType <= eHCLNormalThread);
 
-    if (!g_affinityManager.m_shouldPinThreads)
-        return;
+    if (!g_affinityManager.m_shouldPinThreads) return;
 
     if (m_threadType != eHCLNormalThread)
     {
@@ -94,8 +92,10 @@ void HclThread::setCpuAffinity()
                "tried to create priority thread but there aren't any available!");
         uint32_t cpuId = g_affinityManager.m_priorityCpu[m_threadType];
 
-        LOG_HCL_INFO(HCL, "Setting CPU {} for priority thread {}",
-                     cpuId, std::hash<std::thread::id>{}(std::this_thread::get_id()));
+        LOG_HCL_INFO(HCL,
+                     "Setting CPU {} for priority thread {}",
+                     cpuId,
+                     std::hash<std::thread::id> {}(std::this_thread::get_id()));
         cpu_set_t set;
         CPU_ZERO(&set);
         CPU_SET(cpuId, &set);
@@ -103,9 +103,9 @@ void HclThread::setCpuAffinity()
     }
     else
     {
-        LOG_HCL_INFO(HCL, "Setting thread {} to run on remaining threads...",
-                     std::hash<std::thread::id>{}(std::this_thread::get_id()));
+        LOG_HCL_INFO(HCL,
+                     "Setting thread {} to run on remaining threads...",
+                     std::hash<std::thread::id> {}(std::this_thread::get_id()));
         sched_setaffinity(0, sizeof(g_affinityManager.m_normalCpuMask), &g_affinityManager.m_normalCpuMask);
     }
 }
-

@@ -21,10 +21,9 @@
 #define HCCL_H_
 
 // NOLINTNEXTLINE(modernize-deprecated-headers)
-#include <cstddef>              // for size_t
-#include <cstdint>              // for uint64_t
-#include "synapse_api_types.h"  // for synStreamHandle
-#include "hccl_types.h"         // for hcclResult_t, hcclComm_t, hcclDataType_t
+#include <cstddef>       // for size_t
+#include <cstdint>       // for uint64_t
+#include "hccl_types.h"  // for hcclResult_t, hcclComm_t, hcclDataType_t
 
 #define HCCL_P2P_SUPPORTED 1
 
@@ -41,7 +40,7 @@
 #define HCCL_PATCH            4
 #define HCCL_SUFFIX           ""
 #define HCCL_VERSION_CODE     2604
-#define HCCL_VERSION(X, Y, Z) ((X)*1000 + (Y)*100 + (Z))
+#define HCCL_VERSION(X, Y, Z) ((X) * 1000 + (Y) * 100 + (Z))
 
 #ifdef __cplusplus
 extern "C" {
@@ -103,6 +102,9 @@ hcclResult_t hcclCommUserRank(hcclComm_t comm, int* rank);
 /* Returns FD for HBM memory region if it was registered for gaudi-direct. */
 int hcclLookupDMABuff(uint64_t addr, uint64_t size, int* fd);
 
+/* Associate device and context with Network layer */
+hcclResult_t hcclDeviceInit(void* device, void* context);
+
 /*
  * Collective communication operations
  *
@@ -143,7 +145,7 @@ hcclResult_t hcclReduce(const void*    sendbuff,
  * root is the rank (not the Habana device) where data resides before the
  * operation is started.
  *
- * This operation is implicitely in place.
+ * This operation is implicitly in place.
  */
 hcclResult_t
 hcclBcast(void* buff, size_t count, hcclDataType_t datatype, int root, hcclComm_t comm, void* stream_handle);

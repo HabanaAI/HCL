@@ -7,7 +7,7 @@
 #include <thread>
 #include <chrono>
 #include <mutex>
-#include <cstdint>  // for int64_t, uint64_t
+#include <cstdint>            // for int64_t, uint64_t
 #include "hcl_global_conf.h"  // for GCFG...
 
 enum debugStatsLevel
@@ -159,7 +159,7 @@ private:
 
     std::string getThreadName(std::thread::id threadID);
     void        printStuckFunctionInfo(std::string& threadName, const std::string& funcName, FuncInfo& func);
-    void printPerformanceStatistic(bool normalExit = false);
+    void        printPerformanceStatistic(bool normalExit = false);
 
     std::map<std::thread::id, func_time_map*> m_workingFunc;
     std::map<std::thread::id, std::string>    m_threadNames;
@@ -170,13 +170,16 @@ private:
     bool       m_printDone = false;
     std::mutex m_printMutex;
 
-    std::string m_statisticFileName  = "hcl_stats_";  // some uniq id and .csv will be added
+    std::string m_statisticFileName = "hcl_stats_";  // some uniq id and .csv will be added
 };
 
 extern HclDebugStats g_dbgStats;
 
 #define PROFILER_CONTEXT_INIT(contextName)                                                                             \
-    profilerContext _profiler_context { contextName }
+    profilerContext _profiler_context                                                                                  \
+    {                                                                                                                  \
+        contextName                                                                                                    \
+    }
 
 extern thread_local const char* g_profilerContextName;
 class profilerContext
@@ -197,9 +200,9 @@ public:
         }
     }
 
-    profilerContext(profilerContext&)  = delete;
-    profilerContext(profilerContext&&) = delete;
-    profilerContext& operator=(profilerContext&) = delete;
+    profilerContext(profilerContext&)             = delete;
+    profilerContext(profilerContext&&)            = delete;
+    profilerContext& operator=(profilerContext&)  = delete;
     profilerContext& operator=(profilerContext&&) = delete;
 };
 

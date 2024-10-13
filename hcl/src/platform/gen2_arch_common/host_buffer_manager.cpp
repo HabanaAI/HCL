@@ -1,6 +1,6 @@
 #include "host_buffer_manager.h"
 
-#include "hcl_utils.h"  // for VERIFY
+#include "hcl_utils.h"        // for VERIFY
 #include "hcl_log_manager.h"  // for LOG_*
 
 HostBufferManager::HostBufferManager(const uint64_t               mappedBaseAddr,

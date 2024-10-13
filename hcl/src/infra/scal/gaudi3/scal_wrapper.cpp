@@ -4,7 +4,8 @@
 #include "infra/scal/gaudi3/scal_utils.h"            // for Gaudi3HclScalUtils
 #include "infra/scal/gen2_arch_common/scal_utils.h"  // for Gen2ArchScalUtils
 
-#include "gaudi3/asic_reg_structs/arc_acp_eng_regs.h" // block_arc_acp_eng
+#include "gaudi3/asic_reg_structs/arc_acp_eng_regs.h"  // block_arc_acp_eng
+#include "sched_pkts.h"                                // for g3fw
 
 namespace hcl
 {
@@ -28,7 +29,6 @@ Gaudi3ScalWrapper::~Gaudi3ScalWrapper()
 {
     if (m_utils) delete m_utils;
 }
-
 
 uint64_t Gaudi3ScalWrapper::getArcAcpEng(unsigned smIndex) const
 {
@@ -107,7 +107,7 @@ uint64_t Gaudi3ScalWrapper::getMonitorPayloadAddr(std::string name, unsigned fen
     if (rc != SCAL_SUCCESS)
     {
         throw ScalErrorException("Failed on scal_get_core_handle_by_name with device handle: " +
-        std::to_string(uint64_t(m_deviceHandle)) + " and name: " + name);
+                                 std::to_string(uint64_t(m_deviceHandle)) + " and name: " + name);
     }
 
     scal_control_core_infoV2_t coreInfo;
@@ -116,7 +116,7 @@ uint64_t Gaudi3ScalWrapper::getMonitorPayloadAddr(std::string name, unsigned fen
     if (rc != 0)
     {
         throw ScalErrorException("Failed on scal_control_core_get_info with core handle: " +
-        std::to_string(uint64_t(schedulerHandle)));
+                                 std::to_string(uint64_t(schedulerHandle)));
     }
 
     return getArcAcpEng(coreInfo.idx) + varoffsetof(gaudi3::block_arc_acp_eng, qsel_mask_counter[fenceIdx]);

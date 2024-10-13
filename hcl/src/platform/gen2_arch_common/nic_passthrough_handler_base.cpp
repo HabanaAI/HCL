@@ -3,8 +3,8 @@
 #include <cstdint>  // for uint32_t
 #include <cstring>  // for memset, memcpy
 
-#include "hcl_utils.h"                        // for VERIFY
-#include "hcl_log_manager.h"                  // for LOG_*
+#include "hcl_utils.h"        // for VERIFY
+#include "hcl_log_manager.h"  // for LOG_*
 
 UnionFind::UnionFind(const size_t size)
 {

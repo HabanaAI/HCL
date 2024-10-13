@@ -12,24 +12,25 @@
 
 #include "hccl_context.h"
 
-#include <arpa/inet.h>                   // for inet_pton
-#include <netinet/in.h>                  // for sockaddr_in, htons
-#include <cstring>                       // for memcpy
-#include <sys/socket.h>                  // for AF_INET, sockaddr
-#include <utility>                       // for move
-#include "hccl_communicator.h"           // for hccl_communicator
-#include "hccl_coordinator.h"            // for hccl_coordinator
-#include "hccl_helpers.h"                // for RETURN_ON_ERROR, RETURN_ON_H...
-#include "hccl_internal_defs.h"          // for internal_unique_id_t, hcclOp...
-#include "hccl_types.h"                  // for hcclResult_t
-#include "hcl_global_conf.h"             // for GCFG_HCCL_OVER_OFI, GCFG_HCC...
-#include "hcl_utils.h"                   // for LOG_HCL_ERR, LOG_HCL_INFO
-#include "interfaces/hcl_idevice.h"      // for IHclDevice
-#include "libfabric/mr_mapping.h"        // for MRMapping
-#include "network_utils.h"               // for address_to_string, get_globa...
-#include "ofi_plugin.h"                  // for OfiPlugin
-#include "hcl_log_manager.h"             // for LOG_ERR, LOG_DEBUG, LOG_INFO
+#include <arpa/inet.h>               // for inet_pton
+#include <netinet/in.h>              // for sockaddr_in, htons
+#include <cstring>                   // for memcpy
+#include <sys/socket.h>              // for AF_INET, sockaddr
+#include <utility>                   // for move
+#include "hccl_communicator.h"       // for hccl_communicator
+#include "hccl_coordinator.h"        // for hccl_coordinator
+#include "hccl_helpers.h"            // for RETURN_ON_ERROR, RETURN_ON_H...
+#include "hccl_internal_defs.h"      // for internal_unique_id_t...
+#include "hccl_types.h"              // for hcclResult_t,SYN_VALID_DEVICE_ID
+#include "hcl_global_conf.h"         // for GCFG_HCCL_OVER_OFI, GCFG_HCC...
+#include "hcl_utils.h"               // for LOG_HCL_ERR, LOG_HCL_INFO
+#include "interfaces/hcl_idevice.h"  // for IHclDevice
+#include "libfabric/mr_mapping.h"    // for MRMapping
+#include "network_utils.h"           // for address_to_string, get_globa...
+#include "ofi_plugin.h"              // for OfiPlugin
+#include "hcl_log_manager.h"         // for LOG_ERR, LOG_DEBUG, LOG_INFO
 #include "infra/hcl_sockaddr.h"
+#include "hcl_device_config_factory.h"  // for HclDeviceConfigFactory
 
 bool g_hccl_first_comm_was_initialized      = false;
 bool g_hccl_first_comm_coordinator_launched = false;
@@ -57,16 +58,18 @@ hcclResult_t hccl_context::comm_init_rank(hcclComm_t* comm_handle, unsigned int 
     // this must be the case. For other users of the synapse library there might be a need to start
     // synapse without starting HCL, the flag gives them that option. But then they must not use
     // this function, therefore there is a check if the device does not exist already it will fail
-    VERIFY(hccl_device().initialized, "The device was not initialized, please ensure the environment variable INIT_HCCL_ON_ACQUIRE is set to true");
+    VERIFY(
+        hccl_device().initialized,
+        "The device was not initialized, please ensure the environment variable INIT_HCCL_ON_ACQUIRE is set to true");
 
     // log process memory
     LOG_HCL_INFO(HCL, "Start - Process memory size {}GB", getProcMemConsInGB());
 
     LOG_HCL_DEBUG(HCL,
-              "nranks={}, rank={}, getDevice()->getNumActiveComms()={}",
-              nranks,
-              rank,
-              hccl_device()->getNumActiveComms());
+                  "nranks={}, rank={}, getDevice()->getNumActiveComms()={}",
+                  nranks,
+                  rank,
+                  hccl_device()->getNumActiveComms());
 
     RETURN_ON_NULL_ARG(comm_handle);
 
@@ -139,7 +142,7 @@ hcclResult_t hccl_context::get_unique_id(hcclUniqueId* unique_id)
     bool use_hccl_comm_id_env_var = !g_hccl_first_comm_coordinator_launched && !get_global_comm_id().empty();
 
     // create coordinator and run it
-    std::unique_ptr<hccl_coordinator> coordinator = hccl_coordinator::create(use_hccl_comm_id_env_var);
+    auto coordinator = IHcclCoordinator::create(use_hccl_comm_id_env_var);
     if (nullptr == coordinator)
     {
         LOG_HCL_ERR(HCL, "Failed to create coordinator.");
@@ -220,53 +223,43 @@ std::string hccl_context::unique_id_to_string(const hcclUniqueId& id)
     return sockaddr_str_t(internal_id->address);
 }
 
-hcclResult_t hccl_context::init_device(const synDeviceId deviceId, uint8_t apiId)
+hcclResult_t hccl_context::init_device(const uint8_t apiId)
 {
-    LOG_HCL_DEBUG(HCL, "calling hccl_init_device with deviceId {}", deviceId);
-    if (m_deviceId != 0xffffffff)
+    LOG_HCL_DEBUG(HCL, "Started, m_deviceAcquired={}, apiId={}", m_deviceAcquired, apiId);
+    if (m_deviceAcquired)
     {
         LOG_HCL_DEBUG(HCL,
-                      "HCL device was already initialized for device ({}). skipping initialization. "
-                      "Make sure that each HCCL device is handled by different process",
-                      m_deviceId);
+                      "HCL device was already initialized. skipping initialization. "
+                      "Make sure that each HCCL device is handled by different process");
         return hcclSuccess;
     }
 
     hclPrintVersionToLog();
 
-    HclDeviceConfig deviceConfig(deviceId);
-    deviceConfig.init();
+    m_hclDeviceConfig = HclDeviceConfigFactory::createDeviceConfig();
+    m_hclDeviceConfig->init();
 
-    if (IS_DEVICE_GEN2ARCH(deviceConfig.m_deviceType))
-    {
-        hccl_device_t::create(deviceConfig, apiId);
-    }
-    else
-    {
-        LOG_HCL_ERR(HCL, "Unsupported device type = {}", deviceConfig.m_deviceType);
-        return hcclInternalError;
-    }
+    hccl_device_t::create(*m_hclDeviceConfig, apiId);
 
-    m_deviceId = deviceId;
+    m_deviceAcquired = true;
 
     return hcclSuccess;
 }
 
-hcclResult_t hccl_context::destroy_device(const synDeviceId deviceId)
+hcclResult_t hccl_context::destroy_device()
 {
-    if (m_deviceId != 0xffffffff && deviceId != m_deviceId)
+    LOG_HCL_DEBUG(HCL, "Started, m_deviceAcquired={}", m_deviceAcquired);
+    if (!m_deviceAcquired)
     {
         LOG_HCL_DEBUG(HCL,
-                      "{}: HCL device was initialized for device ({}). skipping destruction. "
-                      "Make sure that each HCCL device is handled by different process",
-                      __FUNCTION__,
-                      m_deviceId);
+                      "HCL device was not initialized for device. skipping destruction. "
+                      "Make sure that each HCCL device is handled by different process");
         return hcclSuccess;
     }
 
     hccl_device().destroy();
 
-    m_deviceId = 0xffffffff;
+    m_deviceAcquired = false;
     return hcclSuccess;
 }
 

@@ -9,6 +9,7 @@
 #include "scal_names.h"                                    // for ScalJsonNames
 #include "scal_stream.h"                                   // for ScalStream
 #include "infra/scal/gen2_arch_common/cyclic_buffer_manager.h"
+
 class HclCommandsGen2Arch;
 namespace hcl
 {
@@ -22,13 +23,56 @@ ArchStream::ArchStream(unsigned                 streamIdx,
                        scal_comp_group_handle_t externalCgHandle,
                        scal_comp_group_handle_t internalCgHandle,
                        ScalJsonNames&           scalNames,
-                       HclCommandsGen2Arch&     commands)
+                       HclCommandsGen2Arch&     commands,
+                       CyclicBufferType         type)
 : m_streamIdx(streamIdx),
   m_scalWrapper(scalWrapper),
   m_externalCg(scalWrapper, externalCgHandle),
   m_internalCg(scalWrapper, internalCgHandle),
   m_scalNames(scalNames)
 {
+    for (size_t schedIdx = 0; schedIdx < m_streams.size(); schedIdx++)
+    {
+        unsigned numOfStreamsBase = scalNames.numberOfMicroArchStreams[schedIdx] * streamIdx;
+        for (size_t j = 0; j < scalNames.numberOfMicroArchStreams[schedIdx]; j++)
+        {
+            unsigned    streamNum = numOfStreamsBase + j;
+            std::string schedNameAndStreamNum =
+                std::string(scalNames.schedulersNames.at((SchedulersIndex)schedIdx)) + std::to_string(streamNum);
+
+            std::string streamName = "";
+            if (schedIdx && (NetworkStreams)(streamNum) < NetworkStreams::max)
+            {
+                streamName = std::string(scalNames.networkStreamNames.at((NetworkStreams)(streamNum)));
+            }
+            else if (!schedIdx && (DMAStreams)(streamNum) < DMAStreams::max)
+            {
+                streamName = std::string(scalNames.dmaStreamNames.at((DMAStreams)(streamNum)));
+            }
+            else
+            {
+                streamName = std::to_string(streamNum);
+            }
+            std::string schedAndStreamName =
+                std::string(scalNames.schedulersNames.at((SchedulersIndex)schedIdx)) + "-" + streamName;
+
+            CompletionGroup& cg =
+                ((SchedulersIndex)schedIdx == SchedulersIndex::dma && (DMAStreams)j == DMAStreams::garbageCollection)
+                    ? m_internalCg
+                    : m_externalCg;
+
+            m_streams[schedIdx][j] = std::make_shared<ScalStream>(scalNames,
+                                                                  schedNameAndStreamNum,
+                                                                  schedAndStreamName,
+                                                                  m_scalWrapper,
+                                                                  cg,
+                                                                  schedIdx,
+                                                                  j,
+                                                                  streamIdx,
+                                                                  commands,
+                                                                  type);
+        }
+    }
 }
 
 const SmInfo& ArchStream::getSmInfo()

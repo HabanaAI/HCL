@@ -2,10 +2,10 @@
 
 #include <thread>
 #include <functional>
-#include <pthread.h>    // for pthread_self
-#include <cstdint>      // for uint32_t, uint64_t, uint8_t
-#include <string>       // for string, allocator
-#include <utility>      // for forward
+#include <pthread.h>  // for pthread_self
+#include <cstdint>    // for uint32_t, uint64_t, uint8_t
+#include <string>     // for string, allocator
+#include <utility>    // for forward
 #include "hcl_utils.h"
 
 enum HclThreadType
@@ -45,12 +45,12 @@ public:
         m_threadType = threadType;
 
         std::function<void()> func = std::bind(std::forward<Function>(f), std::forward<Args>(args)...);
-        m_thread = std::thread(&HclThread::run, this, func);
+        m_thread                   = std::thread(&HclThread::run, this, func);
     }
 
-    HclThread(HclThread& other) = delete;
-    HclThread(HclThread&& other) = delete;
-    HclThread& operator=(HclThread& other) = delete;
+    HclThread(HclThread& other)             = delete;
+    HclThread(HclThread&& other)            = delete;
+    HclThread& operator=(HclThread& other)  = delete;
     HclThread& operator=(HclThread&& other) = delete;
 
     void join()

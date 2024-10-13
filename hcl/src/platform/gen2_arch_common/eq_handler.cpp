@@ -4,7 +4,6 @@
 #include <exception>                 // for terminate
 #include <memory>                    // for __shared_ptr_access
 #include "hccl_types.h"              // for hcclInternalError
-#include "hcl_config.h"              // for HclDeviceConfig
 #include "hcl_exceptions.h"          // for VerifyException
 #include "hcl_utils.h"               // for LOG_HCL_CRITICAL, VERIFY
 #include "hlthunk.h"                 // for hlthunk_nic_eq_poll_out, hlt...

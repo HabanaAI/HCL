@@ -31,7 +31,7 @@ public:
                         unsigned                       schedIdx);
     virtual ~Descriptor() = default;
 
-    virtual void run(SliceState& sliceState) = 0;
+    virtual void run(SliceState& sliceState)                 = 0;
     virtual void run(NonCollectiveState& nonCollectiveState) = 0;
 
 protected:

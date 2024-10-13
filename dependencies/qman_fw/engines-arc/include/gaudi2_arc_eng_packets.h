@@ -41,10 +41,11 @@ enum eng_arc_cmd_t {
 	ECB_CMD_NOP = 1,
 	ECB_CMD_WD_FENCE_AND_EXE = 2,
 	ECB_CMD_SCHED_DMA = 3,
-	ECB_CMD_STATIC_DESC_V2 = 4,
-	ECB_CMD_SFG = 5,
-	ECB_CMD_RESET_SOSET = 6,
-	ECB_CMD_COUNT = 7
+	ECB_CMD_SCHED_DMA_V2 = 4,
+	ECB_CMD_STATIC_DESC_V2 = 5,
+	ECB_CMD_SFG = 6,
+	ECB_CMD_RESET_SOSET = 7,
+	ECB_CMD_COUNT = 8
 };
 
 /**
@@ -210,6 +211,10 @@ enum nic_scaleout_eng_arc_cmd_t {
  * Total count of Work distribution context supported
  */
 #define WD_CTXT_COUNT	8
+
+#define EXPERT_MAPPING_CTXT_COUNT	2
+#define EXPERT_MAPPING_ENTRY_COUNT	32
+#define INVALID_EXPERT_MAPPING_ENTRY	0XFFFF
 
 #define MAX_DIMENSIONS	5
 
@@ -460,6 +465,23 @@ struct virt_sob_ids_t {
 	 */
 } __attribute__ ((aligned(4), __packed__));
 
+
+/**
+ * \struct  full_hbm_addr_ctxt_t
+ * \brief   full hbm addr ctxt
+ * \details full hbm addr used for patching
+ */
+struct full_hbm_addr_ctxt_t {
+	union {
+		uint64_t hbm_addr;
+		struct {
+			uint64_t addr_low:32;
+			uint64_t addr_high:32;
+		} __attribute__ ((aligned(4), __packed__));
+	};
+} __attribute__ ((aligned(4), __packed__));
+
+
 /**
  * \struct  rot_wd_ctxt_t
  * \brief   Rotator specific work distribution context
@@ -507,6 +529,8 @@ struct rot_wd_ctxt_t {
  */
 struct rot_wd_ctxts_t {
 	struct rot_wd_ctxt_t rot_ctxt[WD_CTXT_COUNT];
+	struct full_hbm_addr_ctxt_t weight_base_address_ctxt[WD_CTXT_COUNT];
+	uint16_t expert_mapping_ctxt[EXPERT_MAPPING_CTXT_COUNT * EXPERT_MAPPING_ENTRY_COUNT];
 	/**<
 	 * array of contexts for Rotator
 	 */
@@ -516,6 +540,13 @@ struct rot_wd_ctxts_t {
 	 * Global means used in all the contexts
 	 */
 } __attribute__ ((aligned(4), __packed__));
+
+enum mme_operand_type_t {
+	MME_ADDR_A = 0,
+	MME_ADDR_B = 1,
+	MME_ADDR_COUT0 = 2,
+	MME_OPERAND_COUNT = 3
+};
 
 /**
  * \struct  mme_wd_ctxt_t
@@ -535,7 +566,11 @@ struct mme_wd_ctxt_t {
 			 * value of the switch bit to be configured when pushing the
 			 * descriptor into ARC CQ
 			 */
-			uint32_t reserved:7;
+			uint32_t mme_operand:2;
+			/**<
+			 * mme operand to patch from mme_operand_type_t
+			 */
+			uint32_t reserved:5;
 			/**<
 			 * reserved
 			 */
@@ -554,6 +589,10 @@ struct mme_wd_ctxt_t {
 	/**<
 	 * Virtual SOB array
 	 */
+	struct full_hbm_addr_ctxt_t weight_offset[GAUDI2_MAX_MME_COUNT];
+	/**<
+	 * hbm addr offset of tensor for patching
+	 */
 } __attribute__ ((aligned(4), __packed__));
 
 /**
@@ -563,6 +602,8 @@ struct mme_wd_ctxt_t {
  */
 struct mme_wd_ctxts_t {
 	struct mme_wd_ctxt_t mme_ctxt[WD_CTXT_COUNT];
+	struct full_hbm_addr_ctxt_t weight_base_address_ctxt[WD_CTXT_COUNT];
+	uint16_t expert_mapping_ctxt[EXPERT_MAPPING_CTXT_COUNT * EXPERT_MAPPING_ENTRY_COUNT];
 	/**<
 	 * array of contexts for MME
 	 */
@@ -588,6 +629,12 @@ enum edma_op_type_t {
 	EDMA_OP_TRANSPOSE = 4, /* TODO: Remove this later */
 	EDMA_OP_NO_WD = 5,
 	EDMA_OP_COUNT = 6
+};
+
+enum edma_operand_type_t {
+	EDMA_SRC = 0,
+	EDMA_DST = 1,
+	EDMA_OPERAND_COUNT = 2
 };
 
 /**<
@@ -665,11 +712,15 @@ struct edma_wd_ctxt_t {
 			 * alternate address of RD_HBW_MAX_OUTSTAND as completion address
 			 * value of 0 is set by the GC in the WR_COMP_WDATA
 			 */
+			uint32_t dma_operand:1;
+			/**<
+			 * Edma operand to patch from edma_operand_type_t
+			 */
 			uint32_t sig_inc_value:16;
 			/**<
 			 * Increment value to be added to previous threshold
 			 */
-			uint32_t virtual_sob_bitmap:8;
+			uint32_t virtual_sob_bitmap:7;
 			/**<
 			 * Virtual SOB bitmap indicating index which are valid
 			 * in the virtual_sob array
@@ -688,6 +739,10 @@ struct edma_wd_ctxt_t {
 	/**<
 	 * Virtual SOB array
 	 */
+	struct full_hbm_addr_ctxt_t weight_offset[GAUDI2_MAX_EDMA_COUNT];
+	/**<
+	 * hbm addr offset of tensor for patching
+	 */
 } __attribute__ ((aligned(4), __packed__));
 
 /**
@@ -697,6 +752,8 @@ struct edma_wd_ctxt_t {
  */
 struct edma_wd_ctxts_t {
 	struct edma_wd_ctxt_t edma_ctxt[WD_CTXT_COUNT];
+	struct full_hbm_addr_ctxt_t weight_base_address_ctxt[WD_CTXT_COUNT];
+	uint16_t expert_mapping_ctxt[EXPERT_MAPPING_CTXT_COUNT * EXPERT_MAPPING_ENTRY_COUNT];
 	/**<
 	 * array of contexts for EDMA
 	 */
@@ -867,7 +924,11 @@ struct tpc_wd_ctxt_t {
 	union {
 		uint32_t word2;
 		struct {
-			uint16_t reserved1;
+			uint16_t tensor_id: 4;
+			/**<
+			 * tpc operand to patch (0-15)
+			 */
+			uint16_t reserved1: 12;
 			/**<
 			 * reserved
 			 */
@@ -881,6 +942,10 @@ struct tpc_wd_ctxt_t {
 	/**<
 	 * Virtual SOB array
 	 */
+	struct full_hbm_addr_ctxt_t weight_offset;
+	/**<
+	 * hbm addr offset of tensor for patching
+	 */
 } __attribute__ ((aligned(4), __packed__));
 
 /**
@@ -890,6 +955,8 @@ struct tpc_wd_ctxt_t {
  */
 struct tpc_wd_ctxts_t {
 	struct tpc_wd_ctxt_t tpc_ctxt[WD_CTXT_COUNT];
+	struct full_hbm_addr_ctxt_t weight_base_address_ctxt[WD_CTXT_COUNT];
+	uint16_t expert_mapping_ctxt[EXPERT_MAPPING_CTXT_COUNT * EXPERT_MAPPING_ENTRY_COUNT];
 	/**<
 	 * Array of contexts for TPC
 	 */
@@ -1001,6 +1068,17 @@ struct eng_arc_cmd_static_desc_v2_t {
 } __attribute__ ((aligned(4), __packed__));
 
 /**
+ * \enum    signaling_completion_type_t
+ * \brief   completion signal sent to sob by firmware
+ * \details completion signal sent to sob by firmware
+ */
+enum signaling_completion_type_t {
+	SIGNAL_TO_SYNC_SCHEME_SOB = 0x0,
+	SINGAL_TO_AUX_REG = 0x1,
+	SINGAL_COUNT = 0x2
+};
+
+/**
  * \struct  eng_arc_cmd_wd_fence_and_exec_t
  * \brief   Work distribution, fence and execute
  * \details TODO;
@@ -1019,18 +1097,40 @@ struct eng_arc_cmd_wd_fence_and_exec_t {
 	 * Number of DMAs should complete before the execution can start.
 	 * Expected value is 1.
 	 */
-	uint32_t reserved:19;
+	uint32_t dma2_completion:3;
 	/**<
-	 * reserved
+	 * Number of DMAs should complete before the execution can start.
+	 * This wait is for dma waiting for dma. Can have 0 or more value.
 	 */
 	uint32_t wd_ctxt_id:3;
 	/**<
 	 * a context number from 0 to max number of contexts that fw supports
 	 */
-	uint32_t reserved2:2;
+	uint32_t wd_ctxt2_id:3;
+	/**<
+	 * a context number from 0 to max number of weight_base_address contexts
+	 */
+	uint32_t patch_address:1;
+	/**<
+	 * Patch address before execution
+	 */
+	uint32_t signal_arc:1;
+	/**<
+	 * which sob to signal from signaling_completion_type_t
+	 */
+	uint32_t expert_mapping_idx: 6;
+	/**<
+	 * expert mapping index
+	 */
+	uint32_t conditional_activation:1;
+	/**<
+	 * conditional_activation
+	 */
+	uint32_t :6;
 	/**<
 	 * reserved
 	 */
+
 } __attribute__ ((aligned(4), __packed__));
 
 /**
@@ -1068,6 +1168,73 @@ struct eng_arc_cmd_sched_dma_t {
 	 * 32bit address offset into recipe base address
 	 */
 } __attribute__ ((aligned(4), __packed__));
+
+
+/**
+ * DMA type
+ */
+enum dma_type_t {
+	DMA_EXPERT_MAPPING_TABLE = 0x0,
+	DMA_HBM_TENSOR_ADDR = 0x1,
+	DMA_COUNT = 0x2
+};
+
+/**
+ * \struct  eng_arc_cmd_sched_dma_v2_t
+ * \brief   Schedule DMA  version 2 to update GC context
+ * \details Initiate a DMA transfer to update expert mapping context.
+ */
+struct eng_arc_cmd_sched_dma_v2_t {
+	uint32_t cmd_type:4;
+	/**<
+	 * set to ECB_CMD_SCHED_DMA_V2
+	 */
+	uint32_t yield:1;
+	/**<
+	 * Yield ARC control to the other list (s/d) after execution
+	 */
+	uint32_t dma_completion:3;
+	/**<
+	 * Number of DMAs should complete before starting this DMA
+	 */
+	uint32_t addr_index:3;
+	/**<
+	 * Recipe base address register index to be used to generate
+	 * target address of 64 bits
+	 */
+	uint32_t size:8;
+	/**<
+	 * size of the buffer in bytes
+	 */
+	uint32_t dma_type:1;
+	/*
+	 * What needs to be dma from dma_type_t
+	 * 0 - DMA_EXPERT_MAPPING_TABLE
+	 * 1 - DMA_HBM_TENSOR_ADDR
+	 */
+	uint32_t wait_for_eng:1;
+	/*
+	 * Wait for a signal from Engine
+	 */
+	uint32_t expert_mapping_idx: 6;
+	/**<
+	 * expert mapping index
+	 */
+	uint32_t :2;
+	/*
+	 * Reserved
+	 */
+	uint32_t wd_ctxt_id:3;
+	/*
+	 * GC Context ID that needs to be updated
+	 * This is used to calculate Destination Address
+	 */
+	uint32_t addr_offset;
+	/**<
+	 * 32bit address offset into recipe base address
+	 */
+} __attribute__ ((aligned(4), __packed__));
+
 
 /**
  * \struct  eng_arc_cmd_sfg_t

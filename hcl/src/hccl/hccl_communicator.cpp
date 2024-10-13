@@ -11,22 +11,22 @@
  ******************************************************************************/
 
 #include "hccl_communicator.h"
-#include <algorithm>                     // for max, find
-#include <array>                         // for array
-#include <cstddef>                       // for size_t, NULL
-#include <cstdint>                       // for uint64_t, uint8_t, uin...
-#include <cstring>                       // for memset
-#include <sstream>                       // for basic_ostream::operator<<
-#include <unordered_map>                 // for unordered_map, unorder...
-#include "hccl_helpers.h"                // for RETURN_ON_SYNAPSE_ERROR
-#include "hccl_internal_defs.h"          // for hcclHandle, HOST_BUFF_INC
-#include "hccl_types.h"                  // for hcclSuccess, hcclResult_t
-#include "hccl_device.h"
+#include <algorithm>             // for max, find
+#include <array>                 // for array
+#include <cstddef>               // for size_t, NULL
+#include <cstdint>               // for uint64_t, uint8_t, uin...
+#include <cstring>               // for memset
+#include <sstream>               // for basic_ostream::operator<<
+#include <unordered_map>         // for unordered_map, unorder...
+#include "hccl_helpers.h"        // for RETURN_ON_SYNAPSE_ERROR
+#include "hccl_internal_defs.h"  // for hcclHandle, HOST_BUFF_INC
+#include "hccl_types.h"          // for hcclSuccess, hcclResult_t
+#include "platform/gen2_arch_common/hccl_device.h"
 #include "hcl_api_types.h"               // for HCL_Comm, eHCLReduceSc...
-#include "hcl_config.h"                  // for HclConfig, HclDeviceCo...
+#include "hcl_config.h"                  // for HclConfig
 #include "hcl_dynamic_communicator.h"    // for HclDynamicCommunicator
 #include "hcl_global_conf.h"             // for GlobalConfBool, GCFG_H...
-#include "hcl_types.h"                   // for RankInfo, HclConfigType
+#include "hcl_types.h"                   // for RankInfo, HclConfigType, SYN_VALID_DEVICE_ID
 #include "hcl_utils.h"                   // for LOG_HCL_ERR, VERIFY
 #include "interfaces/hcl_idevice.h"      // for IHclDevice
 #include "libfabric/mr_mapping.h"        // for MRMapping
@@ -36,7 +36,10 @@
 #include "ofi_communicator.h"            // for ofi_communicator
 #include "synapse_common_types.h"        // for synStatus
 #include "hcl_math_utils.h"
-#include "platform/gaudi2/hcl_device.h"  // for HclDeviceGaudi2
+#include "platform/gaudi2/hcl_device.h"            // for HclDeviceGaudi2
+#include "platform/gen2_arch_common/server_def.h"  // for Gen2ArchServerDef
+
+#include "coordinator/hlcp_client.h"
 
 std::unordered_map<HCL_Comm, spHcclCoordinatorClient> g_hcclCordClient;
 
@@ -58,7 +61,7 @@ hcclResult_t hccl_communicator::firstHandShakeAtInit(RankInfoHeader&            
         for (unsigned i = 0; i < hcclRankInfoHeaders.size(); i++)
         {
             hcclRankInfoHeaders[i]         = header;  // fill the remote headers with some info
-            hcclRankInfoHeaders[i].boxSize = hccl_device()->getHal()->getDefaultBoxSize();
+            hcclRankInfoHeaders[i].boxSize = hccl_device()->getServerDef().getDefaultBoxSize();
         }
     }
     return rc;
@@ -128,12 +131,11 @@ void hccl_communicator::initializeRanks(std::vector<RankInfoHeader>& hcclRankInf
     else
     {
         m_comm->AddNewRemoteDevice(m_comm->m_rankInfo.header.hcclRank);
-        m_comm->m_remoteDevices[m_comm->m_rankInfo.header.hcclRank]->header =
-            m_comm->m_rankInfo.header;
+        m_comm->m_remoteDevices[m_comm->m_rankInfo.header.hcclRank]->header = m_comm->m_rankInfo.header;
 
         LOG_HCL_DEBUG(HCL,
                       "Add self to remote devices, device ({}) Rank ({}), ModuleID ({})",
-                      hccl_device()->m_deviceId,
+                      hccl_device()->getHwModuleId(),
                       m_comm->m_rankInfo.header.hcclRank,
                       m_comm->m_rankInfo.header.hwModuleID);
 
@@ -197,17 +199,16 @@ hcclResult_t hccl_communicator::initializeConnections(bool isLoopbackModeOrNullS
                 }
                 else
                 {
-                    m_comm->m_remoteDevices[i]->header.hwModuleID = i;
+                    m_comm->m_remoteDevices[i]->header.hwModuleID = mod(i, m_comm->getScaleupGroupSize());
                 }
             }
             else
             {
                 m_comm->m_remoteDevices[i]->header.hwModuleID = i % m_boxSize;
             }
-            m_comm->m_remoteDevices[i]->header.hcclRank       = i;
-            m_comm->m_remoteDevices[i]->device = m_comm->m_rankInfo.device;
-            m_comm->m_remoteDevices[i]->remoteInfo =
-                m_comm->m_rankInfo.remoteInfo[i];
+            m_comm->m_remoteDevices[i]->header.hcclRank = i;
+            m_comm->m_remoteDevices[i]->device          = m_comm->m_rankInfo.device;
+            m_comm->m_remoteDevices[i]->remoteInfo      = m_comm->m_rankInfo.remoteInfo[i];
             LOG_HCL_DEBUG(HCL,
                           "loopback set remote device({}) remote info ({},{},{})",
                           i,
@@ -266,7 +267,14 @@ hcclResult_t hccl_communicator::initialize(const internal_unique_id_t* internal_
 
     hccl_device()->getDeviceConfig().fillDeviceInfo(header);
 
-    m_coordClient = std::make_shared<HcclCoordinatorClient>(m_commSize, m_rank, internal_unique_id);
+    if (GCFG_HCL_ENABLE_HLCP.value())
+    {
+        m_coordClient = std::make_shared<hlcp_client_t>(m_commSize, m_rank, internal_unique_id);
+    }
+    else
+    {
+        m_coordClient = std::make_shared<HcclCoordinatorClient>(m_commSize, m_rank, internal_unique_id);
+    }
 
     // First Handshake
     rc = firstHandShakeAtInit(header, hcclRankInfoHeaders);
@@ -286,7 +294,7 @@ hcclResult_t hccl_communicator::initialize(const internal_unique_id_t* internal_
     }
 
     // Initialize HclConfig
-    HclConfig config(hccl_device()->m_deviceConfig);
+    HclConfig config;
     if (!config.init(rank, commSize))
     {
         LOG_HCL_ERR(HCL, "Failed to initialize config with rank and commSize.");
@@ -295,12 +303,11 @@ hcclResult_t hccl_communicator::initialize(const internal_unique_id_t* internal_
 
     // create dynamic comm
     HCL_Comm hclCommId = hccl_device()->allocateNewComm();
-    m_comm = &hccl_device()->getComm(hclCommId);
+    m_comm             = &hccl_device()->getComm(hclCommId);
     m_comm->setUniqueID(internal_unique_id);
 
     // handle loopback mode and null submission
-    bool isLoopbackModeOrNullSubmission =
-        (IS_DEVICE_GEN2ARCH(hccl_device()->getDeviceType()) && (isLoopbackMode() || GCFG_HCL_NULL_SUBMIT.value()));
+    bool isLoopbackModeOrNullSubmission = (isLoopbackMode() || GCFG_HCL_NULL_SUBMIT.value());
 
     int boxSize = m_boxSize;
     commSize    = m_commSize;
@@ -310,7 +317,7 @@ hcclResult_t hccl_communicator::initialize(const internal_unique_id_t* internal_
         // workaround: in loopback mode we start with comm size = 1, but need to resize to 8
         m_comm->m_commSize = config.m_commSize;
         commSize           = config.m_commSize;
-        boxSize            = hccl_device()->getHal()->getDefaultBoxSize();
+        boxSize            = hccl_device()->getServerDef().getDefaultBoxSize();
         rank               = m_comm->getMyRank();
     }
 
@@ -422,10 +429,7 @@ void hccl_communicator::finalize()
     LOG_HCL_DEBUG(HCL, "Finalized");
 }
 
-hccl_communicator::hccl_communicator(int rank, int comm_size)
-: m_rank(rank), m_commSize(comm_size)
-{
-}
+hccl_communicator::hccl_communicator(int rank, int comm_size) : m_rank(rank), m_commSize(comm_size) {}
 
 void hccl_communicator::incCollectiveCtr()
 {
@@ -471,14 +475,6 @@ hcclResult_t hccl_communicator::comm_count(int* count)
 {
     RETURN_ON_NULL_ARG(count);
     *count = static_cast<int>(m_commSize);
-    return hcclSuccess;
-}
-
-hcclResult_t hccl_communicator::syn_device(int* device)
-{
-    RETURN_ON_NULL_ARG(device);
-    *device = static_cast<int>(hccl_device()->m_deviceId);
-    LOG_HCL_DEBUG(HCL, "Communicator Device ID is: {}", (int)*device);
     return hcclSuccess;
 }
 

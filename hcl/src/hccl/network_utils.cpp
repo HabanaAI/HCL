@@ -12,28 +12,27 @@
 
 #include "network_utils.h"
 
-
-#include <cerrno>                       // for errno, EAGAIN, EINTR, ENODATA
-#include <ifaddrs.h>                    // for freeifaddrs, ifaddrs, getifa...
-#include <linux/ethtool.h>              // for ethtool_drvinfo, ETHTOOL_GDR...
-#include <linux/sockios.h>              // for SIOCETHTOOL
-#include <net/if.h>                     // for ifreq, ifr_data, ifr_name
-#include <cstdint>                      // for uint8_t
-#include <cstddef>                      // for size_t
-#include <cstring>                      // for memset, strcpy, stre...
-#include <sys/ioctl.h>                  // for ioctl
-#include <sys/socket.h>                 // for AF_INET, sockaddr, AF_INET6
-#include <unistd.h>                     // for close
-#include <algorithm>                    // for mismatch
-#include <chrono>                       // for operator>, seconds, operator-
-#include <limits>                       // for numeric_limits
-#include <memory>                       // for allocator_traits<>::value_type
-#include <ostream>                      // for operator<<, basic_ostream
-#include <utility>                      // for pair
-#include <vector>                       // for vector
-#include "hcl_global_conf.h"            // for GCFG_HCCL_COMM_ID, GCFG_HCCL...
-#include "hcl_utils.h"                  // for VERIFY
-#include "hcl_log_manager.h"            // for LOG_DEBUG, LOG_ERR, LOG_WARN
+#include <cerrno>             // for errno, EAGAIN, EINTR, ENODATA
+#include <ifaddrs.h>          // for freeifaddrs, ifaddrs, getifa...
+#include <linux/ethtool.h>    // for ethtool_drvinfo, ETHTOOL_GDR...
+#include <linux/sockios.h>    // for SIOCETHTOOL
+#include <net/if.h>           // for ifreq, ifr_data, ifr_name
+#include <cstdint>            // for uint8_t
+#include <cstddef>            // for size_t
+#include <cstring>            // for memset, strcpy, stre...
+#include <sys/ioctl.h>        // for ioctl
+#include <sys/socket.h>       // for AF_INET, sockaddr, AF_INET6
+#include <unistd.h>           // for close
+#include <algorithm>          // for mismatch
+#include <chrono>             // for operator>, seconds, operator-
+#include <limits>             // for numeric_limits
+#include <memory>             // for allocator_traits<>::value_type
+#include <ostream>            // for operator<<, basic_ostream
+#include <utility>            // for pair
+#include <vector>             // for vector
+#include "hcl_global_conf.h"  // for GCFG_HCCL_COMM_ID, GCFG_HCCL...
+#include "hcl_utils.h"        // for VERIFY
+#include "hcl_log_manager.h"  // for LOG_DEBUG, LOG_ERR, LOG_WARN
 
 constexpr auto MAX_RECV_WARN_TIME = std::chrono::seconds(2);
 constexpr auto MAX_RECV_TIMEOUT   = std::chrono::seconds(10);
@@ -252,16 +251,16 @@ std::string get_global_comm_id()
 std::string get_global_comm_ip()
 {
     std::string ip_and_port_str(get_global_comm_id());
-    unsigned    endOfIPAddrss = ip_and_port_str.find_last_of(":");
-    std::string ip            = ip_and_port_str.substr(0, endOfIPAddrss);
+    unsigned    endOfIPAddress = ip_and_port_str.find_last_of(":");
+    std::string ip             = ip_and_port_str.substr(0, endOfIPAddress);
     return ip;
 }
 
 int get_global_comm_port()
 {
     std::string ip_and_port_str(get_global_comm_id());
-    unsigned    endOfIPAddrss = ip_and_port_str.find_last_of(":");
-    int         port          = std::stoi(ip_and_port_str.substr(endOfIPAddrss + 1));
+    unsigned    endOfIPAddress = ip_and_port_str.find_last_of(":");
+    int         port           = std::stoi(ip_and_port_str.substr(endOfIPAddress + 1));
     return port;
 }
 
@@ -322,7 +321,6 @@ int recv_all(int sockfd, void* buffer, size_t length)
         {
             if (total_bytes_received == 0)
             {
-                LOG_DEBUG(HCL, "socket recv: Trying to receive from a closed socket.");
                 return 0;
             }
             else

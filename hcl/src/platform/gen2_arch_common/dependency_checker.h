@@ -33,10 +33,10 @@ class DeviceBufferRangeManager
 {
 public:
     DeviceBufferRangeManager();
-    virtual ~DeviceBufferRangeManager()                  = default;
-    DeviceBufferRangeManager(DeviceBufferRangeManager&)  = delete;
-    DeviceBufferRangeManager(DeviceBufferRangeManager&&) = delete;
-    DeviceBufferRangeManager&  operator=(DeviceBufferRangeManager&) = delete;
+    virtual ~DeviceBufferRangeManager()                              = default;
+    DeviceBufferRangeManager(DeviceBufferRangeManager&)              = delete;
+    DeviceBufferRangeManager(DeviceBufferRangeManager&&)             = delete;
+    DeviceBufferRangeManager&  operator=(DeviceBufferRangeManager&)  = delete;
     DeviceBufferRangeManager&& operator=(DeviceBufferRangeManager&&) = delete;
 
     std::map<uint64_t, DeviceBufferRange>           m_map;
@@ -55,10 +55,10 @@ class DependencyChecker
 {
 public:
     DependencyChecker(unsigned cgSize);
-    ~DependencyChecker()                   = default;
-    DependencyChecker(DependencyChecker&)  = delete;
-    DependencyChecker(DependencyChecker&&) = delete;
-    DependencyChecker&  operator=(DependencyChecker&) = delete;
+    ~DependencyChecker()                               = default;
+    DependencyChecker(DependencyChecker&)              = delete;
+    DependencyChecker(DependencyChecker&&)             = delete;
+    DependencyChecker&  operator=(DependencyChecker&)  = delete;
     DependencyChecker&& operator=(DependencyChecker&&) = delete;
 
     uint64_t getTargetValueForWriteRange(uint64_t address,

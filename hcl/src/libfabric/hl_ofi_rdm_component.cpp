@@ -208,7 +208,7 @@ int ofi_rdm_component_t::connect(const void* handle,
         return hcclLibfabricError;
     }
 
-    const auto [ep, av] = acquire_ep_av(hostConnIdx, EndpointRole::LISTEN, qpSetIndex);
+    const auto [ep, av] = acquire_ep_av(hostConnIdx, EndpointRole::CONNECT, qpSetIndex);
     const std::vector<uint8_t> addr(&remote_ep_addr[0], &remote_ep_addr[0] + sizeof(remote_ep_addr));
     try
     {
@@ -478,13 +478,11 @@ ofi_rdm_component_t::acquire_ep_av(unsigned hostConnIdx, ofi_rdm_component_t::En
     for (const auto& [key, ep_av] : m_eps)
     {
         const auto [hostConnIdx_, role_, qpSetIndex_] = key;
-        UNUSED(hostConnIdx_);
-        UNUSED(role_);
-        if (qpSetIndex_ != qpSetIndex)
+        if (isDifferentQP(hostConnIdx, role, qpSetIndex, hostConnIdx_, role_, qpSetIndex_))
         {
             continue;
         }
-        // Found existing endpoint in the same set
+        // Found existing endpoint
         m_eps[std::make_tuple(hostConnIdx, role, qpSetIndex)] = ep_av;
         return ep_av;
     }
@@ -493,4 +491,22 @@ ofi_rdm_component_t::acquire_ep_av(unsigned hostConnIdx, ofi_rdm_component_t::En
         std::make_shared<FiObject<struct fid_ep*>>(create_ep(m_prov, m_domain.get(), m_cq.get(), av->get()));
     m_eps[std::make_tuple(hostConnIdx, role, qpSetIndex)] = std::make_tuple(ep, av);
     return m_eps[std::make_tuple(hostConnIdx, role, qpSetIndex)];
+}
+
+bool ofi_rdm_component_t::isDifferentQP(const unsigned                          requestedHostConnIdx,
+                                        const ofi_rdm_component_t::EndpointRole requestedRole,
+                                        const uint16_t                          requestedQpSetIndex,
+                                        const unsigned                          existingHostConnIdx,
+                                        const ofi_rdm_component_t::EndpointRole existingRole,
+                                        const uint16_t                          existingQpSetIndex)
+{
+    if (!GCFG_HCL_SINGLE_QP_PER_SET.value())
+    {
+        // There should be 4 QPs for each set
+        return ((requestedHostConnIdx != existingHostConnIdx) || (requestedRole != existingRole) ||
+                (requestedQpSetIndex != existingQpSetIndex));
+    }
+
+    // There should be only one EP per set index.
+    return (requestedQpSetIndex != existingQpSetIndex);
 }

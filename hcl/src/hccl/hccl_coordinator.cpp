@@ -12,25 +12,27 @@
 
 #include "hccl_coordinator.h"
 
-#include <ext/alloc_traits.h>            // for __alloc_traits<>::value_type
-#include <poll.h>                        // for pollfd, poll, POLLIN
-#include <sys/socket.h>                  // for sockaddr, accept, getsockname
-#include <unistd.h>                      // for close, read
-#include <cerrno>                        // for errno
-#include <cstring>                       // for memcpy
-#include <sstream>                       // for basic_ostream::operator<<
-#include <utility>                       // for pair
-#include "hccl_internal_defs.h"          // for client_info_t, hccl_rank_dis...
-#include "hcl_tcp_utils.h"               // for sendAllToSocket, createServe...
-#include "hcl_utils.h"                   // for LOG_HCL_DEBUG, LOG_HCL_ERR
-#include "network_utils.h"               // for address_to_string, recv_all
-#include "hcl_log_manager.h"             // for LOG_DEBUG, LOG_ERR, LOG_TRACE
+#include <ext/alloc_traits.h>    // for __alloc_traits<>::value_type
+#include <poll.h>                // for pollfd, poll, POLLIN
+#include <sys/socket.h>          // for sockaddr, accept, getsockname
+#include <unistd.h>              // for close, read
+#include <cerrno>                // for errno
+#include <cstring>               // for memcpy
+#include <sstream>               // for basic_ostream::operator<<
+#include <utility>               // for pair
+#include "hccl_internal_defs.h"  // for client_info_t, hccl_rank_dis...
+#include "hcl_tcp_utils.h"       // for sendAllToSocket, createServe...
+#include "hcl_utils.h"           // for LOG_HCL_DEBUG, LOG_HCL_ERR
+#include "network_utils.h"       // for address_to_string, recv_all
+#include "hcl_log_manager.h"     // for LOG_DEBUG, LOG_ERR, LOG_TRACE
 
-std::mutex hccl_coordinator::coord_create_mtx_;
+#include "../coordinator/hlcp_server.h"
 
-std::unique_ptr<hccl_coordinator> hccl_coordinator::create(bool use_global_comm_ip)
+std::mutex coord_create_mtx_;
+
+HcclCoordinatorUPtr IHcclCoordinator::create(bool use_global_comm_ip)
 {
-    std::lock_guard<std::mutex> lock(hccl_coordinator::coord_create_mtx_);
+    std::lock_guard<std::mutex> lock(coord_create_mtx_);
     int                         hccl_port;
     std::string                 ip;
     if (use_global_comm_ip)
@@ -51,34 +53,29 @@ std::unique_ptr<hccl_coordinator> hccl_coordinator::create(bool use_global_comm_
 
     VERIFY(ipaddr.str() != "", "invalid global comm id specified. {} {}", ip, hccl_port);
 
-
-    int server_socket = createServerSocket(ipaddr);
-    if (server_socket < 0)
+    if (GCFG_HCL_ENABLE_HLCP.value())
     {
-        LOG_CRITICAL(HCL, "Failed to create server socket on {}.", ipaddr.str());
-        LOG_CRITICAL(HCL, "{}.", getListenPorts());
+        return HcclCoordinatorUPtr(new hlcp_server_t(ipaddr));
+    }
+
+    return HcclCoordinatorUPtr(new hccl_coordinator(ipaddr));
+}
+
+hccl_coordinator::hccl_coordinator(sockaddr_t& ipaddr)
+: quit_requested_(false), hccl_comm_size_(HCCL_COMM_SIZE_UNASSIGNED), m_initialHandshakeDone(false)
+{
+    server_socket_ = createServerSocket(ipaddr);
+    if (server_socket_ < 0)
+    {
+        LOG_HCL_CRITICAL(HCL, "Failed to create server socket on {}.", ipaddr.str());
+        LOG_HCL_CRITICAL(HCL, "{}.", getListenPorts());
         VERIFY(false, "Creating server socket ({}) failed", ipaddr.str());
     }
 
-    LOG_DEBUG(HCL_COORD, "socket_opened: {} @ {}", server_socket, ipaddr.str());
+    LOG_HCL_DEBUG(HCL_COORD, "socket_opened: {} @ {}", server_socket_, ipaddr.str());
 
-    internal_unique_id_t internal_id = {ipaddr, sizeof(internal_id.address)};
+    internal_unique_id_t internal_id_s_ = {ipaddr, sizeof(internal_id_s_.address)};
 
-    return std::unique_ptr<hccl_coordinator>(new hccl_coordinator(server_socket, internal_id));
-}
-
-void hccl_coordinator::get_unique_id(hcclUniqueId& unique_id)
-{
-    VERIFY(sizeof(unique_id) == unique_id_buff_.size(), "Unexpected unique_id size={}", unique_id_buff_.size());
-    std::memcpy(reinterpret_cast<void*>(&unique_id), unique_id_buff_.data(), unique_id_buff_.size());
-}
-
-hccl_coordinator::hccl_coordinator(int server_socket, internal_unique_id_t& internal_id_s_)
-: server_socket_(server_socket),
-  quit_requested_(false),
-  hccl_comm_size_(HCCL_COMM_SIZE_UNASSIGNED),
-  m_initialHandshakeDone(false)
-{
     hcclUniqueId unique_id;
     internal_id_s_.id = next_id();
     internal_id_      = internal_id_s_.id;
@@ -90,11 +87,6 @@ hccl_coordinator::hccl_coordinator(int server_socket, internal_unique_id_t& inte
     unique_id.length = sizeof(internal_unique_id_t);
     unique_id_buff_.resize(sizeof(unique_id));
     memcpy(unique_id_buff_.data(), (uint8_t*)&unique_id, sizeof(unique_id));
-}
-
-int hccl_coordinator::internal_id()
-{
-    return internal_id_;
 }
 
 hccl_coordinator::~hccl_coordinator()
@@ -136,7 +128,14 @@ hcclResult_t hccl_coordinator::run()
         LOG_HCL_DEBUG(HCL_COORD, "starting listen thread");
         while (!quit_requested_)
         {
-            try_listen();
+            if (comm_sockets_.size() > 0)
+            {
+                try_listen();
+            }
+            else
+            {
+                usleep(50000);  // 0.5 sec
+            }
         }
     }};
     return hcclSuccess;
@@ -144,9 +143,7 @@ hcclResult_t hccl_coordinator::run()
 
 void hccl_coordinator::try_accept()
 {
-    LOG_HCL_TRACE(HCL_COORD, "accept mtx try acq");
     std::lock_guard<std::mutex> lock(srv_socket_mtx_);
-    LOG_HCL_TRACE(HCL_COORD, "accept mtx acquired");
 
     int timeout = 500;  // 500ms
 
@@ -162,10 +159,10 @@ void hccl_coordinator::try_accept()
         return;
     }
 
-    sockaddr_storage  client_address {};
-    socklen_t client_address_length = sizeof(client_address);
-    int       new_socket            = -1;
-    int       connectionTrials      = GCFG_HCCL_TRIALS.value();
+    sockaddr_storage client_address {};
+    socklen_t        client_address_length = sizeof(client_address);
+    int              new_socket            = -1;
+    int              connectionTrials      = GCFG_HCCL_TRIALS.value();
 
     while (new_socket < 0)
     {
@@ -192,7 +189,7 @@ void hccl_coordinator::try_accept()
         LOG_HCL_DEBUG(HCL_COORD, "adding new client socket to list.");
         {
             LOG_HCL_TRACE(HCL_COORD, "add mtx try acq");
-            std::lock_guard<std::mutex> lock(comm_sockets_mtx_);
+            std::lock_guard<std::mutex> socket_lock(comm_sockets_mtx_);
 
             LOG_HCL_TRACE(HCL_COORD, "add mtx acq");
 
@@ -207,9 +204,9 @@ void hccl_coordinator::try_accept()
 void hccl_coordinator::try_listen()
 {
     deferred_launcher_.assure_ready();
-    LOG_HCL_TRACE(HCL_COORD, "try_listen mtx try acq");
+
     std::lock_guard<std::mutex> lock(comm_sockets_mtx_);
-    LOG_HCL_TRACE(HCL_COORD, "try_listen mtx acq");
+
     std::vector<pollfd> sockets_to_listen;
     {
         for (int socket : comm_sockets_)
@@ -365,17 +362,17 @@ void hccl_coordinator::process_sync_between_ranks_msg(hccl_bootstrap_general_pay
                      hccl_comm_size_);
         sync_ranks_.clear();
         // clang-format off
-        parallel_for_void(auto const &coord_sockets : rank_sockets, std::bind([&](auto &coord_sockets) {
-            auto socket = coord_sockets.second.send_socket;
+        parallel_for_void(auto const &coord_sockets : rank_sockets, [&]() {
+            auto sendSocket = coord_sockets.second.send_socket;
             bool sync_between_ranks_finished = true;
-            LOG_HCL_TRACE(HCL_COORD, "Sending data to socket: {}", socket);
-            if (!sendAllToSocket(socket, reinterpret_cast<const void*>(&sync_between_ranks_finished), sizeof(bool)))
+            LOG_HCL_TRACE(HCL_COORD, "Sending data to socket: {}", sendSocket);
+            if (!sendAllToSocket(sendSocket, reinterpret_cast<const void*>(&sync_between_ranks_finished), sizeof(bool)))
             {
-                LOG_HCL_ERR(HCL_COORD, "Socket={} send failed.", socket);
+                LOG_HCL_ERR(HCL_COORD, "Socket={} send failed.", sendSocket);
                 return;
             }
             LOG_HCL_TRACE(HCL_COORD, "{} bytes sent.", sizeof(bool));
-        }, coord_sockets));
+        });
         // clang-format on
         LOG_HCL_INFO(HCL_COORD, "Coordinator sync Done");
     }
@@ -419,13 +416,13 @@ void hccl_coordinator::process_comm_destroy_msg(hccl_bootstrap_general_payload_t
     {
         sync_ranks_.clear();
         // clang-format off
-        parallel_for_void(auto const &coord_sockets : rank_sockets, std::bind([&](auto &coord_sockets) {
+        parallel_for_void(auto const &coord_sockets : rank_sockets, [&]() {
             bool comm_init_rank_finished = true;
-            auto socket = coord_sockets.second.send_socket;
-            LOG_HCL_DEBUG(HCL_COORD, "Sending data to socket: {}", socket);
-            if (!sendAllToSocket(socket, reinterpret_cast<const void*>(&comm_init_rank_finished), sizeof(bool)))
+            auto sendSocket = coord_sockets.second.send_socket;
+            LOG_HCL_DEBUG(HCL_COORD, "Sending data to socket: {}", sendSocket);
+            if (!sendAllToSocket(sendSocket, reinterpret_cast<const void*>(&comm_init_rank_finished), sizeof(bool)))
             {
-                LOG_HCL_ERR(HCL_COORD, "Socket={} send failed.", socket);
+                LOG_HCL_ERR(HCL_COORD, "Socket={} send failed.", sendSocket);
                 return;
             }
 
@@ -452,7 +449,7 @@ void hccl_coordinator::process_comm_destroy_msg(hccl_bootstrap_general_payload_t
             comm_sockets_.erase(coord_sockets.second.send_socket);
             comm_sockets_.erase(coord_sockets.second.recv_socket);
             comm_sockets_.erase(coord_sockets.second.log_socket);
-        }, coord_sockets));
+        });
         // clang-format on
 
         LOG_HCL_INFO(HCL_COORD, "Closed all sockets connected to coordinator, closing coordinator");
@@ -561,7 +558,7 @@ void hccl_coordinator::processCommInitHandshake1(int socket, RankInfoHeader& pay
                      sizeof(RankInfoHeader) * hccl_comm_size_);
         sync_ranks_.clear();
 
-        int boxSize            = m_nodeMapping.begin()->second;
+        int boxSize = m_nodeMapping.begin()->second;
         for (auto node : m_nodeMapping)
         {
             if (node.second != boxSize)
@@ -579,17 +576,17 @@ void hccl_coordinator::processCommInitHandshake1(int socket, RankInfoHeader& pay
         LOG_HCL_DEBUG(HCL_COORD, "Validated box_size={} for all boxes", boxSize);
 
         // clang-format off
-        parallel_for_void(auto const &coord_sockets : rank_sockets, std::bind([&](auto &coord_sockets) {
-            auto socket = coord_sockets.second.send_socket;
-            LOG_HCL_DEBUG(HCL_COORD, "Sending data to socket: {}", socket);
+        parallel_for_void(auto const &coord_sockets : rank_sockets, [&]() {
+            auto sendSocket = coord_sockets.second.send_socket;
+            LOG_HCL_DEBUG(HCL_COORD, "Sending data to socket: {}", sendSocket);
             size_t bytes_to_send = sizeof(RankInfoHeader) * hccl_comm_size_;
-            if (!sendAllToSocket(socket, reinterpret_cast<const void*>(m_hcclRankInfoHeaders.data()), bytes_to_send))
+            if (!sendAllToSocket(sendSocket, reinterpret_cast<const void*>(m_hcclRankInfoHeaders.data()), bytes_to_send))
             {
-                LOG_HCL_ERR(HCL_COORD, "Socket={} send failed.", socket);
+                LOG_HCL_ERR(HCL_COORD, "Socket={} send failed.", sendSocket);
                 return;
             }
             LOG_HCL_DEBUG(HCL_COORD, "{} bytes sent.", bytes_to_send);
-        }, coord_sockets));
+        });
         // clang-format on
         m_hcclRankInfoHeaders.clear();
         m_hcclRankInfoHeaders.shrink_to_fit();
@@ -652,23 +649,23 @@ void hccl_coordinator::processCommInitHandshake2(int socket, std::vector<uint8_t
         sync_ranks_.clear();
 
         // clang-format off
-        parallel_for_void(auto const &coord_sockets : rank_sockets, std::bind([&](auto &coord_sockets) {
-            auto socket = coord_sockets.second.send_socket;
+        parallel_for_void(auto const &coord_sockets : rank_sockets, [&]() {
+            auto sendSocket = coord_sockets.second.send_socket;
             auto rank   = coord_sockets.first;
             size_t bytes_to_send = sizeof(RemoteDeviceConnectionInfo) * hccl_comm_size_;
-            LOG_HCL_DEBUG(HCL_COORD, "Sending ({}) bytes data to rank({}) on socket({})", bytes_to_send, rank, socket);
-            if (!sendAllToSocket(socket, reinterpret_cast<const void*>(m_hcclRemoteDevices[rank].data()), bytes_to_send))
+            LOG_HCL_DEBUG(HCL_COORD, "Sending ({}) bytes data to rank({}) on socket({})", bytes_to_send, rank, sendSocket);
+            if (!sendAllToSocket(sendSocket, reinterpret_cast<const void*>(m_hcclRemoteDevices[rank].data()), bytes_to_send))
             {
-                LOG_HCL_ERR(HCL_COORD, "Socket={} hcclRemoteDevices send failed.", socket);
+                LOG_HCL_ERR(HCL_COORD, "Socket={} hcclRemoteDevices send failed.", sendSocket);
                 return;
             }
-            if (!sendAllToSocket(socket, &m_bootstrapValidationError, sizeof(m_bootstrapValidationError)))
+            if (!sendAllToSocket(sendSocket, &m_bootstrapValidationError, sizeof(m_bootstrapValidationError)))
             {
-                LOG_HCL_ERR(HCL_COORD, "Socket={} bootstrapValidationError bit send failed.", socket);
+                LOG_HCL_ERR(HCL_COORD, "Socket={} bootstrapValidationError bit send failed.", sendSocket);
                 return;
             }
             LOG_HCL_TRACE(HCL_COORD, "{} bytes sent.", bytes_to_send + sizeof(m_bootstrapValidationError));
-        }, coord_sockets));
+        });
         // clang-format on
         for (uint32_t rank = 0; rank < (unsigned)hccl_comm_size_; rank++)
         {
@@ -735,15 +732,16 @@ void hccl_coordinator::processCollectiveLogMsg(const CollectiveLogMessage& msg)
     std::chrono::system_clock::time_point from_ms(ms);
 
     LOG_DEBUG(HCL_COORD,
-             "[{:%H:%M:%S}.{:>03}] Rank({}) called ({}, {}, {}, {}, {}, {})",
-             from_ms, ms.count() % 1000000ull,
-             msg.rank,
-             msg.op,
-             msg.params.count,
-             msg.params.datatype,
-             msg.params.reduceOp,
-             msg.params.peer,
-             msg.params.root);
+              "[{:%H:%M:%S}.{:>03}] Rank({}) called ({}, {}, {}, {}, {}, {})",
+              from_ms,
+              ms.count() % 1000000ull,
+              msg.rank,
+              msg.op,
+              msg.params.count,
+              msg.params.datatype,
+              msg.params.reduceOp,
+              msg.params.peer,
+              msg.params.root);
 
     m_collectiveLogger.processLogMessage(msg);
 }

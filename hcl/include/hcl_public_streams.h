@@ -1,12 +1,12 @@
 #pragma once
 
-#include <cstdint>           // for uint64_t, uint32_t
-#include <memory>            // for allocator, unique_ptr
-#include <set>               // for set
-#include <string>            // for string
+#include <cstdint>  // for uint64_t, uint32_t
+#include <memory>   // for allocator, unique_ptr
+#include <set>      // for set
+#include <string>   // for string
 
-#include "hcl_exceptions.h"  // for HclException
-#include "scal.h"            // for scal_handle_t, scal_comp_group_handle_t
+#include "hcl_exceptions.h"          // for HclException
+#include "scal.h"                    // for scal_handle_t, scal_comp_group_handle_t
 #include "hl_logger/hllog_core.hpp"  // for hl_logger::LoggerSPtr
 
 #ifndef HCL_API_CALL

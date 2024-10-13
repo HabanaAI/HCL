@@ -297,4 +297,13 @@ hcclResult_t hcclGroupEnd_impl();
  * is ccb half full on the fastest micro stream
  */
 bool hcclIsACcbHalfFull_impl(const unsigned archStreamIdx);
+
+/* Associate device and context with Network layer */
+hcclResult_t hcclDeviceInit_impl(void* device, void* context);
+/*
+ * Used for the profiler timer in HPT.
+ * creates a marker event in the profiler traces. two markers can be used to measure a time window
+ */
+void hcclSetTraceMarker_impl(const synStreamHandle stream_handle, uint32_t val);
+
 }  // namespace HclGen2

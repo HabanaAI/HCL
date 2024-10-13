@@ -35,11 +35,11 @@ typedef std::array<AggregatedEntry, GEN2ARCH_HLS_BOX_SIZE> AggregatedEntryArray;
 class SendRecvAggregatorBase
 {
 public:
-    SendRecvAggregatorBase()                              = default;
-    virtual ~SendRecvAggregatorBase()                     = default;
-    SendRecvAggregatorBase(SendRecvAggregatorBase&&)      = delete;
-    SendRecvAggregatorBase(const SendRecvAggregatorBase&) = delete;
-    SendRecvAggregatorBase& operator=(SendRecvAggregatorBase&&) = delete;
+    SendRecvAggregatorBase()                                         = default;
+    virtual ~SendRecvAggregatorBase()                                = default;
+    SendRecvAggregatorBase(SendRecvAggregatorBase&&)                 = delete;
+    SendRecvAggregatorBase(const SendRecvAggregatorBase&)            = delete;
+    SendRecvAggregatorBase& operator=(SendRecvAggregatorBase&&)      = delete;
     SendRecvAggregatorBase& operator=(const SendRecvAggregatorBase&) = delete;
 
     virtual bool willFlush();

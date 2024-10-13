@@ -12,39 +12,44 @@
 #include <thread>
 #include <chrono>
 #include <set>
+#include <unordered_set>
+#include <sys/socket.h>
 
 #include "synapse_api_types.h"  // for synDeviceId
 #include "common/pci_ids.h"
 #include "hlthunk.h"
 #include "hcl_api_types.h"
-#include "interfaces/hcl_unique_sorted_vector.h"
 
 #include "hcl_log_manager.h"
 #include "hcl_defs.h"
 #include "hcl_bits.h"
 
-#define DISABLE_AVX_MODE                            _POWER_PC_
+#include "hcl_inc.h"
 
-#define NO_DEVICE_ID ((synDeviceId)-1)
+#define DISABLE_AVX_MODE _POWER_PC_
+
+static constexpr synDeviceId SYN_VALID_DEVICE_ID = 0;
+
 #define HCL_INVALID_COMM (HCL_Comm)(-1)
-#define HNIC_BUF_SIZE (128)
+#define HNIC_BUF_SIZE    (128)
 
 // align to size, size should be power of 2
 // macro aligned to LKD implementation
-#define ALIGN_UP(addr, size) (((addr) + (size) -1) & ~((size) -1))
+#define ALIGN_UP(addr, size) (((addr) + (size) - 1) & ~((size) - 1))
 
-const uint32_t DEFAULT_BOX_SIZE        = 8;
-const HCL_Rank INVALID_RANK            = ((HCL_Rank)-1);
-const uint64_t INVALID_SCALEUP_GROUP   = INVALID_RANK;
-const int32_t  INVALID_NIC             = (int32_t)-1;
+const uint32_t DEFAULT_BOX_SIZE      = 8;
+const uint32_t INVALID_SCALEUP_GROUP = (uint32_t)-1;
+const int32_t  INVALID_NIC           = -1;
 
 constexpr uint32_t NUM_SCALEUP_PORTS_PER_CONNECTION = 3;
-const unsigned DEFAULT_COMMUNICATORS_SIZE = 16; // Currently its acting as MAX comms (SW-123392)
+const unsigned     DEFAULT_COMMUNICATORS_SIZE       = 16;  // Currently its acting as MAX comms (SW-123392)
+
+constexpr uint32_t LONG_MON_DWORD_SIZE = 4;
 
 // for HLS3PCIE, should be move to hal_hls3pcie but required here because of GaudiNicsQPS data type
 static constexpr unsigned HLS3PCIE_NUM_SCALEUP_PORTS_PER_CONNECTION = 6;
 
-const uint32_t HCL_MAC_BYTE_SIZE = 6; // size of a MAC address in bytes
+const uint32_t HCL_MAC_BYTE_SIZE = 6;  // size of a MAC address in bytes
 
 // Indicates that request was not created by HCL
 const uint64_t HCL_REQUEST_DIGITAL_SIGNATURE = 0xDEADBABA;
@@ -57,16 +62,16 @@ const uint32_t MAX_SUPPORTED_RANKS = 8192;  // max value of GCFG_HCL_MAX_RANKS
 
 // RankInfo constants and structures
 #define HOSTNAME_MAX_LENGTH 256
-const int MAX_QPS_PER_CONNECTION = 6;
-const int MAX_QPS_SETS_PER_CONNECTION = 4;
-const int MAX_RANK_INFO_NICS     = 24;
+const int          MAX_QPS_PER_CONNECTION      = 6;
+const int          MAX_QPS_SETS_PER_CONNECTION = 4;
+const int          MAX_RANK_INFO_NICS          = 24;
 constexpr unsigned COMPACT_RANK_INFO_NICS      = 3;
 constexpr unsigned MAX_COMPACT_RANK_INFO_NICS =
     std::max(NUM_SCALEUP_PORTS_PER_CONNECTION,
              HLS3PCIE_NUM_SCALEUP_PORTS_PER_CONNECTION);  // support up to 6 scaleup ports
-const int HOST_MICRO_ARCH_STREAMS     = 2;
-const int MAX_HNIC_CONNECTIONS        = HOST_MICRO_ARCH_STREAMS;
-const int MAX_HNIC_CONNECTION_SETS    = 16;  // Limited by qpSetIndex size (4 bits)
+const int HOST_MICRO_ARCH_STREAMS  = 2;
+const int MAX_HNIC_CONNECTIONS     = HOST_MICRO_ARCH_STREAMS;
+const int MAX_HNIC_CONNECTION_SETS = 16;  // Limited by qpSetIndex size (4 bits)
 
 const int SINGLE_QP_SET_INDEX = 0;
 const int SINGLE_QP_SET       = 1;
@@ -135,12 +140,13 @@ struct HostNicConnectInfo
  */
 struct RankInfoHeader
 {
-    int hcclRank = 0;
-    int boxSize;
+    HCL_Rank hcclRank = 0;
+    uint32_t boxSize;
     // device info
-    uint32_t hwModuleID;
-    int      hostnameLength                = strlen("UNKNOWN");
-    char     hostname[HOSTNAME_MAX_LENGTH] = "UNKNOWN";
+    uint32_t         hwModuleID;
+    int              hostnameLength                = strlen("UNKNOWN");
+    char             hostname[HOSTNAME_MAX_LENGTH] = "UNKNOWN";
+    sockaddr_storage caddr                         = {0};  // address of coordinator (ip + port)
 };
 
 /**
@@ -151,11 +157,6 @@ struct RemoteInfo
     GaudiNicQPs        gaudiNicQPs;  // QPs on active NICs
     HostNicConnectInfo hostNicConns;
 };
-
-/**
- * @brief initialize RemoteInfo.indexToNic map in loopback mode
- */
-#define LOOPBACK_NIC_INDEX_INIT(index, rank) (index + rank * COMPACT_RANK_INFO_NICS)
 
 /**
  * @brief holds device common fields for local and remote rank
@@ -208,10 +209,16 @@ struct RemoteDeviceConnectionInfo
     RemoteInfo     remoteInfo;  // remote connections to current rank
 };
 
+struct portMaskConfig
+{
+    uint64_t hwPortsMask;    /* 0-based */
+    uint64_t hwExtPortsMask; /* 0-based */
+};
+
 using hcl_handle_list_t = std::list<HCL_Request>;
 
 class IHclNic;
-typedef std::shared_ptr<IHclNic>    spHclNic;
+typedef std::shared_ptr<IHclNic> spHclNic;
 
 enum HclConfigType
 {
@@ -227,16 +234,6 @@ enum HclConfigType
     HL338       = 9
 };
 
-// The following enum is used to define dynamic ports scheme configuration per communicator
-// The feature is disabled temporarily and only DEFAULT_SPOTLIGHT ports configuration is supported
-enum e_spotlighPortsConfigurations
-{
-    DEFAULT_SPOTLIGHT  = 0,
-    SCALEUP_SPOTLIGHT  = 0,
-    SCALEOUT_SPOTLIGHT = 0,
-    MAX_SPOTLIGHT      = 2
-};
-
 using HclRankAndCommSet = std::set<std::pair<HCL_Comm, HCL_Rank>>;
 
 std::ostream& operator<<(std::ostream& os, const HCL_CollectiveOp& op);
@@ -245,4 +242,14 @@ typedef uint32_t HCL_StreamId;
 
 typedef uint32_t HCL_HwModuleId;
 
-std::ostream& operator<<(std::ostream& os, const std::set<HCL_HwModuleId>& hwModules);
+// a set of module id numbers that belong one of the nic macros sets
+typedef std::unordered_set<HCL_HwModuleId> DevicesSet;
+
+namespace std
+{
+std::ostream& operator<<(std::ostream& os, const DevicesSet& hwModules);
+}
+
+using remote_devices_t       = std::vector<RemoteDeviceConnectionInfo>;
+using remote_devices_array_t = std::vector<remote_devices_t>;
+using ranks_headers_t        = std::vector<RankInfoHeader>;

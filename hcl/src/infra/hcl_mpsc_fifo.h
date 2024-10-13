@@ -10,11 +10,11 @@
 #include <cstdint>
 
 #ifndef likely
-#define likely(x)      __builtin_expect(!!(x), 1)
+#define likely(x) __builtin_expect(!!(x), 1)
 #endif
 
 #ifndef unlikely
-#define unlikely(x)    __builtin_expect(!!(x), 0)
+#define unlikely(x) __builtin_expect(!!(x), 0)
 #endif
 
 static inline uint64_t interlockedCompareExchange(volatile uint64_t* p, uint64_t old_val, uint64_t new_val)
@@ -23,7 +23,7 @@ static inline uint64_t interlockedCompareExchange(volatile uint64_t* p, uint64_t
     return __sync_val_compare_and_swap(p, old_val, new_val);
 }
 
-template <class T, uint32_t CAPACITY>
+template<class T, uint32_t CAPACITY>
 class mpsc_fifo_t
 {
     struct node_t
@@ -34,8 +34,8 @@ class mpsc_fifo_t
         node_t() : m_dataReady(0), m_data(nullptr) {}
     };
 
-    #pragma pack(push)
-    #pragma pack(1)
+#pragma pack(push)
+#pragma pack(1)
     union index_t
     {
         struct
@@ -45,17 +45,17 @@ class mpsc_fifo_t
         };
         volatile uint64_t raw;
 
-        index_t(uint64_t _raw = 0) :raw(_raw) { ; }
-        operator uint64_t () { return raw; }
-        operator volatile uint64_t* () { return &raw; }
-        bool operator == (const index_t& _other) { return this->raw == _other.raw; }
+        index_t(uint64_t _raw = 0) : raw(_raw) { ; }
+        operator uint64_t() { return raw; }
+        operator volatile uint64_t*() { return &raw; }
+        bool operator==(const index_t& _other) { return this->raw == _other.raw; }
     };
-    #pragma pack(pop)
+#pragma pack(pop)
 
 private:
-    index_t   m_head;
-    index_t   m_tail;
-    node_t    m_nodes[CAPACITY];
+    index_t m_head;
+    index_t m_tail;
+    node_t  m_nodes[CAPACITY];
 
     static inline index_t nextIndex(index_t index)
     {
@@ -89,24 +89,23 @@ public:
         while (true)
         {
             current_tail = m_tail;
-            new_tail = nextIndex(current_tail);
+            new_tail     = nextIndex(current_tail);
 
-            if (unlikely(new_tail.index == m_head.index)) //max capacity reached
+            if (unlikely(new_tail.index == m_head.index))  // max capacity reached
                 return false;
 
             // the only "sync" point between producer threads.
             // try atomically change current tail with the new one
             old_tail = interlockedCompareExchange(m_tail, current_tail, new_tail);
-            if (likely(old_tail == current_tail))
-                break;
+            if (likely(old_tail == current_tail)) break;
 
-            //other thread updated before us, try once more
+            // other thread updated before us, try once more
         }
 
         // now the new tail is visible to popHead() function, but data is still missing
         // and can't be consumed until the "ready" flag is set
         // so, write the data to the new tail and set the flag
-        m_nodes[current_tail.index].m_data = tail;
+        m_nodes[current_tail.index].m_data      = tail;
         m_nodes[current_tail.index].m_dataReady = 1;
 
         return true;
@@ -120,7 +119,8 @@ public:
      */
     bool peekHead(T& head)
     {
-        if (unlikely(m_nodes[m_head.index].m_dataReady == 0)) //queue is empty, or data is being written to the head, but still not ready
+        if (unlikely(m_nodes[m_head.index].m_dataReady ==
+                     0))  // queue is empty, or data is being written to the head, but still not ready
             return false;
 
         head = m_nodes[m_head.index].m_data;
@@ -138,6 +138,6 @@ public:
     void popHead()
     {
         m_nodes[m_head.index].m_dataReady = 0;
-        m_head = nextIndex(m_head);
+        m_head                            = nextIndex(m_head);
     }
 };

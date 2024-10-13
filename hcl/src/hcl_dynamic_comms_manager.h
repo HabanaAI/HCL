@@ -6,6 +6,7 @@
 #include "interfaces/hcl_hal.h"  // for Hal
 
 class HclDynamicCommunicator;
+class Gen2ArchServerDef;
 
 class HclDynamicCommsManager
 {
@@ -14,9 +15,8 @@ public:
     virtual ~HclDynamicCommsManager();
 
     HclDynamicCommunicator& getComm(HCL_Comm commId);
-    HCL_Comm                createNextComm(hcl::HalPtr hal);
+    HCL_Comm                createNextComm(hcl::HalPtr hal, Gen2ArchServerDef& serverDef);
     bool                    isCommExist(HCL_Comm comm);
-    bool                    createHclCommWorld(hcl::HalPtr hal);
 
     int getNumOfActiveComms() const;
 

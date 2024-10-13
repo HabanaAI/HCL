@@ -46,6 +46,7 @@ include_directories(
     $ENV{HCL_SRC_PKG_DIR}/hcl/include/internal/
     $ENV{HCL_SRC_PKG_DIR}/hcl/src/
     $ENV{HCL_SRC_PKG_DIR}/hcl/src/hccl/
+    $ENV{HCL_SRC_PKG_DIR}/hcl/src/hlcp/
     $ENV{HCL_SRC_PKG_DIR}/hcl/src/infra/
 )
 

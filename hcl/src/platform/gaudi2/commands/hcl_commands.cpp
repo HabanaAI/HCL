@@ -3,19 +3,20 @@
 #include <cstdint>  // for uint32_t, uint64_t
 #include <vector>   // for vector
 #include "hcl_api_types.h"
-#include "hcl_utils.h"                               // for VERIFY
-#include "infra/scal/gen2_arch_common/scal_names.h"  // for SchedulersIndex
-#include "hcl_log_manager.h"                         // for LOG_*
-#include "platform/gaudi2/context_manager.h"         // for ContextManager
-#include "platform/gaudi2/context_manager_priv.h"    // for RequiredCollecti...
-#include "platform/gaudi2/hcl_count_descriptor.h"    // for CountDescriptor
-#include "platform/gaudi2/hcl_graph_sync.h"          // for HclGraphSyncGaudi2
-#include "platform/gaudi2/hcl_packets.h"             // for serializeAllocBa...
-#include "platform/gaudi2/port_mapping.h"            // for Gaudi2DevicePortMapping
-#include "platform/gaudi2/send_recv_aggregator.h"    // for SendRecvAggregator
-#include "sched_pkts.h"                              // for g2fw
+#include "hcl_utils.h"  // for VERIFY
+#include "platform/gen2_arch_common/hcl_packets_utils.h"
+#include "infra/scal/gen2_arch_common/scal_names.h"          // for SchedulersIndex
+#include "hcl_log_manager.h"                                 // for LOG_*
+#include "platform/gaudi2/context_manager.h"                 // for ContextManager
+#include "platform/gaudi2/context_manager_priv.h"            // for RequiredCollecti...
+#include "platform/gaudi2/hcl_count_descriptor.h"            // for CountDescriptor
+#include "platform/gaudi2/hcl_graph_sync.h"                  // for HclGraphSyncGaudi2
+#include "platform/gaudi2/hcl_packets.h"                     // for serializeAllocBa...
+#include "platform/gaudi2/send_recv_aggregator.h"            // for SendRecvAggregator
 #include "platform/gen2_arch_common/send_recv_aggregator.h"  // for SendRecvEntry
 #include "platform/gaudi2/nic_passthrough_handler.h"         // for pRecordWithMetadata
+#include "profiler/gaudi2_global_stm_defs.h"
+#include "sched_pkts.h"  // for g2fw
 
 namespace hcl
 {
@@ -59,7 +60,7 @@ static uint32_t calculateRemoteIndex(std::array<int, HLS2_BOX_SIZE>& deviceToRem
                                      bool                            isSend,
                                      bool                            isComplexCollective,
                                      bool                            isReductionInIMB,
-                                     bool                            reproReduction,
+                                     bool                            isReduction,
                                      bool                            isHierarchical,
                                      uint64_t                        count,
                                      uint64_t                        cellCount,
@@ -74,7 +75,7 @@ static uint32_t calculateRemoteIndex(std::array<int, HLS2_BOX_SIZE>& deviceToRem
     switch (currentOp)
     {
         case eHCLReduceScatter:
-            if (isSend || reproReduction)
+            if (isSend || isReduction)
             {
                 return deviceToRemoteIndex[remoteDevice];
             }
@@ -158,8 +159,8 @@ void HclCommandsGaudi2::serializeDmaCommand(hcl::ScalStreamBase& scalStream, Dma
                                                 cmd.m_isForScaleout,
                                                 cmd.m_useCasting,
                                                 cmd.m_numberOfRanks,
-                                                cmd.m_numberOfReproBuffers,
-                                                cmd.m_indexOfReproBuffer,
+                                                cmd.m_numberOfSubBuffers,
+                                                cmd.m_indexOfSubBuffer,
                                                 is16BitMemcpy,
                                                 cmd.m_soAddressLSB2,
                                                 cmd.m_isBFloat,
@@ -193,8 +194,8 @@ void HclCommandsGaudi2::serializeMemsetCommand(hcl::ScalStreamBase& scalStream,
                                                uint32_t             poolId,
                                                bool                 isForScaleout,
                                                uint32_t             numberOfRanks,
-                                               uint32_t             numberOfReproBuffers,
-                                               unsigned             indexOfReproBuffer,
+                                               uint32_t             numberOfSubBuffers,
+                                               unsigned             indexOfSubBuffer,
                                                uint32_t             memsetValue)
 {
     uint32_t tempDmaType;
@@ -221,8 +222,8 @@ void HclCommandsGaudi2::serializeMemsetCommand(hcl::ScalStreamBase& scalStream,
                                                 isForScaleout,
                                                 false,
                                                 numberOfRanks,
-                                                numberOfReproBuffers,
-                                                indexOfReproBuffer,
+                                                numberOfSubBuffers,
+                                                indexOfSubBuffer,
                                                 memsetValue);
 }
 
@@ -244,11 +245,12 @@ void HclCommandsGaudi2::serializeInitSequenceCommands(hcl::ScalStreamBase&      
     // 3 signals (1 for each engine (V3)) for global dma command +
     // 3 signals for each memset of buffers (1 for each engine (V3))
     // *global DMA command does not signal to CG if not V3.
-    unsigned numberOfSignals = contextManager.m_portMapping.getNumScaleUpPorts() + sibAddressesAndSizes.size();
+    unsigned numberOfSignals =
+        contextManager.getServerConnectivity().getNumScaleUpPorts(/*HCL_Comm comm*/) + sibAddressesAndSizes.size();
 
-    if (contextManager.m_portMapping.isUpateScaleOutGlobalContextRequired())
+    if (contextManager.getServerConnectivity().isUpdateScaleOutGlobalContextRequired(/*HCL_Comm comm*/))
     {
-        numberOfSignals += contextManager.m_portMapping.getMaxNumScaleOutPorts();
+        numberOfSignals += contextManager.getServerConnectivity().getMaxNumScaleOutPorts();
     }
 
     SchedArcCommandsGaudi2::serializeAllocBarrierCommand(recvStream,
@@ -261,12 +263,10 @@ void HclCommandsGaudi2::serializeInitSequenceCommands(hcl::ScalStreamBase&      
         soAddressLSB,
         graphSync.getSoConfigValue(COMP_SYNC_GROUP_CMAX_TARGET - numberOfSignals, true));
 
-    // Use RR flow as default in order to enable RR and non RR mode to be able to work simultaneously
-
     for (size_t index = 0; index < sibAddressesAndSizes.size(); index++)
     {
         LOG_TRACE(HCL,
-                  "RR | intermediateBaseAddress[{}] 0x{:x}, slice size: 0x{:x}",
+                  "intermediateBaseAddress[{}] 0x{:x}, slice size: 0x{:x}",
                   index,
                   sibAddressesAndSizes[index].sibBaseAddr,
                   sibAddressesAndSizes[index].sibSize);
@@ -279,17 +279,17 @@ void HclCommandsGaudi2::serializeInitSequenceCommands(hcl::ScalStreamBase&      
                                                 sibAddressesAndSizes[1].sibBaseAddr,
                                                 sibAddressesAndSizes[1].sibSize);
 
-    if (contextManager.m_portMapping.isUpateScaleOutGlobalContextRequired())
+    if (contextManager.getServerConnectivity().isUpdateScaleOutGlobalContextRequired(/*HCL_Comm comm*/))
     {
         contextManager.serializeUpdateGlobalContextScaleOut(recvSOStream, soAddressLSB & 0xffffffff);
     }
     serializeGlobalDmaCommand(dmaStream, soAddressLSB & 0xffffffff, sibAddressesAndSizes, fwStrideSize, fwBaseAddress);
 
-    uint8_t streamCtxtID = hcl::encodeStreamContextID(apiId, hcl::DEFAULT_STREAM_IDX);
+    uint8_t streamCtxtID = getEdmaStreamCtxtId(apiId, hcl::DEFAULT_STREAM_IDX);
     // sibAddressesAndSizes = pools per stream
-    // {stream 0 {SO_RR_POOL=pool 0, SU_RR_POOL+REDUCE_POOl=pool 1},
-    // {stream 1 {SO_RR_POOL=pool 0, SU_RR_POOL+REDUCE_POOl=pool 1},
-    // {stream 2 {SO_RR_POOL=pool 0, SU_RR_POOL+REDUCE_POOl=pool 1}}
+    // {stream 0 {SO_POOL=pool 0, SU_POOL+REDUCE_POOl=pool 1},
+    // {stream 1 {SO_POOL=pool 0, SU_POOL+REDUCE_POOl=pool 1},
+    // {stream 2 {SO_POOL=pool 0, SU_POOL+REDUCE_POOl=pool 1}}
     for (auto& addrAndSize : sibAddressesAndSizes)
     {
         serializeMemsetCommand(dmaStream,
@@ -340,7 +340,7 @@ void HclCommandsGaudi2::serializeScaleUpCollectiveOp(hcl::ScalStreamBase&   scal
                                                           scaleupCollectiveOp.m_isSend,
                                                           scaleupCollectiveOp.m_isComplexCollective,
                                                           scaleupCollectiveOp.m_isReductionInIMB,
-                                                          scaleupCollectiveOp.m_reproReduction,
+                                                          scaleupCollectiveOp.m_isReduction,
                                                           scaleupCollectiveOp.m_isHierarchical,
                                                           scaleupCollectiveOp.m_count,
                                                           scaleupCollectiveOp.m_cellCount,
@@ -379,7 +379,7 @@ void HclCommandsGaudi2::serializeScaleUpCollectiveOp(hcl::ScalStreamBase&   scal
 
     if (countDesc.isShort() && ((scaleupCollectiveOp.m_baseAddress % 16) == 0))
     {
-        if (scaleupCollectiveOp.m_isSend || !scaleupCollectiveOp.m_reproReduction)
+        if (scaleupCollectiveOp.m_isSend || !scaleupCollectiveOp.m_isReduction)
         {
             SchedArcCommandsGaudi2::serializeCollectiveSendShortCommand(
                 scalStream,
@@ -408,10 +408,12 @@ void HclCommandsGaudi2::serializeScaleUpCollectiveOp(hcl::ScalStreamBase&   scal
                 countDesc.m_cacheLineCount,
                 scaleupCollectiveOp.m_dynamicComm.getRankInScaleupGroup(),
                 scaleupCollectiveOp.m_accuIndex,
-                scaleupCollectiveOp.m_rrIndex,
+                scaleupCollectiveOp.m_subBuffIndex,
                 scaleupCollectiveOp.m_numOfRanks,
                 countDesc.numberOfActivatedNics(),
-                scaleupCollectiveOp.m_poolId);
+                scaleupCollectiveOp.m_poolId,
+                scaleupCollectiveOp.m_notifyRndvAck,
+                scaleupCollectiveOp.m_waitForRndvAcks);
         }
     }
     else
@@ -477,7 +479,8 @@ void HclCommandsGaudi2::serializeScaleOutCollectiveOp(hcl::ScalStreamBase&    sc
     // get the rsi descriptors
     std::array<uint16_t, 4> qpnDesc = {0};
 
-    nics_mask_t scaleOutPorts = scaleoutCollectiveOp.m_contextManager.m_portMapping.getScaleOutPorts();
+    nics_mask_t scaleOutPorts =
+        scaleoutCollectiveOp.m_contextManager.getServerConnectivity().getScaleOutPorts(/*HCL_Comm comm*/);
 
     qpnDesc[0] = calculateRsi(scaleoutCollectiveOp.m_remoteRankToRsi,
                               scaleoutCollectiveOp.m_collectiveOp,
@@ -494,8 +497,9 @@ void HclCommandsGaudi2::serializeScaleOutCollectiveOp(hcl::ScalStreamBase&    sc
                                                                   scaleoutCollectiveOp.m_qpSet);
     }
 
-    CountDescriptor countDesc(scaleoutCollectiveOp.m_cellCount,
-                              scaleoutCollectiveOp.m_contextManager.m_portMapping.getNumScaleOutPorts());
+    CountDescriptor countDesc(
+        scaleoutCollectiveOp.m_cellCount,
+        scaleoutCollectiveOp.m_contextManager.getServerConnectivity().getNumScaleOutPorts(/*HCL_Comm comm*/));
 
     SchedArcCommandsGaudi2::serializeCollectiveSendScaleOutCommand(scalStream,
                                                                    scaleoutCollectiveOp.m_collectiveContextIndex,
@@ -644,9 +648,14 @@ void HclCommandsGaudi2::flushAggregator(hcl::ScalStreamBase&       scalStream,
 void HclCommandsGaudi2::serializeAllocBarrierCommand(hcl::ScalStreamBase& scalStream,
                                                      unsigned             schedIdx,
                                                      uint32_t             completionGroupIndex,
-                                                     uint32_t             requiredSobs)
+                                                     uint32_t             requiredSobs,
+                                                     llvm_vecsmall::SmallVector<uint32_t, MAX_STREAM_TO_INC>* fences)
 {
-    SchedArcCommandsGaudi2::serializeAllocBarrierCommand(scalStream, schedIdx, completionGroupIndex, requiredSobs);
+    SchedArcCommandsGaudi2::serializeAllocBarrierCommand(scalStream,
+                                                         schedIdx,
+                                                         completionGroupIndex,
+                                                         requiredSobs,
+                                                         fences);
 };
 
 void HclCommandsGaudi2::serializeLbwWriteCommand(hcl::ScalStreamBase& scalStream,
@@ -656,6 +665,23 @@ void HclCommandsGaudi2::serializeLbwWriteCommand(hcl::ScalStreamBase& scalStream
                                                  bool                 blockUntilCompletion)
 {
     SchedArcCommandsGaudi2::serializeLbwWriteCommand(scalStream, schedIdx, destination, data, blockUntilCompletion);
+};
+
+void HclCommandsGaudi2::serializeLbwWriteWithFenceDecCommand(hcl::ScalStreamBase& scalStream,
+                                                             unsigned             schedIdx,
+                                                             uint32_t             destination,
+                                                             uint32_t             data,
+                                                             uint32_t             fenceIndex,
+                                                             uint32_t             fenceTarget,
+                                                             bool                 blockUntilCompletion)
+{
+    SchedArcCommandsGaudi2::serializeLbwWriteWithFenceDecCommand(scalStream,
+                                                                 schedIdx,
+                                                                 destination,
+                                                                 data,
+                                                                 fenceIndex,
+                                                                 fenceTarget,
+                                                                 blockUntilCompletion);
 };
 
 void HclCommandsGaudi2::serializeFenceDecCommand(hcl::ScalStreamBase& scalStream,
@@ -769,4 +795,26 @@ void HclCommandsGaudi2::serializePdmaCommand(hcl::ScalStreamBase& scalStream,
                                                  streamIndex,
                                                  dataType,
                                                  sobAddr);
+}
+
+void HclCommandsGaudi2::serializeSetTraceMarker(hcl::ScalStreamBase& scalStream, unsigned schedIdx, uint32_t val)
+{
+    static bool initializedTraceMarkerValues = false;
+
+    if (!initializedTraceMarkerValues)
+    {
+        SchedArcCommandsGaudi2::serializeLbwWriteCommand(
+            scalStream,
+            schedIdx,
+            GAUDI2_SCHED_INSTANT_STM_ADDR(g2fw::CPU_ID_SCHED_ARC3, SCHED_INSTANT_EVENT_VALUE_SCHED_TYPE),
+            SCHED_STM_STREAM_PAYLOAD(0, g2fw::SCHED_TYPE_GARBAGE_REDUCTION));
+
+        initializedTraceMarkerValues = true;
+    }
+
+    SchedArcCommandsGaudi2::serializeLbwWriteCommand(
+        scalStream,
+        schedIdx,
+        GAUDI2_SCHED_INSTANT_STM_ADDR(g2fw::CPU_ID_SCHED_ARC3, SCHED_INSTANT_EVENT_TYPE_ID),
+        val << 16 | g2fw::SCHED_INST_EVENT_COLLECT_TIMESTAMP);
 }

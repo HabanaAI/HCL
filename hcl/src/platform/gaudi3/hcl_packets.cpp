@@ -282,7 +282,7 @@ void serializeSendRecvDesc(const bool                                  isSend,
     SET_FIELD(desc.fields.oper.reduction_opcode, reductionOpcode);
 
     // Valid if QPC.transport_type == RC use a compression
-    SET_FIELD(desc.fields.oper.compression, 0);
+    SET_FIELD(desc.fields.oper.compression, (uint8_t)GCFG_HCL_USE_NIC_COMPRESSION.value());
 
     // Read Clear - Used in the AXI USER when fetching the message data from the memory AXI_USER.ATOMIC_FETCH_ANC_CLR =
     // WQE.RC
@@ -432,11 +432,10 @@ void serializeCollectiveCommand(hcl::ScalStreamBase& scalStream,
     {
         residue = count - (cellCount * ScaleupGroupSize);
     }
-    LOG_TRACE(
-        HCL,
-        "{}: collectiveOp = {}, isSend = {}, isScaleUp = {}, qpn = {}, disregardRank = {}, buff = 0x{:x}, cellCount = {}, residue={}, hasBufferSize = {}, count = {},\
-        dcore = {}, ssm = {}, sobId = {}, ports_mask = {:024b}, reduceOp = 0x{:x}, dataType = {}, ScaleupGroupSize = {}, lagSize = {}, strideCount = {} on stream:{}",
-        __FUNCTION__,
+    PRINT_PACKET_TRACE(
+        scalStream,
+        "collectiveOp = {}, isSend = {}, isScaleUp = {}, qpn = {}, disregardRank = {}, buff = 0x{:x}, cellCount = {}, residue={}, hasBufferSize = {}, count = {}, \
+        dcore = {}, ssm = {}, sobId = {}, ports_mask = {:024b}, reduceOp = 0x{:x}, dataType = {}, ScaleupGroupSize = {}, lagSize = {}, strideCount = {}",
         collectiveOp,
         isSend,
         isScaleUp,
@@ -455,8 +454,7 @@ void serializeCollectiveCommand(hcl::ScalStreamBase& scalStream,
         dataType,
         ScaleupGroupSize,
         lagSize,
-        strideCount,
-        *(scalStream.getStreamName()));
+        strideCount);
 
     // fill in sched_arc_cmd_nic_passthrough_v2_t
     auto opCode = getOpCode(isSend, isScaleUp);
@@ -508,25 +506,24 @@ void serializeScaleupNonCollectiveCommand(hcl::ScalStreamBase& scalStream,
         reinterpret_cast<g3fw::sched_arc_cmd_nic_passthrough_v2_t*>(scalStream.getNextPtr(size));
     memset(command, 0, size);
 
-    LOG_TRACE(HCL,
-              "{}: isSend = {}, qpn = {}, buff = 0x{:x}, count = {},\
-        dcore = {}, ssm = {}, sobId = {}, ports_mask = {:024b}, dataType = {}, maxNumScaleUpNicsPerConnection={} on stream:{}",
-              __FUNCTION__,
-              isSend,
-              qpn,
-              buff,
-              count,
-              dcore,
-              ssm,
-              sobId,
-              ports_mask,
-              dataType,
-              maxNumScaleUpNicsPerConnection,
-              *(scalStream.getStreamName()));
+    PRINT_PACKET_TRACE(scalStream,
+                       "isSend = {}, qpn = {}, buff = 0x{:x}, count = {}, \
+                        dcore = {}, ssm = {}, sobId = {}, ports_mask = {:024b}, \
+                        dataType = {}, maxNumScaleUpNicsPerConnection={}",
+                       isSend,
+                       qpn,
+                       buff,
+                       count,
+                       dcore,
+                       ssm,
+                       sobId,
+                       ports_mask,
+                       dataType,
+                       maxNumScaleUpNicsPerConnection);
 
     // fill in sched_arc_cmd_nic_passthrough_v2_t
-    constexpr bool isScaleUp   = true;
-    auto           opCode      = getOpCode(isSend, isScaleUp);
+    constexpr bool isScaleUp = true;
+    auto           opCode    = getOpCode(isSend, isScaleUp);
     SET_FIELD(command->opcode, opCode);
     auto engineGroupType = getEngineGroupType(isSend, isScaleUp);
     SET_FIELD(command->engine_group_type, engineGroupType);
@@ -567,18 +564,16 @@ void serializeNicPassthroughCommand(hcl::ScalStreamBase&             scalStream,
         reinterpret_cast<g3fw::sched_arc_cmd_nic_passthrough_v2_t*>(scalStream.getNextPtr(size));
     memset(command, 0, size);
 
-    LOG_TRACE(HCL,
-              "{}: isSend = {}, credits={}, size={}, dupMask={:012b} on stream:{}",
-              __FUNCTION__,
-              isSend,
-              credits,
-              size,
-              record->m_dupMask,
-              *(scalStream.getStreamName()));
+    PRINT_PACKET_TRACE(scalStream,
+                       "isSend = {}, credits={}, size={}, dupMask={:012b}",
+                       isSend,
+                       credits,
+                       size,
+                       record->m_dupMask);
 
     // fill in sched_arc_cmd_nic_passthrough_v2_t
-    constexpr bool isScaleUp            = true;
-    auto           opCode               = getOpCode(isSend, isScaleUp);
+    constexpr bool isScaleUp = true;
+    auto           opCode    = getOpCode(isSend, isScaleUp);
     SET_FIELD(command->opcode, opCode);
     auto engineGroupType = getEngineGroupType(isSend, isScaleUp);
     SET_FIELD(command->engine_group_type, engineGroupType);
@@ -616,18 +611,17 @@ void serializeNicNopCommand(hcl::ScalStreamBase& scalStream,
         reinterpret_cast<g3fw::sched_arc_cmd_nic_passthrough_v2_t*>(scalStream.getNextPtr(size));
     memset(command, 0, size);
 
-    LOG_TRACE(HCL,
-              "{}: isSend = {}, credits={}, consumeDwords={}, size={}, dupMask={:012b} on stream:{}",
-              __FUNCTION__,
-              isSend,
-              credits,
-              consumeDwords,
-              size,
-              dupMask, *(scalStream.getStreamName()));
+    PRINT_PACKET_TRACE(scalStream,
+                       "isSend = {}, credits={}, consumeDwords={}, size={}, dupMask={:012b}",
+                       isSend,
+                       credits,
+                       consumeDwords,
+                       size,
+                       dupMask);
 
     // fill in sched_arc_cmd_nic_passthrough_v2_t
-    constexpr bool isScaleUp            = true;
-    auto           opCode               = getOpCode(isSend, isScaleUp);
+    constexpr bool isScaleUp = true;
+    auto           opCode    = getOpCode(isSend, isScaleUp);
     SET_FIELD(command->opcode, opCode);
     auto engineGroupType = getEngineGroupType(isSend, isScaleUp);
     SET_FIELD(command->engine_group_type, engineGroupType);
@@ -655,13 +649,12 @@ void serializeGlobalDmaCommand(hcl::ScalStreamBase&                  scalStream,
                                uint64_t                              fwBaseAddress,
                                uint32_t                              engineType)
 {
-    const unsigned numDwords            = div(sizeof(g2fw::edma_nic_glbl_ctxt_v3_t), sizeof(uint32_t));
+    const unsigned numDwords            = div(sizeof(g3fw::edma_nic_glbl_ctxt_v3_t), sizeof(uint32_t));
     const unsigned activateAllDwordsMap = (1 << numDwords) - 1;
     // sched_arc_cmd_nic_edma_ops_t with arc_cmd_update_edma_nic_ctxt_v3_t
     // and edma_nic_glbl_ctxt_v3_t
-    const size_t   sizeInBytes          = sizeof(g2fw::sched_arc_cmd_nic_edma_ops_t) +
-                               sizeof(g2fw::arc_cmd_update_edma_nic_ctxt_v3_t) +
-                               (numDwords * sizeof(uint32_t));
+    const size_t sizeInBytes = sizeof(g3fw::sched_arc_cmd_nic_edma_ops_t) +
+                               sizeof(g3fw::arc_cmd_update_edma_nic_ctxt_v3_t) + (numDwords * sizeof(uint32_t));
 
     g3fw::sched_arc_cmd_nic_edma_ops_t* command =
         reinterpret_cast<g3fw::sched_arc_cmd_nic_edma_ops_t*>(scalStream.getNextPtr(sizeInBytes));
@@ -693,15 +686,15 @@ void serializeGlobalDmaCommand(hcl::ScalStreamBase&                  scalStream,
         SET_FIELD(edma_ctxt->comp_cfg[i], compCfg);
     }
 
-    LOG_TRACE(
-        HCL_SUBMIT,
-        "Packets | serializeGlobalDmaCommand sched_arc_cmd_nic_edma_ops_t on GC_REDUCTION sched| command->opcode:{}, "
+    PRINT_PACKET_TRACE(
+        scalStream,
+        "sched_arc_cmd_nic_edma_ops_t on GC_REDUCTION sched| command->opcode:{}, "
         " command->engine_group_type:{}, command->cmd_size:{} "
         "arc_cmd_update_edma_nic_ctxt_v3_t | opcode:{}, update_bitmap:{}, num_dwords:{} "
         "edma_nic_glbl_ctxt_v3_t | baseAddress[0]:0x{:x}, sibo_rank_stride[0]:{}, baseAddress[1]:0x{:x}, "
         "sibo_rank_stride[1]:{}, fwBaseAddress:0x{:x}, sirb_size:{}, "
         "comp_cfg: [0]:0x{:x}, [1]:0x{:x}, [2]:0x{:x}, [3]:0x{:x}, [4]:0x{:x}, [5]:0x{:x}, "
-        "[6]:0x{:x}, [7]:0x{:x}, on stream: {}",
+        "[6]:0x{:x}, [7]:0x{:x}",
         command->opcode,
         command->engine_group_type,
         command->cmd_size,
@@ -714,15 +707,14 @@ void serializeGlobalDmaCommand(hcl::ScalStreamBase&                  scalStream,
         ((struct g3fw::edma_nic_glbl_ctxt_v3_t*)(command->edma_ctxt_v3->data))->sibo_rank_stride[1],
         ((struct g3fw::edma_nic_glbl_ctxt_v3_t*)(command->edma_ctxt_v3->data))->sirb_base_addr,
         ((struct g3fw::edma_nic_glbl_ctxt_v3_t*)(command->edma_ctxt_v3->data))->sirb_size,
-        ((struct g2fw::edma_nic_glbl_ctxt_v3_t*)(command->edma_ctxt_v3->data))->comp_cfg[0],
-        ((struct g2fw::edma_nic_glbl_ctxt_v3_t*)(command->edma_ctxt_v3->data))->comp_cfg[1],
-        ((struct g2fw::edma_nic_glbl_ctxt_v3_t*)(command->edma_ctxt_v3->data))->comp_cfg[2],
-        ((struct g2fw::edma_nic_glbl_ctxt_v3_t*)(command->edma_ctxt_v3->data))->comp_cfg[3],
-        ((struct g2fw::edma_nic_glbl_ctxt_v3_t*)(command->edma_ctxt_v3->data))->comp_cfg[4],
-        ((struct g2fw::edma_nic_glbl_ctxt_v3_t*)(command->edma_ctxt_v3->data))->comp_cfg[5],
-        ((struct g2fw::edma_nic_glbl_ctxt_v3_t*)(command->edma_ctxt_v3->data))->comp_cfg[6],
-        ((struct g2fw::edma_nic_glbl_ctxt_v3_t*)(command->edma_ctxt_v3->data))->comp_cfg[7],
-         *(scalStream.getStreamName()));
+        ((struct g3fw::edma_nic_glbl_ctxt_v3_t*)(command->edma_ctxt_v3->data))->comp_cfg[0],
+        ((struct g3fw::edma_nic_glbl_ctxt_v3_t*)(command->edma_ctxt_v3->data))->comp_cfg[1],
+        ((struct g3fw::edma_nic_glbl_ctxt_v3_t*)(command->edma_ctxt_v3->data))->comp_cfg[2],
+        ((struct g3fw::edma_nic_glbl_ctxt_v3_t*)(command->edma_ctxt_v3->data))->comp_cfg[3],
+        ((struct g3fw::edma_nic_glbl_ctxt_v3_t*)(command->edma_ctxt_v3->data))->comp_cfg[4],
+        ((struct g3fw::edma_nic_glbl_ctxt_v3_t*)(command->edma_ctxt_v3->data))->comp_cfg[5],
+        ((struct g3fw::edma_nic_glbl_ctxt_v3_t*)(command->edma_ctxt_v3->data))->comp_cfg[6],
+        ((struct g3fw::edma_nic_glbl_ctxt_v3_t*)(command->edma_ctxt_v3->data))->comp_cfg[7]);
 }
 
 void serializeUpdateNicOffsets(hcl::ScalStreamBase&                     scalStream,
@@ -784,6 +776,12 @@ void serializeUpdateLastRank(hcl::ScalStreamBase& scalStream,
     SET_FIELD(desc->fields.ctrl.qp, qpn);
     SET_FIELD(desc->fields.ctrl.cmd, gaudi3::Nic::COLL_CMD_LAST_RANK_UPDATE);
     SET_FIELD(desc->fields.p_0_23.ports, ports_mask & 0xFFFFFF);
+    LOG_TRACE(HCL,
+              "{}:: desc->fields.ctrl.qp={}, desc->fields.ctrl.cmd={}, desc->fields.p_0_23.ports={:b}",
+              __FUNCTION__,
+              desc->fields.ctrl.qp,
+              desc->fields.ctrl.cmd,
+              desc->fields.p_0_23.ports);
 }
 
 void serializeNopCommand(hcl::ScalStreamBase& scalStream, unsigned schedIdx, uint32_t padding)
@@ -799,16 +797,21 @@ void serializeNopCommand(hcl::ScalStreamBase& scalStream, unsigned schedIdx, uin
                                                                             g3fw::SCHED_SCALEOUT_RECV_ARC_CMD_NOP};
     SET_FIELD(command->opcode, opcodes[schedIdx]);
     SET_FIELD(command->padding_count, (uint32_t)((padding - sizeof(g3fw::sched_arc_cmd_nop_t)) / sizeof(uint32_t)));
+    PRINT_PACKET_TRACE(scalStream, "schedIdx:{}, command->padding_count:{}", schedIdx, command->padding_count);
 }
 
-void serializeAllocBarrierCommand(hcl::ScalStreamBase& scalStream,
-                                  unsigned             schedIdx,
-                                  uint32_t             completionGroupIndex,
-                                  uint32_t             requiredSobs)
+void serializeAllocBarrierCommand(hcl::ScalStreamBase&                                     scalStream,
+                                  unsigned                                                 schedIdx,
+                                  uint32_t                                                 completionGroupIndex,
+                                  uint32_t                                                 requiredSobs,
+                                  llvm_vecsmall::SmallVector<uint32_t, MAX_STREAM_TO_INC>* fences)
 {
-    g3fw::sched_arc_cmd_alloc_nic_barrier_t* command = reinterpret_cast<g3fw::sched_arc_cmd_alloc_nic_barrier_t*>(
-        scalStream.getNextPtr(sizeof(g3fw::sched_arc_cmd_alloc_nic_barrier_t)));
-    memset(command, 0, sizeof(g3fw::sched_arc_cmd_alloc_nic_barrier_t));
+    uint32_t fenceCnt = fences == nullptr ? 0 : fences->size();
+    uint32_t cmdSize =
+        sizeof(g3fw::sched_arc_cmd_alloc_nic_barrier_t) + (sizeof(uint32_t) * ((fenceCnt > 0) + (fenceCnt > 4)));
+    g3fw::sched_arc_cmd_alloc_nic_barrier_t* command =
+        reinterpret_cast<g3fw::sched_arc_cmd_alloc_nic_barrier_t*>(scalStream.getNextPtr(cmdSize));
+    memset(command, 0, cmdSize);
 
     static const unsigned opcodes[(unsigned)hcl::SchedulersIndex::count] = {
         g3fw::SCHED_GC_REDUCTION_ARC_CMD_ALLOC_NIC_BARRIER,
@@ -820,14 +823,25 @@ void serializeAllocBarrierCommand(hcl::ScalStreamBase& scalStream,
     SET_FIELD(command->comp_group_index, completionGroupIndex);
     SET_FIELD(command->required_sobs, requiredSobs);
 
-    LOG_TRACE(HCL_SUBMIT,
-        "Packets | serializeAllocBarrierCommand schedIdx:{}, command->opcode:{}, "
-        " command->comp_group_index:{}, command->required_sobs:{} on stream:{}",
-        schedIdx,
-        command->opcode,
-        command->comp_group_index,
-        command->required_sobs,
-         *(scalStream.getStreamName()));
+    SET_FIELD(command->cmd_size_bytes, cmdSize);
+    SET_FIELD(command->fence_count, fenceCnt);
+    for (unsigned i = 0; i < fenceCnt; i++)
+    {
+        SET_FIELD(((uint8_t*)command->fence_arr)[i], (*fences)[i]);
+    }
+
+    PRINT_PACKET_TRACE_WITH_COUNTS(scalStream,
+                                   fenceCnt,
+                                   "schedIdx:{}, opcode:{}, comp_group_index:{}, required_sobs:{}",
+                                   schedIdx,
+                                   command->opcode,
+                                   (uint32_t)command->comp_group_index,
+                                   (uint32_t)command->required_sobs);
+
+    for (unsigned i = 0; i < fenceCnt; i++)
+    {
+        LOG_TRACE(HCL_SUBMIT, "Packets | fenceId{}={}", i, (*fences)[i]);
+    }
 }
 
 void serializeFenceDecCommand(hcl::ScalStreamBase& scalStream, unsigned schedIdx, uint32_t fenceIndex, uint32_t target)
@@ -843,22 +857,22 @@ void serializeFenceDecCommand(hcl::ScalStreamBase& scalStream, unsigned schedIdx
         g3fw::SCHED_SCALEOUT_SEND_ARC_CMD_ACP_FENCE_WAIT,
         g3fw::SCHED_SCALEOUT_RECV_ARC_CMD_ACP_FENCE_WAIT};
 
-    SET_FIELD(command->opcode,opcodes[schedIdx]);
-    SET_FIELD(command->fence_id,fenceIndex);
-    SET_FIELD(command->target,target);
-    LOG_TRACE(HCL_SUBMIT,
-              "Packets | serializeFenceDecCommand sched: {}, opcode:{} , target:{}, fence_id:{} on stream:{}",
-              schedIdx,
-              command->opcode,
-              (uint32_t)command->target,
-              (uint32_t)command->fence_id,
-              *(scalStream.getStreamName()));
+    SET_FIELD(command->opcode, opcodes[schedIdx]);
+    SET_FIELD(command->fence_id, fenceIndex);
+    SET_FIELD(command->target, target);
+    PRINT_PACKET_TRACE(scalStream,
+                       "sched: {}, opcode:{} , target:{}, fence_id:{}",
+                       schedIdx,
+                       command->opcode,
+                       (uint32_t)command->target,
+                       (uint32_t)command->fence_id);
 }
 
 void serializeFenceIncCommand(hcl::ScalStreamBase& scalStream, unsigned schedIdx, uint32_t fenceIndex, uint32_t target)
 {
-    g3fw::sched_arc_cmd_acp_fence_inc_immediate_t* command = reinterpret_cast<g3fw::sched_arc_cmd_acp_fence_inc_immediate_t*>(
-        scalStream.getNextPtr(sizeof(g3fw::sched_arc_cmd_acp_fence_inc_immediate_t)));
+    g3fw::sched_arc_cmd_acp_fence_inc_immediate_t* command =
+        reinterpret_cast<g3fw::sched_arc_cmd_acp_fence_inc_immediate_t*>(
+            scalStream.getNextPtr(sizeof(g3fw::sched_arc_cmd_acp_fence_inc_immediate_t)));
     memset(command, 0, sizeof(g3fw::sched_arc_cmd_acp_fence_inc_immediate_t));
 
     static const unsigned opcodes[(unsigned)hcl::SchedulersIndex::count] = {
@@ -870,15 +884,12 @@ void serializeFenceIncCommand(hcl::ScalStreamBase& scalStream, unsigned schedIdx
     SET_FIELD(command->opcode, opcodes[schedIdx]);
     SET_FIELD(command->value, 1);
     SET_FIELD(command->fence_id, fenceIndex);
-    LOG_TRACE(
-        HCL_SUBMIT,
-        "Packets | serializeFenceIncCommand(ACP) schedIdx:{}, opcode:{} , value:{}, fence_id:{} "
-        "on stream:{}",
-        schedIdx,
-        command->opcode,
-        (uint32_t)command->value,
-        (uint32_t)command->fence_id,
-         *(scalStream.getStreamName()));
+    PRINT_PACKET_TRACE(scalStream,
+                       "schedIdx:{}, opcode:{} , value:{}, fence_id:{}",
+                       schedIdx,
+                       command->opcode,
+                       (uint32_t)command->value,
+                       (uint32_t)command->fence_id);
 }
 
 void serializeLbwWriteCommand(hcl::ScalStreamBase& scalStream,
@@ -901,18 +912,54 @@ void serializeLbwWriteCommand(hcl::ScalStreamBase& scalStream,
     SET_FIELD(command->block_next, blockUntilCompletion);
     SET_FIELD(command->dst_addr, destination);
     SET_FIELD(command->src_data, data);
-    LOG_TRACE(
-        HCL_SUBMIT,
-        "Packets | serializeLbwWriteCommand schedIdx:{}, command->opcode:{} , command->block_next:{},"
-        " command->dst_addr:0x{:x}, command->src_data:0x{:x}, command->wait_for_completion:{}, "
-        "on stream:{}",
-        schedIdx,
-        command->opcode,
-        (uint32_t)command->block_next,
-        (uint64_t)command->dst_addr,
-        (uint64_t)command->src_data,
-        (uint32_t)command->wait_for_completion,
-         *(scalStream.getStreamName()));
+    PRINT_PACKET_TRACE(scalStream,
+                       "schedIdx:{}, command->opcode:{} , command->block_next:{},"
+                       " command->dst_addr:0x{:x}, command->src_data:0x{:x}, command->wait_for_completion:{}",
+                       schedIdx,
+                       command->opcode,
+                       (uint32_t)command->block_next,
+                       (uint64_t)command->dst_addr,
+                       (uint64_t)command->src_data,
+                       (uint32_t)command->wait_for_completion);
+}
+
+void serializeLbwWriteWithFenceDecCommand(hcl::ScalStreamBase& scalStream,
+                                          unsigned             schedIdx,
+                                          uint32_t             destination,
+                                          uint32_t             data,
+                                          uint32_t             fenceIndex,
+                                          uint32_t             fenceTarget,
+                                          bool                 blockUntilCompletion)
+{
+    g3fw::sched_arc_cmd_lbw_write_t* command = reinterpret_cast<g3fw::sched_arc_cmd_lbw_write_t*>(
+        scalStream.getNextPtr(sizeof(g3fw::sched_arc_cmd_lbw_write_t)));
+    memset(command, 0, sizeof(g3fw::sched_arc_cmd_lbw_write_t));
+
+    static const unsigned opcodes[(unsigned)hcl::SchedulersIndex::count] = {
+        g3fw::SCHED_GC_REDUCTION_ARC_CMD_LBW_WRITE,
+        g3fw::SCHED_SCALEUP_SEND_ARC_CMD_LBW_WRITE,
+        g3fw::SCHED_SCALEUP_RECV_ARC_CMD_LBW_WRITE,
+        g3fw::SCHED_SCALEOUT_SEND_ARC_CMD_LBW_WRITE,
+        g3fw::SCHED_SCALEOUT_RECV_ARC_CMD_LBW_WRITE};
+    SET_FIELD(command->opcode, opcodes[schedIdx]);
+    SET_FIELD(command->block_next, blockUntilCompletion);
+    SET_FIELD(command->dst_addr, destination);
+    SET_FIELD(command->src_data, data);
+    SET_FIELD(command->fence, 1);
+    SET_FIELD(command->fence_id, fenceIndex);
+    SET_FIELD(command->target, fenceTarget);
+
+    PRINT_PACKET_TRACE(scalStream,
+                       "schedIdx:{}, opcode:{} , block_next:{}, dst_addr:0x{:x}, "
+                       "src_data:0x{:x}, wait_for_completion:{} fence decrement id:{} to target:{}",
+                       schedIdx,
+                       command->opcode,
+                       (uint32_t)command->block_next,
+                       (uint64_t)command->dst_addr,
+                       (uint64_t)command->src_data,
+                       (uint32_t)command->wait_for_completion,
+                       (uint32_t)command->fence_id,
+                       (uint32_t)command->target);
 }
 
 void serializeLbwBurstWriteCommand(hcl::ScalStreamBase&      scalStream,
@@ -936,7 +983,7 @@ void serializeLbwBurstWriteCommand(hcl::ScalStreamBase&      scalStream,
     SET_FIELD(command->block_next, blockUntilCompletion);
     SET_FIELD(command->num_lbw_write, destData.size());
 
-    LOG_TRACE(HCL_SUBMIT, "Packets | serializeLbwBurstWriteCommand on stream:{}", *(scalStream.getStreamName()));
+    PRINT_PACKET_TRACE_WITH_COUNTS(scalStream, destData.size(), "");
 
     for (unsigned i = 0; i < destData.size(); i++)
     {
@@ -971,13 +1018,14 @@ void serializeDmaCommand(hcl::ScalStreamBase& scalStream,
                          bool                 isForScaleout,
                          bool                 useCasting,
                          uint32_t             numberOfRanks,
-                         uint32_t             numberOfReproBuffers,
-                         uint32_t             indexOfReproBuffer,
+                         uint32_t             numberOfSubBuffers,
+                         uint32_t             indexOfSubBuffer,
                          bool                 is16BitMemcpy,
                          uint32_t             secondSoAddress,
                          bool                 isBFloat,
                          bool                 useReductionInd,
-                         bool                 isFirstWrite)
+                         bool                 isFirstWrite,
+                         uint32_t             memsetValue)
 {
     size_t sizeInBytes = sizeof(g3fw::sched_arc_cmd_nic_edma_ops_t);
     switch (dmaType)
@@ -992,7 +1040,7 @@ void serializeDmaCommand(hcl::ScalStreamBase& scalStream,
             sizeInBytes += sizeof(g3fw::arc_cmd_nic_edma_lin_memset_v3_2_t);
             break;
         default:
-            VERIFY(sizeInBytes != sizeof(g2fw::sched_arc_cmd_nic_edma_ops_t),
+            VERIFY(sizeInBytes != sizeof(g3fw::sched_arc_cmd_nic_edma_ops_t),
                    "unsupported dmaType [{}] for {}",
                    dmaType,
                    __func__);
@@ -1014,7 +1062,7 @@ void serializeDmaCommand(hcl::ScalStreamBase& scalStream,
          SCAL_EDMA_NETWORK_GC_REDUCTION_GROUP0,  // dma scheduler
          0,
          0,
-         SCAL_EDMA_NETWORK_GC_REDUCTION_GROUP0}, // for scaleup_init command
+         SCAL_EDMA_NETWORK_GC_REDUCTION_GROUP0},  // for scaleup_init command
         {SCAL_EDMA_NETWORK_SCALE_UP_SEND_GROUP0,
          SCAL_EDMA_NETWORK_SCALE_UP_SEND_GROUP0,
          0,
@@ -1047,13 +1095,13 @@ void serializeDmaCommand(hcl::ScalStreamBase& scalStream,
 
     if (dmaType == static_cast<uint32_t>(g3fw::NIC_EDMA_CMD_SIBO_OPS_V3))
     {
-        auto firstSoIdxBaseIdx        = getSoIdxBaseIdx(soAddressLSB);
-        auto secondSoIdxBaseIdx       = getSoIdxBaseIdx(secondSoAddress);
+        auto                                         firstSoIdxBaseIdx  = getSoIdxBaseIdx(soAddressLSB);
+        auto                                         secondSoIdxBaseIdx = getSoIdxBaseIdx(secondSoAddress);
         struct g3fw::arc_cmd_nic_edma_sibo_ops_v3_t* edma_ops =
             (struct g3fw::arc_cmd_nic_edma_sibo_ops_v3_t*)&command->sibo_ops_v3;
         reduction_operation_e reductionOp = getReductionOp(reduceOp);
         SET_FIELD(edma_ops->reduction_op, reductionOp);
-        SET_FIELD(edma_ops->sibo_index, indexOfReproBuffer * numberOfReproBuffers);
+        SET_FIELD(edma_ops->sibo_index, indexOfSubBuffer * numberOfSubBuffers);
         SET_FIELD(edma_ops->rank_count, numberOfRanks - 1);
         SET_FIELD(edma_ops->rank_offset_in_sibo, isForScaleout ? 1 : 0);
         SET_FIELD(edma_ops->pool_id, poolId);
@@ -1080,9 +1128,9 @@ void serializeDmaCommand(hcl::ScalStreamBase& scalStream,
         SET_FIELD(edma_ops->reduction_ind, 1);
         SET_FIELD(edma_ops->context_id, streamCtxtID);
 
-        LOG_TRACE(
-            HCL_SUBMIT,
-            "Packets | serializeDmaCommand with arc_cmd_nic_edma_sibo_ops_v3_t. "
+        PRINT_PACKET_TRACE(
+            scalStream,
+            "with arc_cmd_nic_edma_sibo_ops_v3_t. "
             "schedIdx:{}, Command[0-3]: 0x{:x}, 0x{:x}, 0x{:x}, command address: 0x{:x}, sched_opcode: {}, "
             "cmd_size:{}, engine_group_type:{}, engine: opcode:{}, sibo_index:{}, rank_offset_in_sibo:{}, "
             "rank_count:{}, signal_second:{}, "
@@ -1092,7 +1140,7 @@ void serializeDmaCommand(hcl::ScalStreamBase& scalStream,
             "srcAddr:0x{:x}, dstAddr:0x{:x}, dst_addr_lo:0x{:x}, dst_addr_hi:0x{:x}, src_addr_lo:0x{:x}, "
             "src_addr_hi:0x{:x}, local_hbw_axcache:0x{:x}, local_class_type:0x{:x}"
             "reduction_ind:{}, reduction_op:{}, local_datasize:{}, sibo_datasize:{}, "
-            "output_datasize:{}, dtype:{} on stream:{}",
+            "output_datasize:{}, dtype:{}",
             schedIdx,
             *((uint32_t*)(command)),
             *((uint32_t*)(command) + 1),
@@ -1127,8 +1175,7 @@ void serializeDmaCommand(hcl::ScalStreamBase& scalStream,
             (uint32_t)edma_ops->local_datasize,
             (uint32_t)edma_ops->sibo_datasize,
             (uint32_t)edma_ops->output_datasize,
-            (uint32_t)edma_ops->dtype,
-             *(scalStream.getStreamName()));
+            (uint32_t)edma_ops->dtype);
     }
     else if (dmaType == static_cast<uint32_t>(g3fw::NIC_EDMA_CMD_LIN_OPS_V3))
     {
@@ -1152,45 +1199,45 @@ void serializeDmaCommand(hcl::ScalStreamBase& scalStream,
         SET_FIELD(edma_ops->reduction_ind, useReductionInd ? 1 : 0);
         SET_FIELD(edma_ops->context_id, streamCtxtID);
 
-        LOG_TRACE(HCL_SUBMIT,
-                  "Packets | serializeDmaCommand with arc_cmd_nic_edma_lin_ops_v3_t. "
-                  "schedIdx:{}, Command[0-3]: 0x{:x}, 0x{:x}, 0x{:x}, command address: 0x{:x}, sched_opcode: {}, "
-                  "cmd_size:{}, engine_group_type:{}, engine: opcode:{}, sob_address:0x{:x}, "
-                  "transfer_size:{}, srcAddr:0x{:x}, dstAddr:0x{:x}, dst_addr_lo:0x{:x}, dst_addr_hi:0x{:x}, "
-                  "src_addr_lo:0x{:x}, src_addr_hi:0x{:x}, reduction_ind:{}, reduction_op:{}, input_datasize:{}, "
-                  "output_datasize:{}, dtype:0x{:x}, hbw_axcache:0x{:x}, class_type:0x{:x}, on stream:{}",
-                  schedIdx,
-                  *((uint32_t*)(command)),
-                  *((uint32_t*)(command) + 1),
-                  *((uint32_t*)(command) + 2),
-                  (uint64_t)command,
-                  command->opcode,
-                  command->cmd_size,
-                  command->engine_group_type,
-                  (uint32_t)edma_ops->opcode,
-                  (uint64_t)edma_ops->sob_address,
-                  (uint32_t)edma_ops->transfer_size,
-                  (uint64_t)srcAddress,
-                  (uint64_t)destAddress,
-                  (uint64_t)edma_ops->dst_addr_lo,
-                  (uint64_t)edma_ops->dst_addr_hi,
-                  (uint64_t)edma_ops->src_addr_lo,
-                  (uint64_t)edma_ops->src_addr_hi,
-                  (uint32_t)edma_ops->reduction_ind,
-                  (uint32_t)edma_ops->reduction_op,
-                  (uint32_t)edma_ops->input_datasize,
-                  (uint32_t)edma_ops->output_datasize,
-                  (uint32_t)edma_ops->dtype,
-                  (uint32_t)edma_ops->hbw_axcache,
-                  (uint32_t)edma_ops->class_type,
-                   *(scalStream.getStreamName()));
+        PRINT_PACKET_TRACE(
+            scalStream,
+            "with arc_cmd_nic_edma_lin_ops_v3_t. "
+            "schedIdx:{}, Command[0-3]: 0x{:x}, 0x{:x}, 0x{:x}, command address: 0x{:x}, sched_opcode: {}, "
+            "cmd_size:{}, engine_group_type:{}, engine: opcode:{}, sob_address:0x{:x}, "
+            "transfer_size:{}, srcAddr:0x{:x}, dstAddr:0x{:x}, dst_addr_lo:0x{:x}, dst_addr_hi:0x{:x}, "
+            "src_addr_lo:0x{:x}, src_addr_hi:0x{:x}, reduction_ind:{}, reduction_op:{}, input_datasize:{}, "
+            "output_datasize:{}, dtype:0x{:x}, hbw_axcache:0x{:x}, class_type:0x{:x}",
+            schedIdx,
+            *((uint32_t*)(command)),
+            *((uint32_t*)(command) + 1),
+            *((uint32_t*)(command) + 2),
+            (uint64_t)command,
+            command->opcode,
+            command->cmd_size,
+            command->engine_group_type,
+            (uint32_t)edma_ops->opcode,
+            (uint64_t)edma_ops->sob_address,
+            (uint32_t)edma_ops->transfer_size,
+            (uint64_t)srcAddress,
+            (uint64_t)destAddress,
+            (uint64_t)edma_ops->dst_addr_lo,
+            (uint64_t)edma_ops->dst_addr_hi,
+            (uint64_t)edma_ops->src_addr_lo,
+            (uint64_t)edma_ops->src_addr_hi,
+            (uint32_t)edma_ops->reduction_ind,
+            (uint32_t)edma_ops->reduction_op,
+            (uint32_t)edma_ops->input_datasize,
+            (uint32_t)edma_ops->output_datasize,
+            (uint32_t)edma_ops->dtype,
+            (uint32_t)edma_ops->hbw_axcache,
+            (uint32_t)edma_ops->class_type);
     }
     else  // (dmaType == static_cast<uint32_t>(g3fw::NIC_EDMA_CMD_LIN_MEMSET_V3_2))
     {
         const auto                                       firstSoIdxBaseIdx = getSoIdxBaseIdx(soAddressLSB);
         struct g3fw::arc_cmd_nic_edma_lin_memset_v3_2_t* edma_ops =
             (struct g3fw::arc_cmd_nic_edma_lin_memset_v3_2_t*)&command->lin_memset_v3;
-        const auto comp_cfg     = getCompCfg();
+        const auto comp_cfg = getCompCfg();
         SET_FIELD(edma_ops->sob_base, firstSoIdxBaseIdx.baseIdx & 0x7);
         SET_FIELD(edma_ops->sob_index, firstSoIdxBaseIdx.soIdx & 0x3ff);
         SET_FIELD(edma_ops->opcode, dmaType);
@@ -1200,31 +1247,30 @@ void serializeDmaCommand(hcl::ScalStreamBase& scalStream,
         SET_FIELD(edma_ops->dst_addr_lo, destAddress & 0xffffffff);
         SET_FIELD(edma_ops->dst_addr_hi, destAddress >> 32);
         SET_FIELD(edma_ops->context_id, streamCtxtID);
-        SET_FIELD(edma_ops->memset_value, 0);
+        SET_FIELD(edma_ops->memset_value, memsetValue);
 
-        LOG_TRACE(HCL_SUBMIT,
-                  "Packets | serializeDmaCommand with arc_cmd_nic_edma_lin_memset_v3_2_t. "
-                  "schedIdx:{}, Command[0-3]: 0x{:x}, 0x{:x}, 0x{:x}, command address: 0x{:x}, sched_opcode: {}, "
-                  "cmd_size:{}, engine_group_type:{}, engine: opcode:{}, sob_address:0x{:x}, sob_base:{}, sob_index:{} "
-                  "transfer_size:{}, dstAddr:0x{:x}, dst_addr_lo:0x{:x}, dst_addr_hi:0x{:x} "
-                  "on stream:{}",
-                  schedIdx,
-                  *((uint32_t*)(command)),
-                  *((uint32_t*)(command) + 1),
-                  *((uint32_t*)(command) + 2),
-                  (uint64_t)command,
-                  command->opcode,
-                  command->cmd_size,
-                  command->engine_group_type,
-                  (uint32_t)edma_ops->opcode,
-                  (uint64_t)comp_cfg[edma_ops->sob_base].m_base + (uint64_t)edma_ops->sob_index * 4,
-                  (uint64_t)edma_ops->sob_base,
-                  (uint64_t)edma_ops->sob_index,
-                  (uint32_t)edma_ops->transfer_size,
-                  (uint64_t)destAddress,
-                  (uint64_t)edma_ops->dst_addr_lo,
-                  (uint64_t)edma_ops->dst_addr_hi,
-                  *(scalStream.getStreamName()));
+        PRINT_PACKET_TRACE(
+            scalStream,
+            "with arc_cmd_nic_edma_lin_memset_v3_2_t. "
+            "schedIdx:{}, Command[0-3]: 0x{:x}, 0x{:x}, 0x{:x}, command address: 0x{:x}, sched_opcode: {}, "
+            "cmd_size:{}, engine_group_type:{}, engine: opcode:{}, sob_address:0x{:x}, sob_base:{}, sob_index:{} "
+            "transfer_size:{}, dstAddr:0x{:x}, dst_addr_lo:0x{:x}, dst_addr_hi:0x{:x}",
+            schedIdx,
+            *((uint32_t*)(command)),
+            *((uint32_t*)(command) + 1),
+            *((uint32_t*)(command) + 2),
+            (uint64_t)command,
+            command->opcode,
+            command->cmd_size,
+            command->engine_group_type,
+            (uint32_t)edma_ops->opcode,
+            (uint64_t)comp_cfg[edma_ops->sob_base].m_base + (uint64_t)edma_ops->sob_index * 4,
+            (uint64_t)edma_ops->sob_base,
+            (uint64_t)edma_ops->sob_index,
+            (uint32_t)edma_ops->transfer_size,
+            (uint64_t)destAddress,
+            (uint64_t)edma_ops->dst_addr_lo,
+            (uint64_t)edma_ops->dst_addr_hi);
     }
 }
 
@@ -1239,6 +1285,7 @@ void serializePdmaCommand(hcl::ScalStreamBase& scalStream,
                           bool                 isCastUp,
                           uint8_t              apiId,
                           unsigned             streamIndex,
+                          uint8_t              streamCtxtID,
                           hcclDataType_t       dataType,
                           uint32_t             sobAddr)
 {
@@ -1289,17 +1336,14 @@ void serializePdmaCommand(hcl::ScalStreamBase& scalStream,
     SET_FIELD(command->batch_params->transfer_size, size);
     SET_FIELD(command->batch_count, batchCount);
     SET_FIELD(command->api_id, apiId);
-    // TODO SW-172802: command->stream_ctxt_id
+    SET_FIELD(command->stream_ctxt_id, streamCtxtID);
 
     if (command->has_payload)
     {
         VERIFY(!command->signal_to_cg, "both cannot be used at the same time");
     }
 
-    LOG_TRACE(HCL_SUBMIT,
-              "Packets | serializePDMACommand schedIdx:{}, on stream:{}",
-              schedIdx,
-              *(scalStream.getStreamName()));
+    PRINT_PACKET_TRACE(scalStream, "schedIdx:{}, apiID:{}", schedIdx, apiId);
 }
 
 }  // namespace SchedArcCommandsGaudi3

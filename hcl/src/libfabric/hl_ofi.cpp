@@ -9,6 +9,9 @@
 #include <libgen.h>                      // for basename, dirname
 #include <linux/limits.h>                // for PATH_MAX
 #include <memory>                        // for unique_ptr
+#include <optional>                      // for optional
+#include <algorithm>                     // for unique
+#include <unordered_map>                 // for unordered_map
 #include <regex>                         // for regex, cregex_iterator, cmatch
 #include "hccl/network_utils.h"          // for get_desired_tcp_if_from_env_var
 #include "hccl_ofi_wrapper_interface.h"  // for ofi_plugin_interface
@@ -33,20 +36,6 @@ bool ofi_t::s_gaudiDirect = false;
 bool ofi_t::s_verbs       = false;
 
 std::unique_ptr<ofi_plugin_interface> ofi_plugin;
-
-/**
- * @brief The order prioritizes the providers
- *
- */
-enum class provider_priority
-{
-    NONE  = 0,
-    GAUDI = NONE,
-    TCP,
-    VERBS,
-    EFA,
-    BEST_PROV = EFA
-};
 
 /**
  * @brief Check if a given address is a valid BDF PCI address format.
@@ -189,25 +178,6 @@ static std::string get_verbs_pci_ep_addr(const std::string& domain)
     return "";
 }
 
-/**
- * @brief Get the efa endpoint pci addr
- *
- * @param bus_attr
- * @return pci address
- */
-static std::string get_efa_pci_ep_addr(struct fi_bus_attr* bus_attr)
-{
-    if (bus_attr)
-    {
-        return fmt::format("{:04d}:{:2x}:{:2x}.{:x}",
-                           bus_attr->attr.pci.domain_id,
-                           bus_attr->attr.pci.bus_id,
-                           bus_attr->attr.pci.device_id,
-                           bus_attr->attr.pci.function_id);
-    }
-    return "";
-}
-
 static int get_numa_node(const std::string& pci_addr)
 {
     int         numa_node          = -1;
@@ -280,20 +250,19 @@ static PCIE_Device get_pci_info(const std::string& pci_addr)
     return pcie_dev;
 }
 
-static provider_priority get_provider_priority(const std::string& provider_name)
+std::optional<ofi_t::CORE_PROVIDER> ofi_t::get_core_provider(const std::string& provider_name)
 {
-    static const std::unordered_map<std::string, provider_priority> priorities {{"tcp", provider_priority::TCP},
-                                                                                {"efa", provider_priority::EFA},
-                                                                                {"verbs", provider_priority::VERBS}};
-
-    for (const auto& [name, type] : priorities)
+    static const std::unordered_map<std::string, ofi_t::CORE_PROVIDER> core_providers {
+        {"tcp", ofi_t::CORE_PROVIDER::TCP},
+        {"verbs", ofi_t::CORE_PROVIDER::VERBS}};
+    for (const auto& [name, value] : core_providers)
     {
         if (provider_name.find(name) != std::string::npos)
         {
-            return type;
+            return value;
         }
     }
-    return provider_priority::NONE;
+    return std::nullopt;
 }
 
 static int in_list(const char* const item, const char* const list)
@@ -326,13 +295,12 @@ static int in_list(const char* const item, const char* const list)
     return ret;
 }
 
-bool ofi_t::exclude_tcp_provider(const char* const               name,
-                                 const uint32_t                  addr_format,
-                                 const uint64_t                  mem_tag_format,
-                                 const uint64_t                  expected_mem_tag_format,
-                                 const std::vector<std::string>& unique_interfaces)
+bool ofi_t::exclude_tcp_provider(const fi_info* const provider, const uint64_t expected_mem_tag_format)
 {
-    char* tcp_if_exclude_list = hl_ofi_exclude_tcp_if();
+    char*             tcp_if_exclude_list = hl_ofi_exclude_tcp_if();
+    const char* const name                = provider->domain_attr->name;
+    const uint32_t    addr_format         = provider->addr_format;
+    const uint64_t    mem_tag_format      = provider->ep_attr->mem_tag_format;
 
     auto                     desired_tcp_if = get_desired_tcp_if_from_env_var();
     std::vector<std::string> parsed_ifs_prefix_list;
@@ -369,31 +337,31 @@ bool ofi_t::exclude_tcp_provider(const char* const               name,
         LOG_HCL_DEBUG(HCL_OFI, "Filtering out provider {} due to explicit exclusion request", std::string(name));
         return true;
     }
-    else if (std::contains(unique_interfaces, name))
-    {
-        LOG_HCL_DEBUG(HCL_OFI, "Filtering out provider {} as it was already detected", std::string(name));
-        return true;
-    }
     return false;
 }
 
-bool ofi_t::exclude_verbs_provider(const char* const name,
-                                   const uint32_t    addr_format,
-                                   const uint64_t    mem_tag_format,
-                                   const uint64_t    expected_mem_tag_format)
+bool ofi_t::exclude_verbs_provider(const fi_info* const provider, const uint64_t expected_mem_tag_format)
 {
+    const char* const name           = provider->domain_attr->name;
+    const uint32_t    addr_format    = provider->addr_format;
+    const uint64_t    mem_tag_format = provider->ep_attr->mem_tag_format;
     if (GCFG_HCL_HNIC_IPV6.value() && addr_format != FI_SOCKADDR_IN6)
     {
-        LOG_HCL_DEBUG(HCL_OFI,
-                      "Filtering out domain {} due to addr_format mismatch: Expected FI_SOCKADDR_IN6, received {}",
-                      std::string(name),
-                      ofi_plugin->w_fi_tostr(&addr_format, FI_TYPE_ADDR_FORMAT));
+        LOG_HCL_DEBUG(
+            HCL_OFI,
+            "Filtering out provider {} domain {} due to addr_format mismatch: Expected FI_SOCKADDR_IN6, received {}",
+            provider->fabric_attr->prov_name,
+            std::string(name),
+            ofi_plugin->w_fi_tostr(&addr_format, FI_TYPE_ADDR_FORMAT));
         return true;
     }
     else if (addr_format != FI_SOCKADDR_IN && addr_format != FI_SOCKADDR_IN6)
     {
         LOG_HCL_DEBUG(HCL_OFI,
-                      "Filtering out domain {} due to addr_format mismatch: Expected FI_SOCKADDR_IN | FI_SOCKADDR_IN6, received {}",
+                      "Filtering out provider {} domain {} due to addr_format mismatch: Expected FI_SOCKADDR_IN | "
+                      "FI_SOCKADDR_IN6, "
+                      "received {}",
+                      provider->fabric_attr->prov_name,
                       std::string(name),
                       ofi_plugin->w_fi_tostr(&addr_format, FI_TYPE_ADDR_FORMAT));
         return true;
@@ -401,7 +369,8 @@ bool ofi_t::exclude_verbs_provider(const char* const name,
     else if (mem_tag_format != expected_mem_tag_format)
     {
         LOG_HCL_DEBUG(HCL_OFI,
-                      "Filtering out domain {} due to mem_tag_format mismatch: Expected {}, received {}",
+                      "Filtering out provider {} domain {} due to mem_tag_format mismatch: Expected {}, received {}",
+                      provider->fabric_attr->prov_name,
                       std::string(name),
                       int_to_hex(expected_mem_tag_format),
                       int_to_hex(mem_tag_format));
@@ -429,6 +398,11 @@ void get_hints(struct fi_info* const hints, const bool gaudi_direct)
     // Set MR mode bits to indicate FI_MR_BASIC registration with local memory buffers
     // Will need to change if device memory can be accessed
     hints->domain_attr->mr_mode |= FI_MR_VIRT_ADDR | FI_MR_ALLOCATED | FI_MR_PROV_KEY;
+
+    if (!GCFG_HCL_SINGLE_QP_PER_SET.value())
+    {
+        hints->domain_attr->threading = FI_THREAD_ENDPOINT;
+    }
 
     hints->mode = FI_CONTEXT;
 
@@ -475,17 +449,23 @@ static int run_fi_getinfo(struct fi_info** providers, bool gaudi_direct)
     return rc;
 }
 
-ofi_t::ofi_t(int hw_module_id) : m_hw_module_id(hw_module_id), m_components()
+ofi_t::ofi_t(int fd, int hw_module_id)
+: m_device_fd(fd),
+  m_hw_module_id(hw_module_id),
+  m_nOFIDevices(0),
+  m_ofi_lock(PTHREAD_MUTEX_INITIALIZER),
+  m_is_initialized(false),
+  m_components(),
+  m_fi_getinfo_result(nullptr)
 {
-    m_nOFIDevices    = 0;
-    m_ofi_lock       = PTHREAD_MUTEX_INITIALIZER;
-    m_is_initialized = false;
 }
 
 ofi_t::~ofi_t()
 {
-    // TODO: for some reason this causes a segfault on DL1. we should investigate.
-    // ofi_plugin->w_fi_freeinfo(m_fi_getinfo_result);
+    if (m_fi_getinfo_result)
+    {
+        ofi_plugin->w_fi_freeinfo(m_fi_getinfo_result);
+    }
 }
 
 bool ofi_t::checkDMABUFSupport()
@@ -516,7 +496,7 @@ bool ofi_t::checkDMABUFSupport()
     return isSupported;
 }
 
-int ofi_t::init(int device_fd)
+int ofi_t::init()
 {
     int         ret;
     int         rc;
@@ -625,11 +605,11 @@ int ofi_t::init(int device_fd)
         }
     }
 
-    m_gaudi_pci_dev = get_pci_info(get_gaudi_pci_ep_addr(device_fd));
+    m_gaudi_pci_dev = get_pci_info(get_gaudi_pci_ep_addr(m_device_fd));
 
     // If gaudi_direct_supported = true, attempt to get provider that supports gaudi-direct.
     // Otherwise, get provider without gaudi-direct.
-    ret = get_ofi_provider(device_fd, gaudi_direct_supported);
+    ret = get_ofi_provider(gaudi_direct_supported);
     if ((ret != hcclSuccess) || (m_providers.size() == 0))
     {
         // Try to get provider again if all the bellow conditions met"
@@ -638,7 +618,7 @@ int ofi_t::init(int device_fd)
         if (!GCFG_HCCL_GAUDI_DIRECT.isSetFromUserConfig() && gaudi_direct_supported)
         {
             LOG_HCL_DEBUG(HCL_OFI, "Gaudi-direct was not requested by user. Attempt to use OFI without gaudi-direct.");
-            ret = get_ofi_provider(device_fd, false);
+            ret = get_ofi_provider(false);
             if ((ret != hcclSuccess) || (m_providers.size() == 0))
             {
                 LOG_HCL_ERR(HCL_OFI, "Get OFI provider failed");
@@ -999,113 +979,140 @@ void ofi_t::releaseOfiComponent(int ofiDevice)
     }
 }
 
-int ofi_t::get_ofi_provider(int device_fd, bool gaudi_direct)
+std::map<ofi_t::CORE_PROVIDER, std::vector<fi_info*>> ofi_t::map_by_core_provider(struct fi_info* providers)
+{
+    std::map<CORE_PROVIDER, std::vector<fi_info*>> mapped_providers;
+    for (struct fi_info* curr = providers; curr != nullptr; curr = curr->next)
+    {
+        const std::string provider_name {curr->fabric_attr->prov_name};
+        const auto        type = get_core_provider(provider_name);
+        if (!type.has_value())
+        {
+            LOG_HCL_DEBUG(HCL_OFI, "Provider {} is not supported, skipping...", provider_name);
+            continue;
+        }
+        mapped_providers[type.value()].emplace_back(curr);
+    }
+    return mapped_providers;
+}
+
+std::optional<fi_info*> ofi_t::get_tcp_provider(const std::vector<fi_info*>& providers)
+{
+    std::vector<fi_info*> filtered;
+    const uint64_t        expected_mem_tag_format = providers[0]->ep_attr->mem_tag_format;
+    std::copy_if(providers.cbegin(),
+                 providers.cend(),
+                 std::back_inserter(filtered),
+                 [expected_mem_tag_format, this](const fi_info* provider) {
+                     return !exclude_tcp_provider(provider, expected_mem_tag_format);
+                 });
+    if (filtered.empty())
+    {
+        return std::nullopt;
+    }
+
+    std::sort(filtered.begin(), filtered.end(), [](fi_info* const p1, fi_info* const p2) {
+        return std::string {p1->domain_attr->name} > std::string {p2->domain_attr->name};
+    });
+    auto uniqueIt = std::unique(filtered.begin(), filtered.end(), [](fi_info* const p1, fi_info* const p2) -> bool {
+        return std::string {p1->domain_attr->name} == p2->domain_attr->name;
+    });
+    filtered.erase(uniqueIt, filtered.end());
+
+    const auto providerIndex = m_hw_module_id % filtered.size();
+    const auto provider      = filtered[providerIndex];
+    log_provider({filtered.begin(), filtered.end()}, provider, "");
+    return provider;
+}
+
+std::optional<fi_info*> ofi_t::get_verb_provider(const std::vector<fi_info*>& providers)
+{
+    std::vector<fi_info*> filtered;
+    const uint64_t        expected_mem_tag_format = providers[0]->ep_attr->mem_tag_format;
+    std::copy_if(providers.cbegin(),
+                 providers.cend(),
+                 std::back_inserter(filtered),
+                 [expected_mem_tag_format, this](const fi_info* provider) {
+                     return !exclude_verbs_provider(provider, expected_mem_tag_format);
+                 });
+
+    if (filtered.empty())
+    {
+        return std::nullopt;
+    }
+
+    const bool foundIPv4 = std::any_of(filtered.cbegin(), filtered.cend(), [](const fi_info* provider) {
+        return provider->addr_format == FI_SOCKADDR_IN;
+    });
+
+    if (!foundIPv4 && (!GCFG_HCL_HNIC_IPV6.value()))
+    {
+        // We don't use IPv6 and there are no IPv4 providers
+        return std::nullopt;
+    }
+
+    // Filter out duplicate provider->domain_attr->name and prioritize IPv4 over IPv6
+    std::vector<fi_info*> result;
+    for (fi_info* provider : filtered)
+    {
+        if (foundIPv4 && (provider->addr_format != FI_SOCKADDR_IN))
+        {
+            continue;
+        }
+
+        auto provider_it = std::find_if(result.begin(), result.end(), [&provider](const fi_info* p) {
+            return std::string {provider->domain_attr->name} == p->domain_attr->name;
+        });
+        if (provider_it == result.cend())
+        {
+            // There is no provider with the same domain name
+            result.push_back(provider);
+        }
+    }
+
+    const std::string accelPath                             = getHLDevice(m_device_fd);
+    const std::string accel                                 = accelPath.substr(accelPath.find_last_of("/") + 1);
+    const auto [bestProviderIndex, bestProviderDescription] = hl_topo::getBestProvider(result, accel);
+    const auto provider                                     = result[bestProviderIndex];
+    log_provider(result, provider, fmt::format(" selected one by connection via {}", bestProviderDescription));
+    return provider;
+}
+
+int ofi_t::get_ofi_provider(const bool gaudi_direct)
 {
     int rc = run_fi_getinfo(&m_fi_getinfo_result, gaudi_direct);
     if (rc != 0) return rc;
 
-    std::vector<struct fi_info*>    providers;
-    std::vector<std::string>        unique_tcp_interfaces;
-    std::unordered_set<std::string> unique_domain_names;
-    uint64_t                        expected_mem_tag_format = 0;
-    provider_priority               provider_priority       = provider_priority::NONE;
-    bool                            foundIPv4               = false;
+    std::optional<struct fi_info*> provider;
+    CORE_PROVIDER                  core_provider;
 
     LOG_HCL_DEBUG(HCL_OFI,
                   "gaudi pci address = {}, numa node = {}",
                   m_gaudi_pci_dev.full_path,
                   m_gaudi_pci_dev.numa_node);
-
-    for (struct fi_info* curr = m_fi_getinfo_result; curr != nullptr; curr = curr->next)
+    using FilterMethod = std::optional<fi_info*> (ofi_t::*)(const std::vector<fi_info*>&);
+    const std::unordered_map<CORE_PROVIDER, FilterMethod> provider_filters {
+        {CORE_PROVIDER::VERBS, &ofi_t::get_verb_provider},
+        {CORE_PROVIDER::TCP, &ofi_t::get_tcp_provider},
+    };
+    for (const auto& [type, current_providers] : map_by_core_provider(m_fi_getinfo_result))
     {
-        std::string provider_name {curr->fabric_attr->prov_name};
-        LOG_HCL_CONTEXT_DEBUG(HCL_OFI,
-                              "Found provider: {}, checking if it's a match for what we require...",
-                              provider_name);
-
-        if (expected_mem_tag_format == 0)
+        provider = (this->*(provider_filters.at(type)))(current_providers);
+        if (provider.has_value())
         {
-            expected_mem_tag_format = curr->ep_attr->mem_tag_format;
+            core_provider = type;
+            break;
         }
-
-        const auto current_provider_priority = get_provider_priority(provider_name);
-        if (provider_priority::NONE == current_provider_priority)
-        {
-            LOG_HCL_DEBUG(HCL_OFI, "Provider {} is not supported, skipping...", provider_name);
-            continue;
-        }
-        else if (provider_priority > current_provider_priority)
-        {
-            LOG_HCL_DEBUG(HCL_OFI, "Already found a better-prioritized provider than {}, skipping...", provider_name);
-            continue;
-        }
-
-        if (provider_priority::TCP == current_provider_priority)
-        {
-            if (exclude_tcp_provider(curr->domain_attr->name,
-                                     curr->addr_format,
-                                     curr->ep_attr->mem_tag_format,
-                                     expected_mem_tag_format,
-                                     unique_tcp_interfaces))
-
-            {
-                continue;
-            }
-            unique_tcp_interfaces.push_back(curr->domain_attr->name);
-        }
-        else if (provider_priority::VERBS == current_provider_priority)
-        {
-            if (exclude_verbs_provider(curr->domain_attr->name,
-                                       curr->addr_format,
-                                       curr->ep_attr->mem_tag_format,
-                                       expected_mem_tag_format))
-            {
-                continue;
-            }
-            if (!foundIPv4 && curr->addr_format == FI_SOCKADDR_IN && !GCFG_HCL_HNIC_IPV6.value())
-            {
-                foundIPv4 = true;
-            }
-            const PCIE_Device verbs_pcie_dev = get_pci_info(get_verbs_pci_ep_addr(curr->domain_attr->name));
-            LOG_HCL_DEBUG(HCL_OFI,
-                          "current verbs pci addr: {}, current verbs numa: {}",
-                          verbs_pcie_dev.full_path,
-                          verbs_pcie_dev.numa_node);
-        }
-        else if (provider_priority::EFA == current_provider_priority)
-        {
-            PCIE_Device efa_pcie_dev = get_pci_info(get_efa_pci_ep_addr(curr->nic->bus_attr));
-            LOG_HCL_DEBUG(HCL_OFI,
-                          "current verbs pci addr: {}, current efa numa: {}",
-                          efa_pcie_dev.full_path,
-                          std::to_string(efa_pcie_dev.numa_node));
-        }
-
-        if (current_provider_priority > provider_priority)
-        {
-            // A better provider type was found
-            providers.clear();
-            provider_priority = current_provider_priority;
-        }
-
-        // Same provider type as previous one, check for pci addr match
-        providers.push_back(curr);
-
-        LOG_HCL_DEBUG(HCL_OFI,
-                      "We have a match! Adding provider {}, domain {}",
-                      provider_name,
-                      curr->domain_attr->name);
-        unique_domain_names.emplace(curr->domain_attr->name);
     }
 
-    if (providers.empty())
+    if (!provider.has_value())
     {
         LOG_HCL_WARN(HCL_OFI, "Found no fitting provider");
         return hcclLibfabricError;
     }
 
-    s_verbs                        = (provider_priority == provider_priority::VERBS);
-    const std::string providerName = (*providers.cbegin())->fabric_attr->prov_name;
+    s_verbs                        = (core_provider == CORE_PROVIDER::VERBS);
+    const std::string providerName = provider.value()->fabric_attr->prov_name;
 
     s_gaudiDirect = gaudi_direct;
     if (s_gaudiDirect)
@@ -1113,96 +1120,54 @@ int ofi_t::get_ofi_provider(int device_fd, bool gaudi_direct)
         LOG_HCL_INFO(HCL_OFI, "Gaudi-direct is enabled, provider {}.", providerName);
     }
 
-    // filter-out duplicate domains & prioritize IPv4 over IPv6
-    for (const auto& domain : unique_domain_names)
-    {
-        bool foundFirstMatch = false;
-        for (std::vector<struct fi_info*>::iterator itr = providers.begin(); itr != providers.end();)
-        {
-            if ((*itr)->nic == 0)
-            {
-                itr++;
-                continue;
-            }
-            char*    devName    = (*itr)->nic->device_attr->name;
-            uint32_t addrFormat = (*itr)->addr_format;
-            if (foundIPv4 && addrFormat == FI_SOCKADDR_IN6)
-            {
-                itr = providers.erase(itr);
-            }
-
-            // found domain name match
-            else if (domain == devName)
-            {
-                // only one occurrence of domain name should be left in the list
-                if (foundFirstMatch)
-                {
-                    itr = providers.erase(itr);
-                }
-                else
-                {
-                    foundFirstMatch = true;
-                    itr++;
-                }
-            }
-            else
-            {
-                itr++;
-            }
-        }
-    }
-
-    const std::string accelPath   = getHLDevice(device_fd);
-    const std::string accel       = accelPath.substr(accelPath.find_last_of("/") + 1);
-    std::string       description = "";
-    m_ofi_device                  = 0;  // This is always the first one because there is only one in m_providers.
-    if (isVerbs())
-    {
-        const auto bestProvider = hl_topo::getBestProvider(providers, accel);
-        m_providers             = {providers[std::get<size_t>(bestProvider)]};  // Only the selected provider saved
-        description             = fmt::format(" connected via {}", std::get<std::string>(bestProvider));
-    }
-    else
-    {
-        const auto providerIndex = m_hw_module_id % providers.size();
-        m_providers              = {providers[providerIndex]};
-    }
-
-    {
-        size_t num_provs = providers.size();
-        LOG_HCL_CONTEXT_INFO(HCL_OFI,
-                             "Finished scanning provider list, found {} suitable {} provider{},{} for Gaudi {}",
-                             num_provs,
-                             providerName,
-                             num_provs > 1 ? "s" : "",
-                             description,
-                             m_gaudi_pci_dev.full_path);
-
-        int index = 1;
-        for (const struct fi_info* currInfo : providers)
-        {
-            PCIE_Device pcie_dev;
-            size_t      active_mtu = 0;
-            std::unordered_map<const struct fi_info*, std::string> provider_interfaces;
-            if (isVerbs())
-            {
-                pcie_dev   = get_pci_info(get_verbs_pci_ep_addr(currInfo->domain_attr->name));
-                active_mtu = currInfo->nic->link_attr->mtu;
-                provider_interfaces = hl_topo::getProviderInterface(providers);
-            }
-            LOG_HCL_INFO(HCL_OFI,
-                         "{}/{}: {}{} {}{}{}",
-                         index++,
-                         num_provs,
-                         currInfo->domain_attr->name,
-                         (isVerbs() ? " [" + provider_interfaces.at(currInfo) + "]" : ""),
-                         pcie_dev.full_path,
-                         isVerbs() ? " active_mtu=" + std::to_string(active_mtu) : "",
-                         ((currInfo == m_providers[m_ofi_device]) ? " (Selected)" : ""));
-        }
-    }
+    m_ofi_device = 0;                   // This is always the first one because there is only one in m_providers.
+    m_providers  = {provider.value()};  // Only the selected provider saved
 
     return hcclSuccess;
+}
+
+void ofi_t::log_provider(const std::vector<struct fi_info*>& providers,
+                         const struct fi_info* const         selectedProvider,
+                         const std::string&                  description)
+{
+    if (likely(!LOG_LEVEL_AT_LEAST_INFO(HCL_OFI))) return;
+
+    const size_t num_provs = providers.size();
+    LOG_HCL_CONTEXT_INFO(HCL_OFI,
+                         "Finished scanning provider list, found {} suitable {} provider{},{} for Gaudi {}",
+                         num_provs,
+                         selectedProvider->fabric_attr->prov_name,
+                         num_provs > 1 ? "s" : "",
+                         description,
+                         m_gaudi_pci_dev.full_path);
+
+    const bool isVerbsProvider =
+        (get_core_provider(providers[0]->fabric_attr->prov_name).value() == CORE_PROVIDER::VERBS);
+    int                                                    index = 1;
+    std::unordered_map<const struct fi_info*, std::string> provider_interfaces;
+    if (isVerbsProvider)
+    {
+        provider_interfaces = hl_topo::getProviderInterface(providers);
+    }
+    for (const struct fi_info* currInfo : providers)
+    {
+        PCIE_Device pcie_dev;
+        size_t      active_mtu = 0;
+        if (isVerbsProvider)
+        {
+            pcie_dev   = get_pci_info(get_verbs_pci_ep_addr(currInfo->domain_attr->name));
+            active_mtu = currInfo->nic->link_attr->mtu;
+        }
+        LOG_HCL_INFO(HCL_OFI,
+                     "{}/{}: {}{} {}{}{}",
+                     index++,
+                     num_provs,
+                     currInfo->domain_attr->name,
+                     (isVerbsProvider ? " [" + provider_interfaces.at(currInfo) + "]" : ""),
+                     pcie_dev.full_path,
+                     isVerbsProvider ? " active_mtu=" + std::to_string(active_mtu) : "",
+                     ((currInfo == selectedProvider) ? " (Selected)" : ""));
+    }
 }
 
 struct fi_info* ofi_t::get_nic_info(int ofiDevice)

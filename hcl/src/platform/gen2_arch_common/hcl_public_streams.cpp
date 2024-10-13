@@ -1,24 +1,24 @@
 #include "hcl_public_streams.h"
 
-#include <vector>                                       // for vector
-#include <cstdint>                                      // for uint32_t, uint...
-#include <memory>                                       // for unique_ptr
-#include <set>                                          // for set, _Rb_tree_...
-#include <string>                                       // for operator+, string
+#include <vector>   // for vector
+#include <cstdint>  // for uint32_t, uint...
+#include <memory>   // for unique_ptr
+#include <set>      // for set, _Rb_tree_...
+#include <string>   // for operator+, string
 
-#include "hcl_types.h"                                  // for remoteInfoNicToIndex
-#include "hcl_exceptions.h"                             // for hcl
-#include "scal.h"                                       // for scal_handle_t
+#include "hcl_types.h"       // for remoteInfoNicToIndex
+#include "hcl_exceptions.h"  // for hcl
+#include "scal.h"            // for scal_handle_t
 #include "hcl_utils.h"
-#include "hccl_device.h"
-#include "dfa_defines.hpp"                              // for DfaErrorCode
-#include "interfaces/hcl_icollective_routines.h"        // for IHclCollective...
-#include "infra/hcl_debug_stats.h"                      // for DEBUG_STATS_...
+#include "platform/gen2_arch_common/hccl_device.h"
+#include "dfa_defines.hpp"                        // for DfaErrorCode
+#include "interfaces/hcl_icollective_routines.h"  // for IHclCollective...
+#include "infra/hcl_debug_stats.h"                // for DEBUG_STATS_...
 #include "infra/scal/gen2_arch_common/scal_manager.h"
 #include "platform/gen2_arch_common/hcl_collective_routines.h"
-#include "scaleout_provider.h"                          // for isHostNic()
+#include "scaleout_provider.h"  // for isHostNic()
 #include "hccl_context.h"
-#include "hcl_api.hpp"                                  // for getDfaLoggersV3
+#include "hcl_api.hpp"  // for getDfaLoggersV3
 #include "hcl_device_control_factory.h"
 
 // #define HCL_API_CALL __attribute__((visibility("default")))
@@ -30,7 +30,7 @@ using namespace hcl;
 struct hcl::InternalHclStreamHandle
 {
     InternalHclStreamHandle(int id) : m_streamID(id), m_deviceController(HclControlDeviceFactory::getDeviceControl()) {}
-    int                     m_streamID           = -1;
+    int                          m_streamID = -1;
     HclDeviceControllerGen2Arch& m_deviceController;
 };
 
@@ -145,12 +145,9 @@ bool HclPublicStreams::DFA(DfaStatus& dfaStatus, void (*dfaLogFunc)(int, const c
 {
     DfaLoggersV3 dfaLoggers = getDfaLoggersV3();
 
-    if ((dfaLoggers.dfaSynDevFailLogger   == nullptr) ||
-        (dfaLoggers.dfaFailedRecipeLogger == nullptr) ||
-        (dfaLoggers.dfaDmesgLogger        == nullptr) ||
-        (dfaLoggers.dfaNicInfoLogger      == nullptr) ||
-        (dfaLoggers.dfaApi                == nullptr) ||
-        (dfaLoggers.dfaApiInfo            == nullptr))
+    if ((dfaLoggers.dfaSynDevFailLogger == nullptr) || (dfaLoggers.dfaFailedRecipeLogger == nullptr) ||
+        (dfaLoggers.dfaDmesgLogger == nullptr) || (dfaLoggers.dfaNicInfoLogger == nullptr) ||
+        (dfaLoggers.dfaApi == nullptr) || (dfaLoggers.dfaApiInfo == nullptr))
     {
         LOG_HCL_ERR(HCL, "dfaLogFunc provided to HCL is null");
         return false;
@@ -205,7 +202,7 @@ bool HclPublicStreams::logDfaMain(DfaStatus& dfaStatus, void (*dfaLogFunc)(int, 
                 hccl_device()->getScalManager().getCurrentLongSoValue(inst->getArchStream()));
         }
 
-        if (hccl_device()->getDeviceConfig().m_deviceType == synDeviceGaudi2)
+        if (hccl_device()->getDeviceTypeStr() == "synDeviceGaudi2")
         {
             int      rc;
             uint32_t val;
@@ -305,9 +302,17 @@ void HclPublicStreams::dfaLogHostFences(IHclDevice* iDev, hl_logger::LoggerSPtr 
         return;
     }
 
-    HLLOG_UNTYPED(logger, HLLOG_LEVEL_INFO, "Fence              |syncMgr   |Pointers                             |Values");
-    HLLOG_UNTYPED(logger, HLLOG_LEVEL_INFO, "ArchStream|FenceIdx|core|  idx|Device            |Host              |Device              |Host                ");
-    HLLOG_UNTYPED(logger, HLLOG_LEVEL_INFO, "--------------------------------------------------------------------------------------------------------------");
+    HLLOG_UNTYPED(logger,
+                  HLLOG_LEVEL_INFO,
+                  "Fence              |syncMgr   |Pointers                             |Values");
+    HLLOG_UNTYPED(logger,
+                  HLLOG_LEVEL_INFO,
+                  "ArchStream|FenceIdx|core|  idx|Device            |Host              |Device              |Host      "
+                  "          ");
+    HLLOG_UNTYPED(logger,
+                  HLLOG_LEVEL_INFO,
+                  "----------------------------------------------------------------------------------------------------"
+                  "----------");
 
     for (size_t i = 0; i < ScalJsonNames::numberOfArchsStreams; i++)
     {
@@ -316,12 +321,17 @@ void HclPublicStreams::dfaLogHostFences(IHclDevice* iDev, hl_logger::LoggerSPtr 
             const InternalHostFenceInfo& fenceInfo = devGen2->getScalManager().getHostFenceInfo(i, j);
 
             std::string out = fmt::format(FMT_COMPILE("{:10}|{:8}|{:4}|{:5}|{:18p}|{:18p}|"),
-                                          i, j,
-                                          fenceInfo.hostFenceInfo.smDcore, fenceInfo.hostFenceInfo.smIndex,
-                                          fmt::ptr(fenceInfo.decrementsPtr), fmt::ptr(fenceInfo.incrementsPtr));
+                                          i,
+                                          j,
+                                          fenceInfo.hostFenceInfo.smDcore,
+                                          fenceInfo.hostFenceInfo.smIndex,
+                                          fmt::ptr(fenceInfo.decrementsPtr),
+                                          fmt::ptr(fenceInfo.incrementsPtr));
 
-            out += fenceInfo.decrementsPtr ? fmt::format(FMT_COMPILE("{:20}|"), *fenceInfo.decrementsPtr)             : "             nullptr|";
-            out += fenceInfo.incrementsPtr ? fmt::format(FMT_COMPILE("{:20}"), (uint64_t)(*fenceInfo.incrementsPtr)) : "nullptr";
+            out += fenceInfo.decrementsPtr ? fmt::format(FMT_COMPILE("{:20}|"), *fenceInfo.decrementsPtr)
+                                           : "             nullptr|";
+            out += fenceInfo.incrementsPtr ? fmt::format(FMT_COMPILE("{:20}"), (uint64_t)(*fenceInfo.incrementsPtr))
+                                           : "nullptr";
 
             HLLOG_UNTYPED(logger, HLLOG_LEVEL_INFO, "{}", out);
         }
@@ -334,7 +344,7 @@ dumpQpContext(IHclDevice* iDev, int nic, const std::vector<uint32_t>& qpList, co
     hl_logger::LoggerSPtr logger = dfaLoggers.dfaNicInfoLogger;
     const int             fd     = iDev->getFd();
 
-    constexpr int BUFF_SIZE = 4 * 1024;
+    constexpr int     BUFF_SIZE = 4 * 1024;
     std::vector<char> buff(BUFF_SIZE);
 
     for (auto qp : qpList)
@@ -346,7 +356,12 @@ dumpQpContext(IHclDevice* iDev, int nic, const std::vector<uint32_t>& qpList, co
             int res = hlthunk_nic_dump_qp(fd, nic, qp, req, buff.data(), buff.size());
             if (res != 0)
             {
-                HLLOG_UNTYPED(logger, HLLOG_LEVEL_ERROR, "Failed reading qp status for {} with res {} errno {}", header, res, errno);
+                HLLOG_UNTYPED(logger,
+                              HLLOG_LEVEL_ERROR,
+                              "Failed reading qp status for {} with res {} errno {}",
+                              header,
+                              res,
+                              errno);
                 continue;
             }
             HLLOG_UNTYPED(logger, HLLOG_LEVEL_INFO, "{}\n{}", header, buff.data());
@@ -358,8 +373,11 @@ void HclPublicStreams::dfaLogCommInfo(IHclDevice* iDev, DfaLoggersV3& dfaLoggers
 {
     hl_logger::LoggerSPtr logger = dfaLoggers.dfaSynDevFailLogger;
 
-    HLLOG_UNTYPED(logger, HLLOG_LEVEL_INFO, "============================ HCCL communicators ================================================================");
-    HLLOG_UNTYPED(logger, HLLOG_LEVEL_INFO, "My moduleId {}", iDev->m_deviceConfig.getHwModuleId());
+    HLLOG_UNTYPED(logger,
+                  HLLOG_LEVEL_INFO,
+                  "============================ HCCL communicators "
+                  "================================================================");
+    HLLOG_UNTYPED(logger, HLLOG_LEVEL_INFO, "My moduleId {}", iDev->getDeviceConfig().getHwModuleId());
 
     for (unsigned comm = 0; comm < DEFAULT_COMMUNICATORS_SIZE; comm++)
     {
@@ -368,14 +386,16 @@ void HclPublicStreams::dfaLogCommInfo(IHclDevice* iDev, DfaLoggersV3& dfaLoggers
             continue;
         }
 
-        HclDynamicCommunicator&        hclDynamicCommunicator = iDev->getComm(comm);
-        HCL_Rank                       myRank                 = hclDynamicCommunicator.getMyRank();
-        RankInfo&                      rankInfo               = hclDynamicCommunicator.m_rankInfo;
-        const UniqueSortedVector&      rankVector             = hclDynamicCommunicator.getRanks();
+        HclDynamicCommunicator&   hclDynamicCommunicator = iDev->getComm(comm);
+        HCL_Rank                  myRank                 = hclDynamicCommunicator.getMyRank();
+        RankInfo&                 rankInfo               = hclDynamicCommunicator.m_rankInfo;
+        const UniqueSortedVector& rankVector             = hclDynamicCommunicator.getRanks();
 
         HLLOG_UNTYPED(logger, HLLOG_LEVEL_INFO, "");
         HLLOG_UNTYPED(logger, HLLOG_LEVEL_INFO, "comm {} myRank {} num-ranks {}", comm, myRank, rankVector.size());
-        HLLOG_UNTYPED(logger, HLLOG_LEVEL_INFO, "------------------------------------------------------------------------------");
+        HLLOG_UNTYPED(logger,
+                      HLLOG_LEVEL_INFO,
+                      "------------------------------------------------------------------------------");
 
         for (uint8_t nic = 0; nic < iDev->getHal()->getMaxNics(); nic++)
         {
@@ -415,9 +435,9 @@ void HclPublicStreams::dfaLogCommInfo(IHclDevice* iDev, DfaLoggersV3& dfaLoggers
                                         {
                                             std::string_view remoteName(remoteRankHeader.hostname);
                                             qpList = fmt::format("    Rank {:4} hwModuleID {} name {}, QPs: ",
-                                                                rank,
-                                                                remoteRankHeader.hwModuleID,
-                                                                remoteName);
+                                                                 rank,
+                                                                 remoteRankHeader.hwModuleID,
+                                                                 remoteName);
                                         }
 
                                         qpList += fmt::format(FMT_COMPILE("{:6}"), nicQPs.qp[qpSet][j]);

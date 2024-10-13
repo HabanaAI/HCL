@@ -149,6 +149,16 @@ struct arc_fw_synapse_config_t {
 
 #define DCCM_QUEUE_COUNT	5
 
+enum {
+	COMP_SYNC_GROUP_COUNT = 16,
+	COMP_SYNC_GROUP_MAX_MON_GROUP_COUNT = 4
+};
+/**
+ * \struct  scheduler_config_t
+ * \brief   Scheduler configuration
+ * \details Configuration parameters related to a scheduler instance
+ */
+
 /**
  * \struct  cme_config_t
  * \brief   CME Configuration Parameters
@@ -440,6 +450,12 @@ struct engine_config_t {
 	/**<
 	 * Synapse parameters for engine instance
 	 */
+	uint32_t watch_dog_sob_id[COMP_SYNC_GROUP_COUNT];
+	/**<
+	 * SOB ID to be incremented by any one engine
+	 * during the processing of Alloc Barrier command. One SOB per
+	 * Completion Group
+	 */
 };
 
 #define COMP_SYNC_GROUP_CMAX_TARGET		0x4000
@@ -728,15 +744,6 @@ struct sched_pdma_config_t {
 	 */
 } __attribute__ ((aligned(4), __packed__));
 
-enum {
-	COMP_SYNC_GROUP_COUNT = 16,
-	COMP_SYNC_GROUP_MAX_MON_GROUP_COUNT = 4
-};
-/**
- * \struct  scheduler_config_t
- * \brief   Scheduler configuration
- * \details Configuration parameters related to a scheduler instance
- */
 struct scheduler_config_t {
 	uint32_t version;
 	/**<

@@ -1,6 +1,8 @@
 #pragma once
+
 #include <map>     // for map
 #include <vector>  // for vector
+
 #include "infra/scal/gen2_arch_common/scal_manager.h"  // for Gen2Arc...
 #include "platform/gen2_arch_common/hcl_graph_sync.h"  // for HclGraphSyncGen2Arch
 #include "platform/gen2_arch_common/types.h"           // for fence_info
@@ -14,13 +16,11 @@ struct SyncObjectDescriptor;
 
 using StreamState = std::map<uint32_t, uint64_t>;  // SoIdx to waited value
 
-constexpr unsigned STREAMS_NR                     = 6;
-constexpr unsigned SCHED_NR                       = (unsigned)hcl::SchedulersIndex::count;
-constexpr unsigned TOTAL_SCHED_NR                 = 5;
-constexpr unsigned MAX_STREAM_TO_INC              = 6;
-constexpr unsigned RR_BUFFER_GRANULARITY_SCALEUP  = RR_SCALEUP_FACTOR;
-constexpr unsigned RR_BUFFER_GRANULARITY_SCALEOUT = RR_SCALEOUT_FACTOR;
-constexpr unsigned ARB_STREAM_IDX                 = 2;
+constexpr unsigned STREAMS_NR        = 6;
+constexpr unsigned SCHED_NR          = (unsigned)hcl::SchedulersIndex::count;
+constexpr unsigned TOTAL_SCHED_NR    = 5;
+constexpr unsigned MAX_STREAM_TO_INC = 6;
+constexpr unsigned ARB_STREAM_IDX    = 2;
 
 struct SchedResources
 {
@@ -38,19 +38,19 @@ struct SchedState
 
 struct ArchStreamSyncParams
 {
-    uint64_t                  m_submittedTargetValue           = 0;
-    uint64_t                  m_submittedInternalCgTargetValue = 0;
-    uint64_t                  m_InternalCgTargetValue          = 0;
-    unsigned                  m_requestedExtraCredits          = 0;
-    bool                      m_isPrevWaitEvent                = false;
+    uint64_t m_submittedTargetValue           = 0;
+    uint64_t m_submittedInternalCgTargetValue = 0;
+    uint64_t m_InternalCgTargetValue          = 0;
+    unsigned m_requestedExtraCredits          = 0;
+    bool     m_isPrevWaitEvent                = false;
 
-    hcl::syncInfo*            m_longSo           = nullptr;
-    hcl::syncInfo*            m_longSoNullSubmit = nullptr;
-    hcl::SmInfo               m_smInfo;
-    SchedState                m_schedulers[SCHED_NR];
-    CreditManager*            m_regularGPSOManager             = nullptr;
-    CreditManager*            m_longtermGPSOManager            = nullptr;
-    std::mutex                m_streamLock;
+    hcl::syncInfo* m_longSo           = nullptr;
+    hcl::syncInfo* m_longSoNullSubmit = nullptr;
+    hcl::SmInfo    m_smInfo;
+    SchedState     m_schedulers[SCHED_NR];
+    CreditManager* m_regularGPSOManager  = nullptr;
+    CreditManager* m_longtermGPSOManager = nullptr;
+    std::mutex     m_streamLock;
 
     std::function<void(void)> m_signalFinalize = nullptr;
 };
@@ -63,8 +63,10 @@ class ScalStream;
 class HclDeviceControllerGen2Arch
 {
 public:
-    HclDeviceControllerGen2Arch(int numOfStreams);
+    HclDeviceControllerGen2Arch(const unsigned numOfStreams);
     virtual ~HclDeviceControllerGen2Arch();
+    HclDeviceControllerGen2Arch(const HclDeviceControllerGen2Arch&)            = delete;
+    HclDeviceControllerGen2Arch& operator=(const HclDeviceControllerGen2Arch&) = delete;
 
     void setDevice(HclDeviceGen2Arch* device) { m_device = device; }
 
@@ -113,7 +115,7 @@ public:
     /**
      * @brief Each stream has two fences
      * the scheduler will mask the stream if one of its fence counters < 0
-     * This function decriments the fence counter and by doing so, blocks the stream until the barrier arm will
+     * This function decrements the fence counter and by doing so, blocks the stream until the barrier arm will
      * increment the fence counter and release it.
      **/
     void waitForBarrierArm(hcl::ScalStream& scalStream);
@@ -126,7 +128,10 @@ public:
                        uint8_t                                                 scaleoutInternalFences,
                        llvm_vecsmall::SmallVector<fence_info, HOST_FENCES_NR>& scaleoutFences);
 
-    inline void incInternalCgTargetValue(int archStreamId) { m_streamSyncParams[archStreamId].m_InternalCgTargetValue++; }
+    inline void incInternalCgTargetValue(int archStreamId)
+    {
+        m_streamSyncParams[archStreamId].m_InternalCgTargetValue++;
+    }
 
     inline std::mutex& getStreamLock(int archStreamId) { return m_streamSyncParams[archStreamId].m_streamLock; }
 
@@ -141,7 +146,7 @@ public:
     /**
      * @brief A wait event is when we would like to block the archStreamId (user stream)
      * until we reach a LSO value.
-     * the LSO index and its value are held in syncInfo which is usualy returnd by eventRecord.
+     * the LSO index and its value are held in syncInfo which is usually returned by eventRecord.
      * works in a lazy manner.
      **/
     void streamWaitEvent(int archStreamId, hcl::syncInfo syncInfo);
@@ -149,12 +154,12 @@ public:
     /**
      * @brief Wait on the host for all the work on archStreamId to be completed
      **/
-    void          synchronizeStream(int archStreamId);
+    void synchronizeStream(int archStreamId);
 
     /**
      * @brief Wait on the host for all the work on archStreamId to be completed
      **/
-    bool          streamQuery(int archStreamId);
+    bool streamQuery(int archStreamId);
 
     void enableNullSubmit(int archStreamId, bool enable);
 
@@ -163,8 +168,20 @@ public:
         return m_scalManager->getScalStream(archStreamIdx, schedIdx, streamIdx);
     }
 
+    /**
+     * @brief Used externally by hcclSetTraceMarker_impl, should be used with synEventRecord/synStreamWaitEvent in order
+     * to be placed correctly
+     **/
+    void setTraceMarker(int archStreamId, uint32_t val);
+
+    /**
+     * @brief Can be used internally for debug, this send a LBW command to the scheduler.
+     * it is up to the developer to sync it correctly.
+     **/
+    void setTraceMarker(int archStreamId, unsigned int schedIdx, unsigned int uArchStream, uint32_t val);
+
 protected:
-    const int                                                m_numOfStreams;
+    const unsigned                                           m_numOfStreams;
     ArchStreamSyncParams*                                    m_streamSyncParams = nullptr;
     HclDeviceGen2Arch*                                       m_device           = nullptr;
     std::unique_ptr<std::unique_ptr<HclGraphSyncGen2Arch>[]> m_graphSync;
@@ -218,6 +235,6 @@ public:
     }
 
 private:
-    int m_archStreamId;
+    int                          m_archStreamId;
     HclDeviceControllerGen2Arch& m_hclDeviceController;
 };

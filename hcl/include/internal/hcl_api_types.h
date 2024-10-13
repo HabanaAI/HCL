@@ -13,10 +13,6 @@
 
 // Allows for creating different communicators. Initially, use HCL_COMM_WORLD reserved name only.
 
-typedef uint16_t HCL_Rank;
-
-#define HCL_INVALID_RANK (HCL_Rank)(-1)  // 0xFFFF
-
 typedef uint32_t HCL_Comm;
 #define HCL_COMM_WORLD 0
 

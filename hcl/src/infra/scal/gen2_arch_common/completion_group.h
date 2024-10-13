@@ -17,17 +17,17 @@ class CompletionGroup
 {
 public:
     CompletionGroup(Gen2ArchScalWrapper& scalWrapper, scal_comp_group_handle_t cg);
-    CompletionGroup(CompletionGroup&&)      = delete;
-    CompletionGroup(const CompletionGroup&) = delete;
-    CompletionGroup& operator=(CompletionGroup&&) = delete;
+    CompletionGroup(CompletionGroup&&)                 = delete;
+    CompletionGroup(const CompletionGroup&)            = delete;
+    CompletionGroup& operator=(CompletionGroup&&)      = delete;
     CompletionGroup& operator=(const CompletionGroup&) = delete;
     ~CompletionGroup()                                 = default;
 
     /**
      * @brief This is a blocking method and its doing 3 things:
      *        1. Update last known done target value.
-     *        2. If targetValue <= m_lastFinidshedTargetValue will return immediately.
-     *        3. If targetValue > m_lastFinidshedTargetValue, will block on host until device finishes job execution.
+     *        2. If targetValue <= m_lastFinishedTargetValue will return immediately.
+     *        3. If targetValue > m_lastFinishedTargetValue, will block on host until device finishes job execution.
      *
      * @param targetValue [in] target value to wait/check if done
      */
@@ -39,7 +39,7 @@ public:
 
 private:
     Gen2ArchScalWrapper&     m_scalWrapper;
-    uint64_t                 m_lastFinidshedTargetValue = 0;
+    uint64_t                 m_lastFinishedTargetValue = 0;
     scal_comp_group_handle_t m_cg;
 };
 }  // namespace hcl

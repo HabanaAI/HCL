@@ -102,7 +102,7 @@ void NativeScaleoutDescriptor::run(SliceState& sliceState)
 
     WqeWraparoundBits wraparoundBits = {false, false};
     bool              doReduction    = false;
-    if  (!sliceState.m_isSend)
+    if (!sliceState.m_isSend)
     {
         wraparoundBits = m_collectiveRoutines.getWraparoundBits(sliceState.m_dynamicComm,
                                                                 sliceState.m_boxNumInfo.m_boxNum,
@@ -111,10 +111,10 @@ void NativeScaleoutDescriptor::run(SliceState& sliceState)
     }
     else
     {
-        unsigned boxIter =
-            mod(sliceState.m_boxNumInfo.m_boxNum + sliceState.m_boxIterations -
-                    sliceState.m_dynamicComm.getMyScaleupGroup(), sliceState.m_boxIterations);
-        doReduction = sliceState.m_isReductionCollective && boxIter >= sliceState.m_reproScaleoutBuffersAmount;
+        unsigned boxIter = mod(sliceState.m_boxNumInfo.m_boxNum + sliceState.m_boxIterations -
+                                   sliceState.m_dynamicComm.getMyScaleupGroup(),
+                               sliceState.m_boxIterations);
+        doReduction      = sliceState.m_isReductionCollective && boxIter >= sliceState.m_scaleoutBuffersAmount;
     }
 
     LOG_TRACE(HCL_ECR,
@@ -229,7 +229,7 @@ LibfabricScaleoutDescriptor::LibfabricScaleoutDescriptor(HclCollectiveRoutinesGe
 void LibfabricScaleoutDescriptor::streamAddWait(spHostStreamFifo hostStream, fence_info fence, const uint64_t srCount)
 {
     LOG_HCL_TRACE(HCL,
-                  "adding host fence on fenceIndex={} facading {}",
+                  "adding host fence on fenceIndex={} SOBInfo {}",
                   fence.index,
                   m_utils->printSOBInfo(fence.lbw.addr));
 
@@ -308,11 +308,12 @@ void LibfabricScaleoutDescriptor::run(SliceState& sliceState)
         const sob_info sob    = m_utils->getSOBInfo(soAddr);
 
         sendHostStream->incSrCount();
-        OfiCompCallbackParams compParams {sob.smIdx,
-                                          sob.sobId,
-                                          m_collectiveRoutines.getSoConfigValue(sliceState.signalToCost(SignalEvent::HNIC_SCALEOUT_SEND), true),
-                                          m_collectiveRoutines.getDevice(),
-                                          libfabricCompCallback};
+        OfiCompCallbackParams compParams {
+            sob.smIdx,
+            sob.sobId,
+            m_collectiveRoutines.getSoConfigValue(sliceState.signalToCost(SignalEvent::HNIC_SCALEOUT_SEND), true),
+            m_collectiveRoutines.getDevice(),
+            libfabricCompCallback};
         HostSchedCommandsGen2Arch::serializeHostScaleOutCommandWithFence(sendHostStream->getOuterQueue(),
                                                                          sliceState.m_isSend,
                                                                          hostAddress,
@@ -392,7 +393,7 @@ void LibfabricScaleoutDescriptor::run(SliceState& sliceState)
                                         m_archStreamIdx,
                                         sliceState.m_dataType,
                                         soAddr,
-                                        sliceState.m_boxIter < sliceState.m_reproScaleoutBuffersAmount);
+                                        sliceState.m_boxIter < sliceState.m_scaleoutBuffersAmount);
     }
 
     provider.notifyHostScheduler(m_archStreamIdx);
@@ -430,10 +431,10 @@ void LibfabricNonCollectiveScaleoutDescriptor::run(NonCollectiveState& nonCollec
         nonCollectiveState.m_remoteRank,
         nonCollectiveState.m_isSend);
 
-    LibfabricScaleoutProvider& provider = dynamic_cast<LibfabricScaleoutProvider&>(m_scaleoutProvider);
-    const uint64_t             hostMappedAddress = nonCollectiveState.m_hostMappedAddr;
-    const uint64_t             hostAddress       = nonCollectiveState.m_hostAddr;
-    const HCL_Rank remoteRank        = nonCollectiveState.m_remoteRank;
+    LibfabricScaleoutProvider& provider           = dynamic_cast<LibfabricScaleoutProvider&>(m_scaleoutProvider);
+    const uint64_t             hostMappedAddress  = nonCollectiveState.m_hostMappedAddr;
+    const uint64_t             hostAddress        = nonCollectiveState.m_hostAddr;
+    const HCL_Rank             remoteRank         = nonCollectiveState.m_remoteRank;
     unsigned                   hostUarchStreamIdx = getHostUarchStreamIdx();
 
     const uint32_t size =
@@ -634,7 +635,7 @@ GaudiDirectNonCollectiveScaleoutDescriptor::GaudiDirectNonCollectiveScaleoutDesc
 
 void GaudiDirectScaleoutDescriptor::run(SliceState& sliceState)
 {
-    LibfabricScaleoutProvider& provider   = dynamic_cast<LibfabricScaleoutProvider&>(m_scaleoutProvider);
+    LibfabricScaleoutProvider& provider = dynamic_cast<LibfabricScaleoutProvider&>(m_scaleoutProvider);
     HCL_Rank remoteRank = sliceState.m_dynamicComm.getScaleupGroupToRankMap()[sliceState.m_boxNumInfo.m_boxNum];
 
     uint32_t remoteRankIteration = sliceState.m_all2allIter;
@@ -667,7 +668,7 @@ void GaudiDirectScaleoutDescriptor::run(SliceState& sliceState)
         HostStream* sendHostStream = provider.m_hostStreamVec[m_archStreamIdx][hostUarchStreamIdx][HOST_STREAM_SEND];
         HostStream* waitForCompHostStream =
             provider.m_hostStreamVec[m_archStreamIdx][hostUarchStreamIdx][HOST_STREAM_WAIT_FOR_SEND_COMP];
-        uint64_t    sendAddr              = sliceState.m_execution.m_deviceAddress + offsetForSend;
+        uint64_t sendAddr = sliceState.m_execution.m_deviceAddress + offsetForSend;
 
         if (dataSize == 0)
         {
@@ -717,7 +718,7 @@ void GaudiDirectScaleoutDescriptor::run(SliceState& sliceState)
         HostStream* recvHostStream = provider.m_hostStreamVec[m_archStreamIdx][hostUarchStreamIdx][HOST_STREAM_RECV];
         HostStream* waitForCompHostStream =
             provider.m_hostStreamVec[m_archStreamIdx][hostUarchStreamIdx][HOST_STREAM_WAIT_FOR_RECV_COMP];
-        uint64_t    recvAddr              = sliceState.m_execution.m_deviceAddress + offsetForRecv;
+        uint64_t recvAddr = sliceState.m_execution.m_deviceAddress + offsetForRecv;
 
         fence_info fence = sliceState.m_execution.m_scaleoutFences[0];
 
@@ -774,11 +775,11 @@ void GaudiDirectNonCollectiveScaleoutDescriptor::run(NonCollectiveState& nonColl
         nonCollectiveState.m_remoteRank,
         nonCollectiveState.m_isSend);
 
-    LibfabricScaleoutProvider& provider   = dynamic_cast<LibfabricScaleoutProvider&>(m_scaleoutProvider);
-    const uint64_t             deviceAddr = nonCollectiveState.m_execution.m_deviceAddress;
-    const HCL_Rank             remoteRank = nonCollectiveState.m_remoteRank;
+    LibfabricScaleoutProvider& provider           = dynamic_cast<LibfabricScaleoutProvider&>(m_scaleoutProvider);
+    const uint64_t             deviceAddr         = nonCollectiveState.m_execution.m_deviceAddress;
+    const HCL_Rank             remoteRank         = nonCollectiveState.m_remoteRank;
     unsigned                   hostUarchStreamIdx = getHostUarchStreamIdx();
-    const uint32_t             soAddr     = nonCollectiveState.m_execution.m_completionSoAddr;
+    const uint32_t             soAddr             = nonCollectiveState.m_execution.m_completionSoAddr;
     const sob_info             sob(m_collectiveRoutines.getScalUtils()->getSOBInfo(soAddr));
 
     const uint32_t size =

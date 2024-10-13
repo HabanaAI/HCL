@@ -1,13 +1,14 @@
 #pragma once
 
-#include <cstdint>                                              // for uint64_t
+#include <cstdint>  // for uint64_t
 
 #include "hcl_api_types.h"                                      // for HCL_C...
 #include "hcl_types.h"                                          // for MAX_R...
 #include "platform/gen2_arch_common/hcl_collective_routines.h"  // for HclCo...
 #include "platform/gen2_arch_common/types.h"                    // for GEN2A...
 #include "platform/gen2_arch_common/collective_states.h"
-#include "platform/gaudi3/send_recv_aggregator.h"  // for SendRecvAggregatorGaudi3
+#include "platform/gaudi3/send_recv_aggregator.h"             // for SendRecvAggregatorGaudi3
+#include "platform/gaudi3/gaudi3_base_server_connectivity.h"  // for Gaudi3BaseServerConnectivity
 
 class HclCommandsGaudi3;
 class HclDeviceGaudi3;
@@ -47,7 +48,7 @@ public:
                               uint64_t myRankInPod,
                               uint64_t scaleUpCount,
                               uint64_t remainderCount,
-                              bool lastRankInPod) override;
+                              bool     lastRankInPod) override;
     uint64_t getDiv(uint64_t a, uint64_t b) override;
     uint64_t getRemainderCount(uint64_t totalCount, uint64_t scaleUpCount, uint64_t commSize) override;
     bool     isValidSlicing(uint32_t originalBufferCount,
@@ -56,10 +57,7 @@ public:
                             uint32_t numSlices,
                             uint32_t numRanks,
                             uint32_t minBufferCount) override;
-    bool     isSlicing(uint64_t totalCount,
-                       uint64_t totalCountPerRank,
-                       uint32_t bufferCount,
-                       uint32_t numRanks) override;
+    bool isSlicing(uint64_t totalCount, uint64_t totalCountPerRank, uint32_t bufferCount, uint32_t numRanks) override;
 };
 
 class HclCollectiveRoutinesGaudi3 : public HclCollectiveRoutinesGen2Arch
@@ -90,16 +88,25 @@ public:
                                                  const uint32_t numberOfSendBuckets,
                                                  const uint32_t numberOfRecvBuckets,
                                                  const uint32_t numberOfSends,
-                                                 const uint32_t numberOfRecvs) override;
+                                                 const uint32_t numberOfRecvs,
+                                                 const HCL_Comm comm) override;
 
     virtual unsigned countScaleOutSignalsSendRecv(const uint32_t numberOfSends,
                                                   const uint32_t numberOfRecvs,
-                                                  unsigned       spotlightType) override;
+                                                  const HCL_Comm comm) override;
+
+    // we don't have to memset the buffers since we write for the first time and then perform reduction
+    virtual void memsetIMBsIfNeeded(SliceState&      sendSliceState,
+                                    SliceState&      recvSliceState,
+                                    unsigned int     sizeInBytes,
+                                    hcclDataType_t   dataType,
+                                    hcl::ScalStream* garbageStream) override {};
 
     HclDeviceGaudi3& getDevice() { return *(reinterpret_cast<HclDeviceGaudi3*>(m_device)); }
 
 private:
-    HclCommandsGaudi3& m_gaudi3Commands;
+    HclCommandsGaudi3&            m_gaudi3Commands;
+    Gaudi3BaseServerConnectivity& m_serverConnectivity;
 
     // different aggs for send/recv
     SendRecvAggregatorGaudi3 m_sendAggr;

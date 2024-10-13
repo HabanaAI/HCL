@@ -62,6 +62,13 @@ bool HCCL_API_CALL hcclIsACcbHalfFull_impl(const unsigned archStreamIdx)
     
 }
 
+void HCCL_API_CALL hcclSetTraceMarker_impl(const synStreamHandle stream_handle, uint32_t val)
+{
+    
+        return (HclGen2::hcclSetTraceMarker_impl(stream_handle, val));
+    
+}
+
 hcclResult_t HCCL_API_CALL hcclCommDestroy_impl(hcclComm_t comm)
 {
     
@@ -333,5 +340,12 @@ hcclResult_t HCCL_API_CALL hcclGetVersionString(char* pVersion, const unsigned l
 {
     
         return (HclGen2::hcclGetVersionString(pVersion, len));
+    
+}
+
+hcclResult_t HCCL_API_CALL hcclDeviceInit_impl(void* device, void* context)
+{
+    
+        return (HclGen2::hcclDeviceInit_impl(device, context));
     
 }

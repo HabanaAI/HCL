@@ -36,9 +36,9 @@ public:
      */
     Gen2ArchScalWrapper(scal_handle_t deviceHandle, ScalJsonNames& scalNames);
     Gen2ArchScalWrapper(int fd, ScalJsonNames& scalNames);
-    Gen2ArchScalWrapper(Gen2ArchScalWrapper&&)      = delete;
-    Gen2ArchScalWrapper(const Gen2ArchScalWrapper&) = delete;
-    Gen2ArchScalWrapper& operator=(Gen2ArchScalWrapper&&) = delete;
+    Gen2ArchScalWrapper(Gen2ArchScalWrapper&&)                 = delete;
+    Gen2ArchScalWrapper(const Gen2ArchScalWrapper&)            = delete;
+    Gen2ArchScalWrapper& operator=(Gen2ArchScalWrapper&&)      = delete;
     Gen2ArchScalWrapper& operator=(const Gen2ArchScalWrapper&) = delete;
     virtual ~Gen2ArchScalWrapper()                             = default;
 
@@ -63,8 +63,8 @@ public:
     void signalFromHost(unsigned smIdx, unsigned soIdx, uint32_t value);
 
     /**
-     * @brief A service method for initalizing stream.
-     *        It will allocate buffer on host share memoty, output stream handle & info, buffer handle &info
+     * @brief A service method for initializing stream.
+     *        It will allocate buffer on host share memory, output stream handle & info, buffer handle &info
      *
      * @param streamName [in] stream name as in the configuration json file
      * @param streamHandle [out]
@@ -98,7 +98,7 @@ public:
     void waitOnCg(const scal_comp_group_handle_t compGrp, const uint64_t target) const;
 
     /**
-     * @brief A service methdod for checking if target value on completion group was reached.
+     * @brief A service method for checking if target value on completion group was reached.
      *
      * @param compGrp
      * @param target - Sync object target value
@@ -122,7 +122,7 @@ public:
 
     // Services methods:
 
-    unsigned getNumberOfEngines(const char* cluster_name);
+    unsigned         getNumberOfEngines(const char* cluster_name);
     virtual uint64_t getMonitorPayloadAddr(std::string name, unsigned fenceIdx) = 0;
 
     void getHBMAddressRange(uint64_t& start, uint64_t& end) const;
@@ -133,8 +133,7 @@ public:
     const std::vector<unsigned> getNicsScaleUpEngines();
     Gen2ArchScalUtils*          m_utils = NULL;
 
-
-    scal_handle_t getScalHandle() {return m_deviceHandle;}
+    scal_handle_t getScalHandle() { return m_deviceHandle; }
 
 protected:
     scal_handle_t m_deviceHandle = {0};
@@ -169,7 +168,6 @@ private:
     ScalJsonNames&                                m_scalNames;
     std::map<scal_core_handle_t, SchedulersIndex> m_schedulersHandleToCGGIndex;
     std::vector<unsigned>                         m_scaleUpNicEngines;
-
 };
 
 }  // namespace hcl

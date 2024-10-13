@@ -14,7 +14,7 @@
 #define HLLOG_COMBINE_(a, b) a##b
 #define HLLOG_COMBINE(a, b)  HLLOG_COMBINE_(a, b)
 
-#define HLLOG_INLINE_API_NAMESPACE_ v1_8_inline
+#define HLLOG_INLINE_API_NAMESPACE_ v1_9_inline
 #ifndef HLLOG_DISABLE_FMT_COMPILE
 #define HLLOG_INLINE_API_NAMESPACE HLLOG_COMBINE(HLLOG_INLINE_API_NAMESPACE_, _fmt_compile)
 #else
@@ -31,7 +31,8 @@
 #define HLLOG_LEVEL_ERROR    4
 #define HLLOG_LEVEL_CRITICAL 5
 #define HLLOG_LEVEL_OFF      6
-#define HLLOG_LEVEL_INVALID  255
+// special values
+#define HLLOG_LEVEL_INVALID  0xFF
 
 #define HLLOG_DEFAULT_LAZY_QUEUE_SIZE 2048
 
@@ -42,7 +43,7 @@ using LoggerSPtr = std::shared_ptr<Logger>;
 class Sinks;
 using SinksSPtr = std::shared_ptr<Sinks>;
 
-inline namespace v1_3{
+inline namespace v1_4{
 struct LoggerCreateParams
 {
     std::string logFileName;                      // main log file. rotates and preserves previous log messages
@@ -80,11 +81,13 @@ struct LoggerCreateParams
     int         defaultLazyLoggingLevel      = HLLOG_LEVEL_OFF;
     bool        forceDefaultLazyLoggingLevel = false;    // ignore envvars and set logLevel to defaultLogLevel
     uint32_t    defaultLazyQueueSize         = HLLOG_DEFAULT_LAZY_QUEUE_SIZE; // default size of lazy log messages queue
+    int         defaultConsoleLoggingLevel   = HLLOG_LEVEL_OFF;
+    bool        forceDefaultConsoleLoggingLevel = false;    // ignore envvars and set logLevel to defaultLogLevel
     enum class ConsoleStream
     {
         std_out,
         std_err,
-        disabled
+        disabled // deprecated. use forceDefaultConsoleLoggingLevel = true instead
     };
     ConsoleStream consoleStream = ConsoleStream::std_out;  // type of console stream if ENABLE_CONSOLE envvar is on
 };
@@ -93,8 +96,8 @@ HLLOG_API LoggerSPtr createLogger(std::string_view loggerName, LoggerCreateParam
 }
 
 inline namespace v1_0{
+// deprecated. will be removed in future versions
 const uint8_t defaultLoggingLevel = 0xFF;
-
 class [[nodiscard]] ResourceGuard
 {
 public:
@@ -179,6 +182,14 @@ HLLOG_API int getLoggingLevelByName(std::string_view loggerName);
 HLLOG_API void setLoggingLevel(LoggerSPtr const& logger, int newLevel);
 
 /**
+ * @brief  setConsoleLoggingLevel set logging level for console (if console not enabled - no effect)
+ *
+ * @param logger
+ * @param newLevel new console logging level
+ */
+HLLOG_API void setConsoleLoggingLevel(LoggerSPtr const& logger, int newLevel);
+
+/**
  * @brief  setLazyLoggingLevel set minimal enabled message level for lazy logging into a logger
  *
  * @param logger
@@ -192,6 +203,13 @@ HLLOG_API void setLazyLoggingLevel(LoggerSPtr const& logger, int newLevel);
  * @return current logging level
  */
 HLLOG_API int getLoggingLevel(LoggerSPtr const& logger);
+
+/**
+ * @brief get console logging level of the logger
+ * @param logger
+ * @return current console logging level
+ */
+HLLOG_API int getConsoleLoggingLevel(LoggerSPtr const& logger);
 
 /**
  * @brief get lazy logging level of the logger
@@ -236,7 +254,7 @@ HLLOG_API void addFileSink(LoggerSPtr const& logger,
                            std::string_view  logFileName,
                            size_t            logFileSize,
                            size_t            logFileAmount,
-                           int               loggingLevel = defaultLoggingLevel);
+                           int               loggingLevel = HLLOG_LEVEL_INVALID);
 
 /**
  * @brief getSinks get logger sinks
@@ -335,6 +353,14 @@ HLLOG_API uint8_t getDefaultLoggingLevel(std::string_view loggerName, int defaul
  * @return lazy log level
  */
 HLLOG_API uint8_t getDefaultLazyLoggingLevel(std::string_view loggerName, int defaultLevel);
+
+/**
+ * @brief getDefaultConsoleLoggingLevel get console logger level according to env variables
+ * @param loggerName
+ * @param defaultLevel default logging level - it's used if no env vars found related to this loggerName
+ * @return console log level
+ */
+HLLOG_API uint8_t getDefaultConsoleLoggingLevel(std::string_view loggerName, int defaultLevel);
 
 /**
  * @brief getLazyQueueSize get lazy log messages queue size according to env variables

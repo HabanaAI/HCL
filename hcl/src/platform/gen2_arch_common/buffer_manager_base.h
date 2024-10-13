@@ -17,10 +17,10 @@ enum e_hostPoolID
 
 enum e_devicePoolID
 {
-    SCALEOUT_RR_POOL = 0,
-    REDUCE_RR_POOL,
-    SCALEUP_RR_AND_ALL2ALL_POOL,
-    SCALEOUT_GDR_POOL,  // dedicated for gaudi-direct recv from mlnx nics (RR only)
+    SCALEOUT_POOL = 0,
+    REDUCE_POOL,
+    SCALEUP_AND_ALL2ALL_POOL,
+    SCALEOUT_GDR_POOL,  // dedicated for gaudi-direct recv from mlnx nics
     NO_POOL = -1
 };
 
@@ -41,13 +41,13 @@ public:
     virtual ~BufferManagerBase() = default;
 
     BufferManagerBase(const std::array<BufferParams, SIZE> bufferParams, const std::vector<unsigned>& sizes);
-    BufferManagerBase(BufferManagerBase&&)      = default;  // Allow move constructor
-    BufferManagerBase(const BufferManagerBase&) = delete;
-    BufferManagerBase& operator=(BufferManagerBase&&) = delete;
+    BufferManagerBase(BufferManagerBase&&)                 = default;  // Allow move constructor
+    BufferManagerBase(const BufferManagerBase&)            = delete;
+    BufferManagerBase& operator=(BufferManagerBase&&)      = delete;
     BufferManagerBase& operator=(const BufferManagerBase&) = delete;
 
-    virtual uint64_t getCurrentBuffer(const T poolIdx) = 0;
-    virtual uint64_t  allocNextBuffer(uint64_t targetValue, const T poolIdx) = 0;
+    virtual uint64_t getCurrentBuffer(const T poolIdx)                      = 0;
+    virtual uint64_t allocNextBuffer(uint64_t targetValue, const T poolIdx) = 0;
     virtual unsigned getPoolAmount();
 
     uint64_t getSingleBufferSize() const;
@@ -55,7 +55,7 @@ public:
 
 protected:
     std::array<BufferParams, SIZE> m_bufferParams;
-    const std::vector<unsigned> m_poolSizes;
-    std::vector<CreditManager>  m_creditManagers;
-    std::vector<unsigned>       m_poolBases;
+    const std::vector<unsigned>    m_poolSizes;
+    std::vector<CreditManager>     m_creditManagers;
+    std::vector<unsigned>          m_poolBases;
 };

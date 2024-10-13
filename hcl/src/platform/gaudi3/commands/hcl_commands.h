@@ -2,15 +2,15 @@
 
 #include "platform/gen2_arch_common/commands/hcl_commands.h"  // for HclComm...
 
-#include <cstdint>                                            // for uint32_t
-#include <array>                                              // for array
-#include <utility>                                            // for pair
-#include <vector>                                             // for vector
+#include <cstdint>  // for uint32_t
+#include <array>    // for array
+#include <utility>  // for pair
+#include <vector>   // for vector
 
-#include "hcl_api_types.h"                                    // for HCL_Col...
-#include "platform/gen2_arch_common/types.h"                  // for GEN2ARC...
-#include "platform/gaudi3/send_recv_aggregator.h"             // for SendRecvArray
-#include "platform/gaudi3/nic_passthrough_handler.h"          // for pRecordWithMetadataGaudi3
+#include "hcl_api_types.h"                            // for HCL_Col...
+#include "platform/gen2_arch_common/types.h"          // for GEN2ARC...
+#include "platform/gaudi3/send_recv_aggregator.h"     // for SendRecvArray
+#include "platform/gaudi3/nic_passthrough_handler.h"  // for pRecordWithMetadataGaudi3
 
 class HclDeviceGen2Arch;
 class SendRecvAggregatorGaudi3;
@@ -65,9 +65,9 @@ class HclCommandsGaudi3 : public HclCommandsGen2Arch
 {
 public:
     HclCommandsGaudi3();
-    HclCommandsGaudi3(HclCommandsGaudi3&&)      = delete;
-    HclCommandsGaudi3(const HclCommandsGaudi3&) = delete;
-    HclCommandsGaudi3& operator=(HclCommandsGaudi3&&) = delete;
+    HclCommandsGaudi3(HclCommandsGaudi3&&)                 = delete;
+    HclCommandsGaudi3(const HclCommandsGaudi3&)            = delete;
+    HclCommandsGaudi3& operator=(HclCommandsGaudi3&&)      = delete;
     HclCommandsGaudi3& operator=(const HclCommandsGaudi3&) = delete;
     virtual ~HclCommandsGaudi3()                           = default;
 
@@ -80,14 +80,14 @@ public:
                                         uint32_t             soAddressLSB,
                                         uint8_t              streamCtxtID,
                                         hcclDataType_t       dataType,
-                                        hcclRedOp_t          reduceOp             = hcclOpNone,
-                                        bool                 useSibo              = false,
-                                        uint32_t             poolId               = 0,
-                                        bool                 isForScaleout        = false,
-                                        uint32_t             numberOfRanks        = 0,
-                                        uint32_t             numberOfReproBuffers = 0,
-                                        uint32_t             indexOfReproBuffer   = 0,
-                                        uint32_t             memsetValue          = 0) override;
+                                        hcclRedOp_t          reduceOp           = hcclOpNone,
+                                        bool                 useSibo            = false,
+                                        uint32_t             poolId             = 0,
+                                        bool                 isForScaleout      = false,
+                                        uint32_t             numberOfRanks      = 0,
+                                        uint32_t             numberOfSubBuffers = 0,
+                                        uint32_t             indexOfSubBuffer   = 0,
+                                        uint32_t             memsetValue        = 0) override;
 
     void serializeUpdateNicOffsets(hcl::ScalStreamBase&                     scalStream,
                                    bool                                     isSend,
@@ -110,6 +110,7 @@ public:
                                   const uint32_t                    qpn,
                                   const SendRecvArray&              sendRecvArray,
                                   const RemoteDevicePortMasksArray& remoteDevicesPortMasks,
+                                  const HCL_Comm                    comm,
                                   SendRecvAggregatorGaudi3&         sendRecvAggr,
                                   const unsigned                    maxNumScaleUpNicsPerConnection);
 
@@ -158,16 +159,26 @@ public:
     virtual void serializeScaleOutCollectiveOp(hcl::ScalStreamBase&    scalStream,
                                                ScaleOutCollectiveOpG3& scaleupCollectiveOp);
 
-    virtual void serializeAllocBarrierCommand(hcl::ScalStreamBase& scalStream,
-                                              unsigned             schedIdx,
-                                              uint32_t             completionGroupIndex,
-                                              uint32_t             requiredSobs) override;
+    virtual void
+    serializeAllocBarrierCommand(hcl::ScalStreamBase&                                     scalStream,
+                                 unsigned                                                 schedIdx,
+                                 uint32_t                                                 completionGroupIndex,
+                                 uint32_t                                                 requiredSobs,
+                                 llvm_vecsmall::SmallVector<uint32_t, MAX_STREAM_TO_INC>* fences = nullptr) override;
 
     virtual void serializeLbwWriteCommand(hcl::ScalStreamBase& scalStream,
                                           unsigned             schedIdx,
                                           uint32_t             destination,
                                           uint32_t             data,
                                           bool                 blockUntilCompletion = false) override;
+
+    virtual void serializeLbwWriteWithFenceDecCommand(hcl::ScalStreamBase& scalStream,
+                                                      unsigned             schedIdx,
+                                                      uint32_t             destination,
+                                                      uint32_t             data,
+                                                      uint32_t             fenceIndex,
+                                                      uint32_t             fenceTarget          = 1,
+                                                      bool                 blockUntilCompletion = false) override;
 
     virtual void serializeLbwBurstWriteCommand(hcl::ScalStreamBase&      scalStream,
                                                unsigned                  schedIdx,
@@ -203,7 +214,9 @@ public:
                                       unsigned             streamIndex,
                                       hcclDataType_t       dataType,
                                       uint32_t             sobAddr          = 0,
-                                      bool                 isFirstBufferUse = false);
+                                      bool                 isFirstBufferUse = false) override;
+
+    virtual void serializeSetTraceMarker(hcl::ScalStreamBase& scalStream, unsigned schedIdx, uint32_t val);
 
 protected:
     virtual bool     isCastDown(uint32_t dmaType) override;

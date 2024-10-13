@@ -5,7 +5,6 @@
 #include <map>
 #include <array>
 #include "hcl_utils.h"
-#include "sched_pkts.h"
 
 namespace hcl
 {
@@ -17,6 +16,14 @@ enum class SchedulersIndex
     sendScaleOut,  // "scaleout_send"
     recvScaleOut,  // "scaleout_receive"
     count,
+};
+
+enum class NetworkStreams
+{
+    reduceScatter = 0,
+    allGather     = 1,
+    arbitrator    = 2,
+    max           = 3
 };
 
 enum class DMAStreams
@@ -56,16 +63,17 @@ public:
     /**
      * @brief Construct a new Scal Json Names object
      *
-     * ScalJsonNames is naming binded to the scal json comfiguration names.
+     * ScalJsonNames is naming bound to the scal json configuration names.
        It hold all naming and maping and order for scal HCL SW layer needs.
      */
 
     ScalJsonNames();
 
-    const std::string& getCommandName(uint32_t opcode, uint32_t schedIdx);
-    const std::string  getFenceName(unsigned archStreamIdx, unsigned fenceIdx);
+    const std::string getFenceName(unsigned archStreamIdx, unsigned fenceIdx);
 
     std::map<SchedulersIndex, std::string>                                   schedulersNames;
+    std::map<DMAStreams, std::string>                                        dmaStreamNames;
+    std::map<NetworkStreams, std::string>                                    networkStreamNames;
     std::array<std::map<SyncManagerName, std::string>, numberOfArchsStreams> smNames;
 
     std::vector<unsigned> numberOfMicroArchStreams = {
@@ -77,90 +85,33 @@ public:
         3   // scaleout recv scheduler, streams: 0:RS, 1:AG, 2:arb
     };
 
-    std::map<uint32_t, std::string> scaleupSendCmdName;
-    std::map<uint32_t, std::string> scaleupRecvCmdName;
-    std::map<uint32_t, std::string> scaleoutSendCmdName;
-    std::map<uint32_t, std::string> scaleoutRecvCmdName;
-    std::map<uint32_t, std::string> dmaCmdName;
-    const std::string               hostFenceNamePrefix = "host_fence_counters_";
+    const std::string hostFenceNamePrefix = "host_fence_counters_";
 };
 
 // clang-format off
 inline ScalJsonNames::ScalJsonNames()
 {
-    map_init(scaleupSendCmdName)
-	(g2fw::SCHED_SCALEUP_SEND_ARC_CMD_FENCE_WAIT,           "SCHED_SCALEUP_SEND_ARC_CMD_FENCE_WAIT")
-	(g2fw::SCHED_SCALEUP_SEND_ARC_CMD_LBW_WRITE,            "SCHED_SCALEUP_SEND_ARC_CMD_LBW_WRITE")
-	(g2fw::SCHED_SCALEUP_SEND_ARC_CMD_LBW_BURST_WRITE,      "SCHED_SCALEUP_SEND_ARC_CMD_LBW_BURST_WRITE")
-	(g2fw::SCHED_SCALEUP_SEND_ARC_CMD_FENCE_INC_IMMEDIATE,  "SCHED_SCALEUP_SEND_ARC_CMD_FENCE_INC_IMMEDIATE")
-	(g2fw::SCHED_SCALEUP_SEND_ARC_CMD_LBW_READ,             "SCHED_SCALEUP_SEND_ARC_CMD_LBW_READ")
-	(g2fw::SCHED_SCALEUP_SEND_ARC_CMD_MEM_FENCE,            "SCHED_SCALEUP_SEND_ARC_CMD_MEM_FENCE")
-	(g2fw::SCHED_SCALEUP_SEND_ARC_CMD_NOP,                  "SCHED_SCALEUP_SEND_ARC_CMD_NOP")
-	(g2fw::SCHED_SCALEUP_SEND_ARC_CMD_UPDATE_NIC_GLBL_CTXT, "SCHED_SCALEUP_SEND_ARC_CMD_UPDATE_NIC_GLBL_CTXT")
-	(g2fw::SCHED_SCALEUP_SEND_ARC_CMD_UPDATE_NIC_COLL_CTXT, "SCHED_SCALEUP_SEND_ARC_CMD_UPDATE_NIC_COLL_CTXT")
-	(g2fw::SCHED_SCALEUP_SEND_ARC_CMD_NIC_COLL_OPS,         "SCHED_SCALEUP_SEND_ARC_CMD_NIC_COLL_OPS")
-	(g2fw::SCHED_SCALEUP_SEND_ARC_CMD_ALLOC_NIC_BARRIER,    "SCHED_SCALEUP_SEND_ARC_CMD_ALLOC_NIC_BARRIER")
-	(g2fw::SCHED_SCALEUP_SEND_ARC_CMD_NIC_PASSTHROUGH,      "SCHED_SCALEUP_SEND_ARC_CMD_NIC_PASSTHROUGH")
-	(g2fw::SCHED_SCALEUP_SEND_ARC_CMD_NIC_EDMA_OPS,         "SCHED_SCALEUP_SEND_ARC_CMD_NIC_EDMA_OPS")
-    ;
-
-    map_init(scaleupRecvCmdName)
-	(g2fw::SCHED_SCALEUP_RECV_ARC_CMD_FENCE_WAIT,           "SCHED_SCALEUP_RECV_ARC_CMD_FENCE_WAIT")
-	(g2fw::SCHED_SCALEUP_RECV_ARC_CMD_LBW_WRITE,            "SCHED_SCALEUP_RECV_ARC_CMD_LBW_WRITE")
-	(g2fw::SCHED_SCALEUP_RECV_ARC_CMD_LBW_BURST_WRITE,      "SCHED_SCALEUP_RECV_ARC_CMD_LBW_BURST_WRITE")
-	(g2fw::SCHED_SCALEUP_RECV_ARC_CMD_FENCE_INC_IMMEDIATE,  "SCHED_SCALEUP_RECV_ARC_CMD_FENCE_INC_IMMEDIATE")
-	(g2fw::SCHED_SCALEUP_RECV_ARC_CMD_LBW_READ,             "SCHED_SCALEUP_RECV_ARC_CMD_LBW_READ")
-	(g2fw::SCHED_SCALEUP_RECV_ARC_CMD_MEM_FENCE,            "SCHED_SCALEUP_RECV_ARC_CMD_MEM_FENCE")
-	(g2fw::SCHED_SCALEUP_RECV_ARC_CMD_NOP,                  "SCHED_SCALEUP_RECV_ARC_CMD_NOP")
-	(g2fw::SCHED_SCALEUP_RECV_ARC_CMD_UPDATE_NIC_GLBL_CTXT, "SCHED_SCALEUP_RECV_ARC_CMD_UPDATE_NIC_GLBL_CTXT")
-	(g2fw::SCHED_SCALEUP_RECV_ARC_CMD_UPDATE_NIC_COLL_CTXT, "SCHED_SCALEUP_RECV_ARC_CMD_UPDATE_NIC_COLL_CTXT")
-	(g2fw::SCHED_SCALEUP_RECV_ARC_CMD_NIC_COLL_OPS,         "SCHED_SCALEUP_RECV_ARC_CMD_NIC_COLL_OPS")
-	(g2fw::SCHED_SCALEUP_RECV_ARC_CMD_ALLOC_NIC_BARRIER,    "SCHED_SCALEUP_RECV_ARC_CMD_ALLOC_NIC_BARRIER")
-	(g2fw::SCHED_SCALEUP_RECV_ARC_CMD_NIC_PASSTHROUGH,      "SCHED_SCALEUP_RECV_ARC_CMD_NIC_PASSTHROUGH")
-    ;
-
-    map_init(scaleoutSendCmdName)
-	(g2fw::SCHED_SCALEOUT_SEND_ARC_CMD_FENCE_WAIT,          "SCHED_SCALEOUT_SEND_ARC_CMD_FENCE_WAIT")
-	(g2fw::SCHED_SCALEOUT_SEND_ARC_CMD_LBW_WRITE,           "SCHED_SCALEOUT_SEND_ARC_CMD_LBW_WRITE")
-	(g2fw::SCHED_SCALEOUT_SEND_ARC_CMD_LBW_BURST_WRITE,     "SCHED_SCALEOUT_SEND_ARC_CMD_LBW_BURST_WRITE")
-	(g2fw::SCHED_SCALEOUT_SEND_ARC_CMD_FENCE_INC_IMMEDIATE, "SCHED_SCALEOUT_SEND_ARC_CMD_FENCE_INC_IMMEDIATE")
-	(g2fw::SCHED_SCALEOUT_SEND_ARC_CMD_NOP,                 "SCHED_SCALEOUT_SEND_ARC_CMD_NOP")
-	(g2fw::SCHED_SCALEOUT_SEND_ARC_CMD_ALLOC_NIC_BARRIER,   "SCHED_SCALEOUT_SEND_ARC_CMD_ALLOC_NIC_BARRIER")
-	(g2fw::SCHED_SCALEOUT_SEND_ARC_CMD_NIC_COLL_OPS,        "SCHED_SCALEOUT_SEND_ARC_CMD_NIC_COLL_OPS")
-	(g2fw::SCHED_SCALEOUT_SEND_ARC_CMD_LBW_READ,            "SCHED_SCALEOUT_SEND_ARC_CMD_LBW_READ")
-	(g2fw::SCHED_SCALEOUT_SEND_ARC_CMD_MEM_FENCE,           "SCHED_SCALEOUT_SEND_ARC_CMD_MEM_FENCE")
-    ;
-
-    map_init(scaleoutRecvCmdName)
-	(g2fw::SCHED_SCALEOUT_RECV_ARC_CMD_FENCE_WAIT,          "SCHED_SCALEOUT_RECV_ARC_CMD_FENCE_WAIT")
-	(g2fw::SCHED_SCALEOUT_RECV_ARC_CMD_LBW_WRITE,           "SCHED_SCALEOUT_RECV_ARC_CMD_LBW_WRITE")
-	(g2fw::SCHED_SCALEOUT_RECV_ARC_CMD_LBW_BURST_WRITE,     "SCHED_SCALEOUT_RECV_ARC_CMD_LBW_BURST_WRITE")
-	(g2fw::SCHED_SCALEOUT_RECV_ARC_CMD_FENCE_INC_IMMEDIATE, "SCHED_SCALEOUT_RECV_ARC_CMD_FENCE_INC_IMMEDIATE")
-	(g2fw::SCHED_SCALEOUT_RECV_ARC_CMD_NOP,                 "SCHED_SCALEOUT_RECV_ARC_CMD_NOP")
-	(g2fw::SCHED_SCALEOUT_RECV_ARC_CMD_ALLOC_NIC_BARRIER,   "SCHED_SCALEOUT_RECV_ARC_CMD_ALLOC_NIC_BARRIER")
-	(g2fw::SCHED_SCALEOUT_RECV_ARC_CMD_NIC_COLL_OPS,        "SCHED_SCALEOUT_RECV_ARC_CMD_NIC_COLL_OPS")
-	(g2fw::SCHED_SCALEOUT_RECV_ARC_CMD_LBW_READ,            "SCHED_SCALEOUT_RECV_ARC_CMD_LBW_READ")
-	(g2fw::SCHED_SCALEOUT_RECV_ARC_CMD_MEM_FENCE,           "SCHED_SCALEOUT_RECV_ARC_CMD_MEM_FENCE")
-    ;
-
-    map_init(dmaCmdName)
-	(g2fw::SCHED_GC_REDUCTION_ARC_CMD_FENCE_WAIT,          "SCHED_GC_REDUCTION_ARC_CMD_FENCE_WAIT")
-	(g2fw::SCHED_GC_REDUCTION_ARC_CMD_LBW_WRITE,           "SCHED_GC_REDUCTION_ARC_CMD_LBW_WRITE")
-	(g2fw::SCHED_GC_REDUCTION_ARC_CMD_LBW_BURST_WRITE,     "SCHED_GC_REDUCTION_ARC_CMD_LBW_BURST_WRITE")
-	(g2fw::SCHED_GC_REDUCTION_ARC_CMD_FENCE_INC_IMMEDIATE, "SCHED_GC_REDUCTION_ARC_CMD_FENCE_INC_IMMEDIATE")
-	(g2fw::SCHED_GC_REDUCTION_ARC_CMD_LBW_READ,            "SCHED_GC_REDUCTION_ARC_CMD_LBW_READ")
-	(g2fw::SCHED_GC_REDUCTION_ARC_CMD_MEM_FENCE,           "SCHED_GC_REDUCTION_ARC_CMD_MEM_FENCE")
-	(g2fw::SCHED_GC_REDUCTION_ARC_CMD_NOP,                 "SCHED_GC_REDUCTION_ARC_CMD_NOP")
-	(g2fw::SCHED_GC_REDUCTION_ARC_CMD_ALLOC_NIC_BARRIER,   "SCHED_GC_REDUCTION_ARC_CMD_ALLOC_NIC_BARRIER")
-	(g2fw::SCHED_GC_REDUCTION_ARC_CMD_NIC_EDMA_OPS,        "SCHED_GC_REDUCTION_ARC_CMD_NIC_EDMA_OPS")
-    ;
-
     map_init(schedulersNames)
         (SchedulersIndex::dma,          "network_garbage_collector_and_reduction")
         (SchedulersIndex::sendScaleUp,  "scaleup_send")
         (SchedulersIndex::recvScaleUp,  "scaleup_receive")
         (SchedulersIndex::sendScaleOut, "scaleout_send")
         (SchedulersIndex::recvScaleOut, "scaleout_receive")
+    ;
+
+    map_init(dmaStreamNames)
+        (DMAStreams::garbageCollection, "gar")
+        (DMAStreams::reduction,         "red")
+        (DMAStreams::arbitrator,        "arb")
+        (DMAStreams::scaleoutReduction, "sor")
+        (DMAStreams::signaling,         "sig")
+        (DMAStreams::gdr,               "gdr")
+    ;
+
+    map_init(networkStreamNames)
+        (NetworkStreams::reduceScatter,  "rs")
+        (NetworkStreams::allGather,      "ag")
+        (NetworkStreams::arbitrator,     "arb")
     ;
 
     int index = 0;
@@ -177,42 +128,6 @@ inline ScalJsonNames::ScalJsonNames()
     }
 }
 // clang-format on
-
-inline const std::string& ScalJsonNames::getCommandName(uint32_t opcode, uint32_t schedIdx)
-{
-    std::map<unsigned, std::string>* commandMap = nullptr;
-    static std::string               invalid    = "<invalid>";
-
-    switch (static_cast<SchedulersIndex>(schedIdx))
-    {
-        case SchedulersIndex::sendScaleUp:
-            commandMap = &scaleupSendCmdName;
-            break;
-        case SchedulersIndex::recvScaleUp:
-            commandMap = &scaleupRecvCmdName;
-            break;
-        case SchedulersIndex::sendScaleOut:
-            commandMap = &scaleoutSendCmdName;
-            break;
-        case SchedulersIndex::recvScaleOut:
-            commandMap = &scaleoutRecvCmdName;
-            break;
-        case SchedulersIndex::dma:
-            commandMap = &dmaCmdName;
-            break;
-        default:
-            LOG_WARN(HCL_SCAL, "Invalid schedIdx {} requested for parsing opcode {}", schedIdx, opcode);
-            return invalid;
-    }
-
-    if (commandMap->count(opcode) == 0)
-    {
-        LOG_WARN(HCL_SCAL, "Invalid opcode {} in schedIdx {}", opcode, schedIdx);
-        return invalid;
-    }
-
-    return commandMap->at(opcode);
-}
 
 inline const std::string ScalJsonNames::getFenceName(unsigned archStreamIdx, unsigned fenceIdx)
 {

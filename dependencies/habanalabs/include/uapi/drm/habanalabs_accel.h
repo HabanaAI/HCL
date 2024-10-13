@@ -2797,6 +2797,8 @@ struct hl_debug_params_read_block {
 #define HL_DEBUG_OP_SET_MODE	7
 /* Opcode for fetching trace data */
 #define HL_DEBUG_OP_FETCH_TRACE	8
+/* Opcode for direct I/O operations */
+#define HL_DEBUG_OP_DIO		9
 
 /* Opcode for debug read memory */
 #define HL_DEBUG_OP_READMEM	1024
@@ -3657,6 +3659,20 @@ struct hl_nic_args {
 #define HL_IOCTL_MEMORY		0x04
 #define HL_IOCTL_DEBUG		0x05
 #define HL_IOCTL_NIC		0x06
+
+#define HL_DIO_CMD_SSD2HL	1
+#define HL_DIO_CMD_HL2SSD	2
+
+struct hl_dio_args {
+	struct {
+		__u64 device_va;
+		__u64 off_bytes;
+		__u64 len_bytes;
+		__u32 fd;
+	} ssd2hl;
+
+	__u32 op;
+};
 
 /*
  * Various information operations such as:

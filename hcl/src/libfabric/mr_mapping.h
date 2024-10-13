@@ -25,10 +25,10 @@ public:
         return mapping;
     }
 
-    MRMapping(const MRMapping&) = delete;
-    MRMapping(MRMapping&&)      = delete;
+    MRMapping(const MRMapping&)            = delete;
+    MRMapping(MRMapping&&)                 = delete;
     MRMapping& operator=(const MRMapping&) = delete;
-    MRMapping& operator=(MRMapping&&) = delete;
+    MRMapping& operator=(MRMapping&&)      = delete;
 
     struct buffer_mapping_entry
     {
@@ -45,7 +45,7 @@ public:
      * @brief Insert a buffer mapping entry into buffer_mapping_vec
      *
      * @param entry consists of address and size (Optional: FD and handle)
-     * @return 0 if successfull
+     * @return 0 if successful
      */
     int update_buffer_mapping(buffer_mapping_entry& entry);
 
@@ -54,7 +54,7 @@ public:
      *
      * @param addr address of mapped buffer
      * @param size size of mapped buffer
-     * @return 0 if successfull
+     * @return 0 if successful
      */
     int remove_from_mapping(uint64_t addr, uint64_t size);
 
@@ -62,7 +62,7 @@ public:
      * @brief Update the handle of a mapped buffer mapping entry
      *
      * @param entry entry including a handle
-     * @return 0 if successfull, -1 otherwise
+     * @return 0 if successful, -1 otherwise
      */
     int update_mr_handle(buffer_mapping_entry& entry);
 

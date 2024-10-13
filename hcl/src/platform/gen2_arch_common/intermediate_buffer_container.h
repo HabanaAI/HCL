@@ -11,9 +11,9 @@ constexpr unsigned MAX_NUM_POOLS = 20;
 struct IntermediateBuffersAmount
 {
     static constexpr std::array<std::pair<e_devicePoolID, unsigned>, MAX_NUM_POOLS> buffersArr = {
-        {{SCALEOUT_RR_POOL, 40},
-         {REDUCE_RR_POOL, 8},  // only 4 needed, but we use 8 for granularity
-         {SCALEUP_RR_AND_ALL2ALL_POOL, 104},
+        {{SCALEOUT_POOL, 40},
+         {REDUCE_POOL, 8},  // only 4 needed, but we use 8 for granularity
+         {SCALEUP_AND_ALL2ALL_POOL, 104},
          {SCALEOUT_GDR_POOL, 40}}};
 
     static int getBufferCount(e_devicePoolID key)
@@ -41,17 +41,17 @@ struct BufferContainerParams
 /*
     IntermediateBufferContainer allocated 2 ranges in HBM to be used for IMBs.
     Each range is divided to 3 smaller ranges to be used per stream (managed by DeviceBufferManager).
-    DeviceBufferManager can contain many pool types (REDUCE_RR_POOL/SCALEUP_RR_AND_ALL2ALL_POOL/SCALEOUT_RR_POOL) and
-    different pool sizes. SCALEOUT_RR_POOL - 1M buffers. REDUCE_RR_POOL/SCALEUP_RR_AND_ALL2ALL_POOL - 512k buffers.
+    DeviceBufferManager can contain many pool types (REDUCE_POOL/SCALEUP_AND_ALL2ALL_POOL/SCALEOUT_POOL) and
+    different pool sizes. SCALEOUT_POOL - 1M buffers. REDUCE_POOL/SCALEUP_AND_ALL2ALL_POOL - 512k buffers.
 */
 class IntermediateBufferContainer
 {
 public:
-    explicit IntermediateBufferContainer(uint32_t deviceId, uint32_t numberOfStreams);
+    explicit IntermediateBufferContainer(const uint32_t numberOfStreams);
     ~IntermediateBufferContainer();
-    IntermediateBufferContainer(IntermediateBufferContainer&&)      = delete;
-    IntermediateBufferContainer(const IntermediateBufferContainer&) = delete;
-    IntermediateBufferContainer& operator=(IntermediateBufferContainer&&) = delete;
+    IntermediateBufferContainer(IntermediateBufferContainer&&)                 = delete;
+    IntermediateBufferContainer(const IntermediateBufferContainer&)            = delete;
+    IntermediateBufferContainer& operator=(IntermediateBufferContainer&&)      = delete;
     IntermediateBufferContainer& operator=(const IntermediateBufferContainer&) = delete;
 
     uint64_t              getBufferSize() const;
@@ -75,13 +75,12 @@ public:
 
     void generatePoolParams(unsigned                           sliceSize,
                             const std::vector<e_devicePoolID>& pools,
-                            BufferContainerParams&             m_bufferContainerParams);
+                            BufferContainerParams&             bufferContainerParams);
 
 private:
     std::vector<DeviceBufferManager>                      m_sibBuffers;
-    uint32_t                         m_deviceId          = 0;
-    uint64_t                         m_fwBaseAddr        = 0;
-    uint32_t                                              m_numberOfStreams   = 0;
+    uint64_t                                              m_fwBaseAddr      = 0;
+    uint32_t                                              m_numberOfStreams = 0;
     std::array<BufferContainerParams, MAX_NUM_POOL_SIZES> m_bufferContainerParams;
     e_devicePoolID                                        m_firstPool = NO_POOL;
     e_devicePoolID                                        m_lastPool  = NO_POOL;

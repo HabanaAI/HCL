@@ -69,7 +69,13 @@ VoidOutcome GcfgItem::updateFromEnv(bool enableExperimental)
 {
     for (const auto& name : m_names)
     {
-        const char* envValue = getenv(name.c_str());
+        const char* envValue = nullptr;
+        if (getModeType() == NNExecutionMode::inference) {
+            envValue = getenv((name + "_INFERENCE").c_str());
+        }
+        if (envValue == nullptr) {
+            envValue = getenv(name.c_str());
+        }
         if (envValue == nullptr) continue;
 
         if (m_isPublic || enableExperimental)
@@ -164,6 +170,10 @@ GcfgItemImpl<T,R>::GcfgItemImpl(const std::string&              name,
     if (!ret)
     {
         throw std::invalid_argument(ret.errorDesc());
+    }
+    if (hl_gcfg::isInitialized())
+    {
+        updateFromEnv(hl_gcfg::getEnableExperimentalFlagsValue());
     }
 }
 

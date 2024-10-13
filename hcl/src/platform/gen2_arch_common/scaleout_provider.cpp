@@ -7,7 +7,6 @@
 #include <iterator>
 #include <memory>
 #include "hccl/ofi_communicator.h"
-#include "hcl_config.h"
 #include "hcl_dynamic_communicator.h"
 #include "hcl_global_conf.h"
 #include "interfaces/hcl_remote_device.h"
@@ -27,6 +26,7 @@
 #include "hcl_types.h"                                   // for HostNicConnectInfo
 #include "hcl_math_utils.h"
 #include "libfabric/mr_mapping.h"
+#include "platform/gen2_arch_common/server_connectivity.h"  // for Gen2ArchServerConnectivity
 
 ScaleoutProvider::ScaleoutProvider(HclDeviceGen2Arch* device) : m_device(device) {}
 
@@ -153,7 +153,7 @@ void Gen2ArchScaleoutProvider::calculateScaleoutRecvResources(SliceState& sliceS
         {
             if (sliceState.m_collectiveOp == eHCLBroadcast)
             {
-                unsigned     nextBox   = getNextBox(sliceState.m_dynamicComm.getMyScaleupGroup(), sliceState.m_boxIterations);
+                unsigned nextBox = getNextBox(sliceState.m_dynamicComm.getMyScaleupGroup(), sliceState.m_boxIterations);
                 unsigned int numFences = (nextBox == sliceState.rootBox()) ? 1 : 2;
                 signalsManager.enqueueWait(waitEvent, {signalEvent}, waitMethod, 0, numFences);
             }
@@ -172,24 +172,25 @@ void Gen2ArchScaleoutProvider::calculateScaleoutRecvResources(SliceState& sliceS
             break;
 
         case eHCLReduceScatter:
+        {
+            unsigned longtermOffset = 0;
+            unsigned phaseOfWait    = 0;
+            if (isLongTerm(waitMethod))
             {
-                unsigned longtermOffset = 0;
-                unsigned phaseOfWait    = 0;
-                if (isLongTerm(waitMethod))
-                {
-                    bool isEdgeIteration = sliceState.isEdgeIteration(sliceState.m_boxNumInfo);
-                    longtermOffset       = isEdgeIteration ? sliceState.m_reproScaleoutLongtermAmount - 1
-                                                           : (sliceState.calcBoxIterRecv(sliceState.m_boxNumInfo) %
-                                                        sliceState.m_reproScaleoutBuffersAmount);
-                    phaseOfWait          = isEdgeIteration ? 0
-                                                           : sliceState.calcBoxIterRecv(sliceState.m_boxNumInfo) /
-                                                        sliceState.m_reproScaleoutBuffersAmount;
-                }
-
-                VERIFY(phaseOfWait < WAIT_PHASE_MAX, "phaseOfWait={}, WAIT_PHASE_MAX={}", phaseOfWait, WAIT_PHASE_MAX);
-                signalsManager.enqueueWait(waitEvent, {signalEvent}, waitMethod, phaseOfWait, 1, longtermOffset);
-                break;
+                bool isEdgeIteration = sliceState.isEdgeIteration(sliceState.m_boxNumInfo);
+                longtermOffset =
+                    isEdgeIteration
+                        ? sliceState.m_scaleoutLongtermAmount - 1
+                        : (sliceState.calcBoxIterRecv(sliceState.m_boxNumInfo) % sliceState.m_scaleoutBuffersAmount);
+                phaseOfWait = isEdgeIteration ? 0
+                                              : sliceState.calcBoxIterRecv(sliceState.m_boxNumInfo) /
+                                                    sliceState.m_scaleoutBuffersAmount;
             }
+
+            VERIFY(phaseOfWait < WAIT_PHASE_MAX, "phaseOfWait={}, WAIT_PHASE_MAX={}", phaseOfWait, WAIT_PHASE_MAX);
+            signalsManager.enqueueWait(waitEvent, {signalEvent}, waitMethod, phaseOfWait, 1, longtermOffset);
+            break;
+        }
 
         case eHCLNoCollective:
             // Nothing to signal
@@ -231,24 +232,13 @@ void Gen2ArchScaleoutProvider::updateConnectionsNonPeer(const HCL_Comm          
 
 void Gen2ArchScaleoutProvider::closeConnections(HCL_Comm comm)
 {
-    const unsigned myBox = m_device->getComm(comm).getMyScaleupGroup();
-
-    LOG_HCL_TRACE(HCL, "Started, comm={}, myBox={}", comm, myBox);
-    UniqueSortedVector allOuterRank;
-    for (const HCL_Rank rank : m_device->getOpenScaleOutRanks(comm))
-    {
-        if (m_device->getComm(comm).getRankToScaleupGroupMap()[rank] != myBox)
-        {
-            LOG_HCL_TRACE(HCL, "Need to close comm={}, outer rank={}", comm, rank);
-            allOuterRank.insert_sorted(rank);
-        }
-    }
-    m_device->closeScaleoutQPs(comm, allOuterRank);
+    // nothing to do here
+    return;
 }
 
-unsigned Gen2ArchScaleoutProvider::getNumOfNicsPerDevice(unsigned spotlightType) const
+unsigned Gen2ArchScaleoutProvider::getNumOfNicsPerDevice(const HCL_Comm comm) const
 {
-    return (m_device->getPortMapping()).getNumScaleOutPorts(spotlightType);
+    return m_device->getServerConnectivity().getNumScaleOutPorts(comm);
 }
 
 LibfabricScaleoutProvider::LibfabricScaleoutProvider(HclDeviceGen2Arch* device)
@@ -268,7 +258,7 @@ LibfabricScaleoutProvider::LibfabricScaleoutProvider(HclDeviceGen2Arch* device)
 
         m_hostAddress            = alloc_and_map_to_device(sizeOfAllHostBuffers,
                                                 m_deviceHandle,
-                                                m_device->getDeviceConfig().m_fd,
+                                                m_device->getDeviceConfig().getFd(),
                                                 nullptr,
                                                 PROT_READ | PROT_WRITE,
                                                 MAP_SHARED | MAP_ANONYMOUS);
@@ -389,7 +379,7 @@ void LibfabricScaleoutProvider::destroy()
         free_mem_mapped_to_device(m_hostAddress,
                                   sizeOfAllHostBuffers,
                                   m_deviceHandle,
-                                  m_device->getDeviceConfig().m_fd);
+                                  m_device->getDeviceConfig().getFd());
     }
 
     for (unsigned i = 0; i < m_hostBufferManager.size(); i++)
@@ -455,9 +445,9 @@ void LibfabricScaleoutProvider::verifyConnections(HCL_Comm comm)
     bool res;
     for (auto& rank : outerRanks)
     {
-        res = dynamicComm.m_hostNicBridge->updateConnections(
-            dynamicComm.m_remoteDevices[rank]->header.hcclRank,
-            dynamicComm.m_remoteDevices[rank]->remoteInfo.hostNicConns);
+        res =
+            dynamicComm.m_hostNicBridge->updateConnections(dynamicComm.m_remoteDevices[rank]->header.hcclRank,
+                                                           dynamicComm.m_remoteDevices[rank]->remoteInfo.hostNicConns);
         VERIFY(res == true, "Failed to update connection to rank {}", rank);
     }
 }
@@ -537,9 +527,10 @@ void LibfabricScaleoutProvider::requestScaleoutResources(SliceState& sliceState,
         SignalEvent signalEvent                           = SignalEvent::HNIC_SCALEOUT_SEND;
         sliceState.m_setup.m_scaleoutCompletionWaitSignal = signalEvent;
 
-        signalsManager.enqueueWait(waitEvent, {signalEvent}, waitMethod);
+        WaitPhase phase = sliceState.m_currentOp == eHCLReduceScatter ? (sliceState.m_syncUpBufferWithLtu ? 2 : 0) : 0;
+        signalsManager.enqueueWait(waitEvent, {signalEvent}, waitMethod, phase);
     }
-    else // recv
+    else  // recv
     {
         sliceState.m_setup.m_scaleoutInternalSOBs = isGaudiDirect() ? 0 : 1;
 
@@ -558,8 +549,8 @@ void LibfabricScaleoutProvider::requestScaleoutResources(SliceState& sliceState,
         }
         else if (sliceState.m_collectiveOp == eHCLBroadcast && sliceState.m_currentOp == eHCLScatter)
         {
-            WaitPhase waitPhase = isGaudiDirect() ? 0 : 1;
-            unsigned     nextBox   = getNextBox(sliceState.m_dynamicComm.getMyScaleupGroup(), sliceState.m_boxIterations);
+            WaitPhase    waitPhase = isGaudiDirect() ? 0 : 1;
+            unsigned     nextBox = getNextBox(sliceState.m_dynamicComm.getMyScaleupGroup(), sliceState.m_boxIterations);
             unsigned int numFences = 1;
             if (isGaudiDirect() && (nextBox != sliceState.rootBox()))
             {

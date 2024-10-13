@@ -61,12 +61,12 @@ scal_comp_group_handle_t Gen2ArchScalManager::getCgHandle(unsigned archStreamIdx
     }
 }
 
-void Gen2ArchScalManager::init()
+void Gen2ArchScalManager::init(CyclicBufferType type)
 {
-    initScalData();
+    initScalData(type);
 }
 
-void Gen2ArchScalManager::initScalData()
+void Gen2ArchScalManager::initScalData(CyclicBufferType type)
 {
     m_scalWrapper->initMemory();
 
@@ -82,6 +82,14 @@ void Gen2ArchScalManager::initScalData()
         {
             m_hostFenceInfoArray[i][j] = m_scalWrapper->getHostFenceInfo(i, j);
         }
+    }
+
+    for (size_t i = 0; i < m_archStreams.size(); i++)
+    {
+        scal_comp_group_handle_t internalCgHandle = m_cgInfoArray[i][(int)SchedulerType::internal].cgHandle;
+        scal_comp_group_handle_t externalCgHandle = m_cgInfoArray[i][(int)SchedulerType::external].cgHandle;
+        m_archStreams[i]                          = std::unique_ptr<ArchStream>(
+            new ArchStream(i, *m_scalWrapper, externalCgHandle, internalCgHandle, m_scalNames, m_commands, type));
     }
 
     LOG_TRACE(HCL_SCAL, "{}", prettyPrint());
@@ -265,10 +273,10 @@ const std::vector<unsigned> Gen2ArchScalManager::getNicsScaleUpEngines()
 unsigned Gen2ArchScalManager::getNumberOfEdmaEngines(unsigned groupNum)
 {
     static const char* clusterPrefix   = "network_edma_";
-    int                maxStringLength = 20;  // Maximum length of the modified string, including the null terminator
+    const int          maxStringLength = 20;  // Maximum length of the modified string, including the null terminator
 
     char modifiedString[maxStringLength];
-    snprintf(modifiedString, sizeof(modifiedString), "%s%d", clusterPrefix, groupNum);
+    snprintf(modifiedString, sizeof(modifiedString), "%s%u", clusterPrefix, groupNum);
 
     return m_scalWrapper->getNumberOfEngines(modifiedString);
 }

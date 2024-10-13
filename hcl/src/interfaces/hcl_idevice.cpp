@@ -1,29 +1,32 @@
 #include "interfaces/hcl_idevice.h"
 
-#include <cstring>                                // for memset, memcpy, NULL
-#include <array>                                  // for array
-#include <cstdint>                                // for uint32_t, uint8_t
-#include <memory>                                 // for __shared_ptr_access
-#include <set>                                    // for set
-#include <string>                                 // for string
-#include <utility>                                // for pair
+#include <cstring>  // for memset, memcpy, NULL
+#include <array>    // for array
+#include <cstdint>  // for uint32_t, uint8_t
+#include <memory>   // for __shared_ptr_access
+#include <set>      // for set
+#include <string>   // for string
+#include <utility>  // for pair
 
-#include "hlthunk.h"                              // for hlthunk_device_name, hlthunk_...
-#include "hcl_api_types.h"                        // for HCL_Comm, HCL_Rank
-#include "hcl_config.h"                           // for HclDeviceConfig
-#include "hcl_dynamic_comms_manager.h"            // for HclDynamicCommsManager
-#include "hcl_dynamic_communicator.h"             // for HclDynamicCommunicator
-#include "hcl_global_conf.h"                      // for GlobalConfImpl::value
-#include "hcl_nic.h"                              // for HclNic
-#include "interfaces/hcl_remote_device.h"         // for HclRemoteDevice
-#include "hcl_utils.h"                            // for macAddr2Str, VERIFY
-#include "interfaces/hcl_hal.h"                   // for HalPtr, Hal
-#include "interfaces/hcl_unique_sorted_vector.h"  // for UniqueSortedVector
-#include "libfabric/hl_ofi.h"                     // for ofi_t
-#include "ofi_plugin.h"                           // for OfiPlugin
-#include "hcl_log_manager.h"                      // for LOG_*
+#include "hlthunk.h"                                      // for hlthunk_device_name, hlthunk_...
+#include "hcl_api_types.h"                                // for HCL_Comm, HCL_Rank
+#include "hcl_config.h"                                   // for HclConfig
+#include "platform/gen2_arch_common/hcl_device_config.h"  // for HclDeviceConfig
+#include "hcl_dynamic_comms_manager.h"                    // for HclDynamicCommsManager
+#include "hcl_dynamic_communicator.h"                     // for HclDynamicCommunicator
+#include "hcl_global_conf.h"                              // for GlobalConfImpl::value
+#include "hcl_nic.h"                                      // for HclNic
+#include "interfaces/hcl_remote_device.h"                 // for HclRemoteDevice
+#include "hcl_utils.h"                                    // for macAddr2Str, VERIFY
+#include "interfaces/hcl_hal.h"                           // for HalPtr, Hal
+#include "interfaces/hcl_unique_sorted_vector.h"          // for UniqueSortedVector
+#include "libfabric/hl_ofi.h"                             // for ofi_t
+#include "ofi_plugin.h"                                   // for OfiPlugin
+#include "hcl_log_manager.h"                              // for LOG_*
 #include "platform/gaudi2/context_manager.h"
-#include "hcl_types.h"  // for MAX_COMPACT_RANK_INFO_NICS
+#include "hcl_types.h"                             // for MAX_COMPACT_RANK_INFO_NICS, SYN_VALID_DEVICE_ID
+#include "platform/gen2_arch_common/server_def.h"  // for Gen2ArchServerDef
+
 #include <netpacket/packet.h>  // for sockaddr_ll
 #include <linux/ethtool.h>     // for ethtool_drvinfo, ETHTOOL_GDRVINFO
 #include <ifaddrs.h>           // for ifaddrs, freeifaddrs, getifa...
@@ -33,7 +36,6 @@
 
 class HclEvent;
 
-#define PCI_ID_STR_LEN   13
 #define MAC_ADDR_STR_LEN 17
 
 static inline void convertMacAddress(uint8_t* out, const uint64_t mac)
@@ -43,8 +45,9 @@ static inline void convertMacAddress(uint8_t* out, const uint64_t mac)
 }
 
 IHclDevice::IHclDevice(HclDeviceConfig& deviceConfig)
-: m_deviceId(deviceConfig.m_deviceId), m_deviceConfig(deviceConfig), m_deviceType(deviceConfig.m_deviceType)
+: m_deviceAcquired(deviceConfig.isDeviceAcquired()), m_deviceConfig(deviceConfig)
 {
+    LOG_HCL_DEBUG(HCL, "ctor, m_deviceAcquired={}, deviceType={}", m_deviceAcquired, deviceConfig.getDeviceTypeStr());
 }
 
 IHclDevice::~IHclDevice() noexcept(false) {}
@@ -112,7 +115,7 @@ HclDynamicCommunicator& IHclDevice::getComm(HCL_Comm comm)
     return m_dynamicComms.getComm(comm);
 }
 
-int IHclDevice::getCommSize(HCL_Comm comm)
+uint32_t IHclDevice::getCommSize(HCL_Comm comm)
 {
     return getRanks(comm).size();
 }
@@ -143,9 +146,7 @@ void IHclDevice::getMacAddressInfo()
         return;
     }
 
-    char myPciId[PCI_ID_STR_LEN];
-    rc = hlthunk_get_pci_bus_id_from_fd(getFd(), myPciId, sizeof(myPciId));
-    VERIFY(rc == 0, "hlthunk_get_pci_bus_id_from_fd() failed: {}", rc);
+    const char* myPciId = m_deviceConfig.getDevicePciBusId();
 
     struct ifaddrs* ifaddr;
     VERIFY(getifaddrs(&ifaddr) == 0, "Unable to retrieve network interfaces");
@@ -241,8 +242,8 @@ void IHclDevice::getMacAddressInfo()
 void IHclDevice::readMacInfoDriver()
 {
     hlthunk_mac_addr_info kmdMacList;
-    int rc = hlthunk_get_mac_addr_info(getFd(), &kmdMacList);
-    VERIFY( rc == 0, "hlthunk_get_mac_addr_info() failed: {}", rc);
+    int                   rc = hlthunk_get_mac_addr_info(getFd(), &kmdMacList);
+    VERIFY(rc == 0, "hlthunk_get_mac_addr_info() failed: {}", rc);
     m_hclNic.mask = kmdMacList.mask[0];
     for (auto nic : m_hclNic.mask)
     {
@@ -284,8 +285,8 @@ void IHclDevice::getMacInfo()
 
 bool IHclDevice::readMacInfoFromFile(const char* macAddrInfoFilePath)
 {
-    json               macAddrInfo;
-    std::ifstream      macAddrInfoFile(macAddrInfoFilePath);
+    json          macAddrInfo;
+    std::ifstream macAddrInfoFile(macAddrInfoFilePath);
 
     try
     {
@@ -304,13 +305,11 @@ bool IHclDevice::readMacInfoFromFile(const char* macAddrInfoFilePath)
         return false;
     }
 
-    char myPCIId[PCI_ID_STR_LEN];
-    int rc = hlthunk_get_pci_bus_id_from_fd(getFd(), myPCIId, sizeof(myPCIId));
-    VERIFY(rc == 0, "hlthunk_get_pci_bus_id_from_fd() failed: {}", rc);
-    bool isMyPCIId = false;
+    const char* myPciId   = m_deviceConfig.getDevicePciBusId();
+    bool        isMyPCIId = false;
 
     nics_mask_t mask;
-    auto allMacInfo = macAddrInfo["MAC_ADDR_INFO"].get<std::vector<json>>();
+    auto        allMacInfo = macAddrInfo["MAC_ADDR_INFO"].get<std::vector<json>>();
     for (auto& PCIIdMacInfo : allMacInfo)
     {
         if (PCIIdMacInfo.find("PCI_ID") == PCIIdMacInfo.end())
@@ -320,7 +319,7 @@ bool IHclDevice::readMacInfoFromFile(const char* macAddrInfoFilePath)
         }
         std::string PCIId = PCIIdMacInfo["PCI_ID"].get<std::string>();
 
-        if (strcmp(myPCIId, PCIId.c_str()) != 0)
+        if (strcmp(myPciId, PCIId.c_str()) != 0)
         {
             continue;
         }
@@ -332,7 +331,7 @@ bool IHclDevice::readMacInfoFromFile(const char* macAddrInfoFilePath)
             return false;
         }
 
-        auto macList = PCIIdMacInfo["MAC_ADDR_LIST"].get<std::vector<json>>();
+        auto     macList = PCIIdMacInfo["MAC_ADDR_LIST"].get<std::vector<json>>();
         unsigned port    = 0;
         for (auto& macAddr : macList)
         {
@@ -358,7 +357,7 @@ bool IHclDevice::readMacInfoFromFile(const char* macAddrInfoFilePath)
         {
             LOG_HCL_ERR(HCL,
                         "Invalid Mac Addr Info File: invalid number of ports for PCI_ID {} at {}.",
-                        myPCIId,
+                        myPciId,
                         macAddrInfoFilePath);
             return false;
         }
@@ -366,7 +365,7 @@ bool IHclDevice::readMacInfoFromFile(const char* macAddrInfoFilePath)
 
     if (!isMyPCIId)
     {
-        LOG_HCL_ERR(HCL, "Invalid Mac Addr Info File: PCI ID {} not present in {}.", myPCIId, macAddrInfoFilePath);
+        LOG_HCL_ERR(HCL, "Invalid Mac Addr Info File: PCI ID {} not present in {}.", myPciId, macAddrInfoFilePath);
         return false;
     }
 
@@ -377,10 +376,13 @@ void IHclDevice::initNicsMask()
 {
     getMacInfo();
 
-    m_hclNic.mask &= ~m_deviceConfig.m_disabledPorts;
+    m_hclNic.mask &= ~m_deviceConfig.getDisabledPorts();
 
     // Get mac and IP address from all available ports and store Gaudi`s ports
-    LOG_HCL_DEBUG(HCL, "disabled ports={:24b} m_nicsStatusMask={:24b}", (uint64_t)m_deviceConfig.m_disabledPorts,  (uint64_t)m_hclNic.mask);
+    LOG_HCL_DEBUG(HCL,
+                  "disabled ports={:24b} m_nicsStatusMask={:24b}",
+                  (uint64_t)m_deviceConfig.getDisabledPorts(),
+                  (uint64_t)m_hclNic.mask);
 
     hcclResult_t res = updateNicsState();
     if (res != hcclSuccess)
@@ -400,8 +402,8 @@ void IHclDevice::fillMacAddresses(HCL_Comm comm)
 
         // check gaudinet configuration and update if available
         auto macAddr = getComm(comm).m_rankInfo.device.gaudiNicAddresses.nics[nic].mac.u64;
-        auto findItr = m_deviceConfig.m_gaudiNet.find(macAddr);
-        if (findItr != m_deviceConfig.m_gaudiNet.end())
+        auto findItr = m_deviceConfig.getGaudiNet().find(macAddr);
+        if (findItr != m_deviceConfig.getGaudiNet().end())
         {
             uint32_t ip = findItr->second.ipAddress;
             LOG_HCL_INFO(HCL,
@@ -440,14 +442,9 @@ int IHclDevice::pcieFlush()
     return status;
 }
 
-HclDeviceConfig& IHclDevice::getDeviceConfig()
-{
-    return m_deviceConfig;
-}
-
 int IHclDevice::getFd() const
 {
-    return m_deviceConfig.m_fd;
+    return m_deviceConfig.getFd();
 }
 
 bool IHclDevice::isNicUp(uint32_t nic)
@@ -464,10 +461,7 @@ hcclResult_t IHclDevice::updateNicsState()
     for (uint32_t nic = 0; nic < m_hal->getMaxNics(); nic++)
     {
         bool up  = isNicUp(nic);
-        // DEFAULT_SPOTLIGHT is used since:
-        // 1. At this point at time we do not know which spotlight communicator will be used
-        // 2. This method is for verification only
-        bool ext = isScaleOutPort(nic);
+        bool ext = isScaleOutPort(nic /*, HCL_Comm comm*/);
 
         // disabled port, just log
         if ((!m_hclNic.mask[nic]))
@@ -516,10 +510,10 @@ hcclResult_t IHclDevice::updateNicsState()
                 else
                 {
                     LOG_HCL_DEBUG(HCL,
-                                 "{} Network link fd({}), external port({}) is down",
-                                 GCFG_BOX_TYPE.value(),
-                                 getFd(),
-                                 nic);
+                                  "{} Network link fd({}), external port({}) is down",
+                                  GCFG_BOX_TYPE.value(),
+                                  getFd(),
+                                  nic);
                 }
             }
         }
@@ -540,7 +534,7 @@ uint32_t IHclDevice::allocateConnection(uint32_t port, HCL_Rank rank, HCL_Comm c
     qpn = createQp(port, qpId);
 
     LOG_HCL_DEBUG(HCL,
-                  "Allocate QP, remoteRank({}){} nic: {} qpSet: {}, Qpn: {}, qpIdx: {}",
+                  "Allocate QP, remoteRank({}){} nic: {} qpSet: {}, qpn: {}, qpIdx: {}",
                   rank,
                   getMyRank(comm) == rank ? " Loopback connection, " : "",
                   port,
@@ -579,11 +573,8 @@ void IHclDevice::openWQs()
 
     for (auto nic : m_hclNic.mask)
     {
-        // SCALEOUT_SPOTLIGHT is used since we need to allocate all scaleout WQs
-        // (both static scaleout ports and hybrid ports), in case
-        // a hybrid port will be used as a scaleout port at some point
         uint32_t max_qps =
-            isScaleOutPort(nic, SCALEOUT_SPOTLIGHT) ? m_hal->getMaxQpPerExternalNic() : m_hal->getMaxQpPerInternalNic();
+            isScaleOutPort(nic /*, HCL_Comm comm*/) ? m_hal->getMaxQpPerExternalNic() : m_hal->getMaxQpPerInternalNic();
 
         m_hclNic[nic] = allocateNic(nic, max_qps + 1);
 
@@ -614,13 +605,12 @@ hcclResult_t IHclDevice::updateRankQps(HCL_Comm comm, HCL_Rank rank)
                   rank,
                   m_hal->getMaxNics(),
                   m_hal->getMaxQPsPerNic());
-    HclConfigType configType = (HclConfigType)GCFG_BOX_TYPE_ID.value();
 
     // don't use getActiveNics so loopback mode also works
     // access GaudiNicQPs by index and translate to port
     LOG_HCL_INFO(HCL_COORD, "Rank comm({}) rank({}) start", comm, rank);
     uint32_t opened_qps = 0;
-    for (uint8_t index = 0; index < getHal()->getMaxNumScaleUpPortsPerConnection(); index++)
+    for (uint8_t index = 0; index < getMaxNumScaleUpPortsPerConnection(); index++)
     {
         for (uint8_t qpSet = 0; qpSet < MAX_QPS_SETS_PER_CONNECTION; qpSet++)
         {
@@ -628,8 +618,7 @@ hcclResult_t IHclDevice::updateRankQps(HCL_Comm comm, HCL_Rank rank)
             {
                 const uint32_t qpn = getComm(comm).m_rankInfo.remoteInfo[rank].gaudiNicQPs.qp[index].qp[qpSet][stream];
 
-                if (qpn == 0) continue;  // Connection wasn't opened.
-                if (rank == getMyRank(comm) && !(configType == LOOPBACK)) continue;
+                if (qpn == 0 || rank == getMyRank(comm)) continue;
 
                 const uint16_t nic = getComm(comm).m_rankInfo.remoteInfo[rank].gaudiNicQPs.qp[index].nic;
                 LOG_HCL_DEBUG(HCL_COORD,
@@ -697,17 +686,7 @@ hcclResult_t IHclDevice::prepareAndValidateCommunicator(HCL_Comm comm, bool isLo
 
 HCL_Comm IHclDevice::allocateNewComm()
 {
-    return m_dynamicComms.createNextComm(m_hal);
-}
-
-HCL_Comm IHclDevice::allocateCommWorld()
-{
-    if (!m_dynamicComms.createHclCommWorld(m_hal))
-    {
-        LOG_ERR(HCL, "Was not able to allocate HCL_COMM_WORLD comm ID");
-        return HCL_INVALID_COMM;
-    }
-    return HCL_COMM_WORLD;
+    return m_dynamicComms.createNextComm(m_hal, getServerDef());
 }
 
 int IHclDevice::getNumActiveComms() const
@@ -715,7 +694,7 @@ int IHclDevice::getNumActiveComms() const
     return m_dynamicComms.getNumOfActiveComms();
 }
 
-int IHclDevice::getScaleupGroupSize(HCL_Comm comm)
+uint32_t IHclDevice::getScaleupGroupSize(HCL_Comm comm)
 {
     return getComm(comm).getScaleupGroupSize();
 }
@@ -733,7 +712,7 @@ ofi_t* IHclDevice::getOfiHandle()
     }
     else
     {
-        return m_ofiPlugin->p_ofi;
+        return m_ofiPlugin->p_ofi.get();
     }
 }
 
@@ -746,7 +725,7 @@ void IHclDevice::createOfiPlugin()
     }
 }
 
-void IHclDevice::setScaleoutMode(const int scaleOutGNICs)
+void IHclDevice::setScaleoutMode(const unsigned scaleOutGNICs)
 {
     if (GCFG_HCCL_GAUDI_DIRECT.isSetFromUserConfig() && !GCFG_HCCL_OVER_OFI.isSetFromUserConfig())
     {
@@ -784,7 +763,7 @@ void IHclDevice::setScaleoutMode(const int scaleOutGNICs)
     }
 
     // Check if GCFG_HCCL_GAUDI_DIRECT is set (by auto-detect / user)
-    // if so, enable AWS environment varialbe for RDMA: FI_EFA_USE_DEVICE_RDMA
+    // if so, enable AWS environment variable for RDMA: FI_EFA_USE_DEVICE_RDMA
     // and disable sending inline data in Mellanox environment: MLX5_SCATTER_TO_CQE
     if (GCFG_HCCL_GAUDI_DIRECT.value())
     {
@@ -818,9 +797,3 @@ int IHclDevice::getOfiDeviceId()
     }
     return m_ofiDeviceID;
 }
-
-bool IHclDevice::isACcbHalfFullForDeviceBenchMark(const unsigned archStreamIdx)
-{
-    VERIFY(IS_DEVICE_GEN2ARCH(getDeviceType()), "Invalid device type '{}'.", getDeviceType());
-    return false;
-};

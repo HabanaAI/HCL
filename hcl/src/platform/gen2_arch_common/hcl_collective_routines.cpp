@@ -31,6 +31,7 @@
 #include "platform/gen2_arch_common/collective_utils.h"     // for getNextBox, getPrevBox
 #include "platform/gen2_arch_common/active_stream_manager.h"
 #include "platform/gen2_arch_common/hcl_device_controller.h"
+#include "platform/gen2_arch_common/server_def.h"  // for Gen2ArchServerDef
 
 #include "hcl_device_control_factory.h"
 #include "hcl_math_utils.h"
@@ -48,7 +49,9 @@ HclCollectiveRoutinesGen2Arch::HclCollectiveRoutinesGen2Arch(HclDeviceGen2Arch* 
   m_intermediateBufferManager(m_device->getSIB(streamId)),
   m_commands(m_deviceController.getGen2ArchCommands()),
   m_scaleoutProvider(device->getScaleOutProvider()),
-  m_wqeTracker(wqeTracker)
+  m_activeStreamManager(m_scaleoutProvider, m_deviceController, m_streamId, m_longSo),
+  m_wqeTracker(wqeTracker),
+  m_serverConnectivity(device->getServerConnectivity())
 {
     // we divide the recvWqeEntriesNum by 2 to make sure the wqe table won't gets full (then pi==ci)
     m_wqeTracker->setRecvWqeEntriesNum(m_graphSync.getCgData(false).size >> 1);
@@ -94,24 +97,72 @@ int HclCollectiveRoutinesGen2Arch::getRemoteRankToRsi(CommonState& commonState,
             }
             else if (m_boxType == LOOPBACK || remoteRank == commonState.m_root)
             {
-                m_wqeTracker->incWqe(commonState.m_dynamicComm,
-                                     div((uint32_t)remoteRank, (uint32_t)commonState.m_dynamicComm.getScaleupGroupSize()),
-                                     isAllGatherQp ? QpType::ScaleOutAllGather : QpType::ScaleOutReduceScatter);
+                m_wqeTracker->incWqe(
+                    commonState.m_dynamicComm,
+                    div((uint32_t)remoteRank, (uint32_t)commonState.m_dynamicComm.getScaleupGroupSize()),
+                    isAllGatherQp ? QpType::ScaleOutAllGather : QpType::ScaleOutReduceScatter);
                 return 0;
             }
             break;
         default:
             if (!isMyRank && !isSend)
             {
-                m_wqeTracker->incWqe(commonState.m_dynamicComm,
-                                     div((uint32_t)remoteRank, (uint32_t)commonState.m_dynamicComm.getScaleupGroupSize()),
-                                     isAllGatherQp ? QpType::ScaleOutAllGather : QpType::ScaleOutReduceScatter);
+                m_wqeTracker->incWqe(
+                    commonState.m_dynamicComm,
+                    div((uint32_t)remoteRank, (uint32_t)commonState.m_dynamicComm.getScaleupGroupSize()),
+                    isAllGatherQp ? QpType::ScaleOutAllGather : QpType::ScaleOutReduceScatter);
             }
             return commonState.m_dynamicComm.getRankToScaleupGroupMap()[remoteRank];
             break;
     }
 
     return -1;
+}
+
+void HclCollectiveRoutinesGen2Arch::barrierArmSchedulers(unsigned requiredCredits, HCL_CollectiveOp currentOp)
+{
+    // Barrier Arm all Schedulers except DMA (which will come later)
+    for (unsigned schedIdx = (unsigned)hcl::SchedulersIndex::sendScaleUp;
+         schedIdx < (unsigned)hcl::SchedulersIndex::count;
+         schedIdx++)
+    {
+        hcl::ScalStream& currentStream =
+            m_activeStreamManager.getActiveCollectiveStream((hcl::SchedulersIndex)schedIdx);
+        currentStream.setTargetValue(m_longSo.targetValue);
+
+        hcl::ScalStream& arbitratorStream =
+            m_deviceController.getScalStream(m_streamId, currentStream.getSchedIdx(), ARB_STREAM_IDX);
+        arbitratorStream.setTargetValue(m_longSo.targetValue);
+
+        m_deviceController.addBarrierArm(arbitratorStream, false, requiredCredits, {currentStream.getStreamIndex()});
+        m_deviceController.waitForBarrierArm(currentStream);
+    }
+
+    // DMA Scheduler Barrier Arm
+    hcl::ScalStream* arbitratorStream = m_activeStreamManager.getDmaScalStream(hcl::DMAStreams::arbitrator);
+    m_deviceController.addBarrierArm(*arbitratorStream,
+                                     false,
+                                     requiredCredits,
+                                     m_activeStreamManager.getActiveDmaStreams());
+
+    for (unsigned streamId : m_activeStreamManager.getActiveDmaStreams())
+    {
+        hcl::ScalStream* currentStream = m_activeStreamManager.getDmaScalStream((hcl::DMAStreams)streamId);
+        currentStream->setTargetValue(m_longSo.targetValue);
+
+        m_deviceController.waitForBarrierArm(*currentStream);
+    }
+}
+
+void HclCollectiveRoutinesGen2Arch::configureExternalSoForCompletion(unsigned completionSignals)
+{
+    hcl::ScalStream& currentStream = m_activeStreamManager.getActiveCollectiveStream(hcl::SchedulersIndex::sendScaleUp);
+
+    m_commands.serializeLbwWriteCommand(
+        currentStream,
+        currentStream.getSchedIdx(),
+        m_signalsManager->getSoAddress(WaitMethod::EXTERNAL_CG_SO),
+        m_graphSync.getSoConfigValue(COMP_SYNC_GROUP_CMAX_TARGET - completionSignals, true));
 }
 
 void HclCollectiveRoutinesGen2Arch::streamAddSingleWaitIfNeeded(hcl::ScalStream&                           scalStream,
@@ -138,7 +189,7 @@ void HclCollectiveRoutinesGen2Arch::streamAddSingleWaitIfNeeded(hcl::ScalStream&
 
 void HclCollectiveRoutinesGen2Arch::syncWithLtuIfNeeded(SliceState& sliceState, hcl::ScalStream& scalStream)
 {
-    unsigned scaleupBufferIdx = m_intermediateBufferManager.getCurrentBufferIdx(SCALEUP_RR_AND_ALL2ALL_POOL);
+    unsigned scaleupBufferIdx = m_intermediateBufferManager.getCurrentBufferIdx(SCALEUP_AND_ALL2ALL_POOL);
     if (sliceState.m_syncUpBufferWithLtu && m_graphSync.getLtuData()[scaleupBufferIdx].first)
     {
         sob_info             sobInfo = m_utils->getSOBInfo(m_graphSync.getCurrentLtuGpsoAddr(scaleupBufferIdx));
@@ -183,7 +234,23 @@ hcclResult_t HclCollectiveRoutinesGen2Arch::sendRecv(hcl::GroupCallsBuckets&    
                   isHnicsRequired);
     std::lock_guard<std::mutex> lock(m_deviceController.getStreamLock(m_streamId));
 
-    m_device->openAllRequiredNonPeerQPs(comm, remoteRanks);
+    std::set<HCL_Rank> remoteOuterRanks;
+    for (const HCL_Rank remoteRank : remoteRanks)
+    {
+        if (!m_device->getComm(comm).isRankInsideScaleupGroup(remoteRank))
+        {
+            remoteOuterRanks.insert(remoteRank);
+        }
+    }
+
+    if (unlikely(LOG_LEVEL_AT_LEAST_TRACE(HCL)))
+    {
+        const ranks_vector remoteOuterRanksVec(remoteOuterRanks.begin(), remoteOuterRanks.end());
+        UniqueSortedVector remoteOuterRanksVecSorted;
+        remoteOuterRanksVecSorted.insert_range_sorted(remoteOuterRanksVec.begin(), remoteOuterRanksVec.end());
+        LOG_HCL_TRACE(HCL, "comm={}, remoteOuterRanksVecSorted={}", comm, remoteOuterRanksVecSorted);
+    }
+    m_device->openAllRequiredNonPeerQPs(comm, remoteOuterRanks);
 
     const auto& scaleupSendGroups = groupCallsBuckets[hcl::SchedulersIndex::sendScaleUp].getGroupCalls();
     const auto& scaleupRecvGroups = groupCallsBuckets[hcl::SchedulersIndex::recvScaleUp].getGroupCalls();
@@ -298,16 +365,9 @@ hcclResult_t HclCollectiveRoutinesGen2Arch::sendRecv(hcl::GroupCallsBuckets&    
 
     uint64_t startTgtVal = m_longSo.targetValue;
 
-    hcl::ScalStream& currentStream =
-        ActiveStreamManagerGen2Arch::getActiveCollectiveStream(m_deviceController,
-                                                               eHCLNoCollective,
-                                                               m_streamId,
-                                                               (unsigned)hcl::SchedulersIndex::sendScaleOut);
+    const QpType srStream = QpType::ScaleUpReduceScatter;
 
-    const QpType srStream =
-        currentStream.getStreamIndex() == 0 ? QpType::ScaleUpReduceScatter : QpType::ScaleUpAllGather;
-
-    const std::set<HCL_HwModuleId>& hwModules = m_device->getHal()->getHwModules();
+    const DevicesSet& hwModules = m_device->getServerDef().getHwModules();
     LOG_HCL_TRACE(HCL, "hwModules=[ {} ]", hwModules);
 
     for (unsigned iter = 0; iter < numIterations; ++iter)
@@ -374,9 +434,8 @@ hcclResult_t HclCollectiveRoutinesGen2Arch::sendRecv(hcl::GroupCallsBuckets&    
         LOG_HCL_TRACE(HCL, "iter={}, scaleoutSendIter={}", iter, scaleoutSendIter);
         LOG_HCL_TRACE(HCL, "iter={}, scaleoutRecvIter={}", iter, scaleoutRecvIter);
 
-        const unsigned iterScaleoutSignals = countScaleOutSignalsSendRecv(scaleoutSendIter.size(),
-                                                                          scaleoutRecvIter.size(),
-                                                                          m_device->getComm(comm).getSpotlightType());
+        const unsigned iterScaleoutSignals =
+            countScaleOutSignalsSendRecv(scaleoutSendIter.size(), scaleoutRecvIter.size(), comm);
         LOG_HCL_TRACE(HCL, "iter={}, iterScaleoutSignals={}", iter, iterScaleoutSignals);
 
         if (!GCFG_WEAK_ORDER.value() && GCFG_ENABLE_DEPENDENCY_CHECKER.value())
@@ -418,7 +477,7 @@ hcclResult_t HclCollectiveRoutinesGen2Arch::sendRecv(hcl::GroupCallsBuckets&    
                                                                          dataTypeSizeInBytes(iterMemcpyVec[0].dataType),
                                                                      m_longSo.targetValue,
                                                                      true);
-                dependencyTargetVal = std::max(dependencyTargetVal, dependencyRunningTargetVal);
+                dependencyTargetVal        = std::max(dependencyTargetVal, dependencyRunningTargetVal);
 
                 // Dest Address
                 dependencyRunningTargetVal = checkSendRecvDependency(iterMemcpyVec[0].recvBaseAddress,
@@ -426,7 +485,7 @@ hcclResult_t HclCollectiveRoutinesGen2Arch::sendRecv(hcl::GroupCallsBuckets&    
                                                                          dataTypeSizeInBytes(iterMemcpyVec[0].dataType),
                                                                      m_longSo.targetValue,
                                                                      false);
-                dependencyTargetVal = std::max(dependencyTargetVal, dependencyRunningTargetVal);
+                dependencyTargetVal        = std::max(dependencyTargetVal, dependencyRunningTargetVal);
             }
         }
 
@@ -452,18 +511,18 @@ hcclResult_t HclCollectiveRoutinesGen2Arch::sendRecv(hcl::GroupCallsBuckets&    
 
         // Fill collectiveParams with defaults
         HclCollectiveParams collectiveParams {m_device->getComm(comm)};
-        CommonState         commonState {
-            collectiveParams,
-            m_intermediateBufferManager,
-            isHnicsRequired,
-            m_scaleoutProvider->isGaudiDirect(),
-            m_device->getEdmaEngineWorkDistributionSize(),
-            m_device->getHal()->getMaxNumScaleUpPortsPerConnection(),
-            (m_device->getPortMapping()).getNumScaleOutPorts(collectiveParams.m_dynamicComm.getSpotlightType()),
-            m_device->getDeviceType(),
-            this->m_remainderCalculator};
+        CommonState         commonState {collectiveParams,
+                                 m_intermediateBufferManager,
+                                 isHnicsRequired,
+                                 m_scaleoutProvider->isGaudiDirect(),
+                                 m_device->getEdmaEngineWorkDistributionSize(),
+                                 m_serverConnectivity.getMaxNumScaleUpPortsPerConnection(comm),
+                                 m_serverConnectivity.getNumScaleOutPorts(comm),
+                                 m_device->getSignalsCalculator(),
+                                 this->m_remainderCalculator};
         commonState.initCurrentOp(eHCLNoCollective, 0, 0);
         m_signalsManager->initialize(&commonState, 0);
+        m_activeStreamManager.initializeDmaStreams(commonState, myBoxNumInfo.m_boxNum);
 
         commonState.m_scaleoutNonCollectiveSend = scaleoutSendIter.size();
         commonState.m_scaleoutNonCollectiveRecv = scaleoutRecvIter.size();
@@ -531,9 +590,9 @@ hcclResult_t HclCollectiveRoutinesGen2Arch::hclCollectiveCall(HclCollectiveParam
                              m_scaleoutProvider->isHostNic(),
                              m_scaleoutProvider->isGaudiDirect(),
                              m_device->getEdmaEngineWorkDistributionSize(),
-                             m_device->getHal()->getMaxNumScaleUpPortsPerConnection(),
-                             (m_device->getPortMapping()).getNumScaleOutPorts(params.m_dynamicComm.getSpotlightType()),
-                             m_device->getDeviceType(),
+                             m_serverConnectivity.getMaxNumScaleUpPortsPerConnection(params.m_dynamicComm),
+                             m_serverConnectivity.getNumScaleOutPorts(params.m_dynamicComm),
+                             m_device->getSignalsCalculator(),
                              this->m_remainderCalculator};
 
     // handle a portion of data that fits the relevant slice in each iteration
@@ -545,8 +604,8 @@ hcclResult_t HclCollectiveRoutinesGen2Arch::hclCollectiveCall(HclCollectiveParam
 
     for (unsigned sliceIter = 0; sliceIter < commonState.m_sliceIterations; sliceIter++)
     {
-        commonState.calcSliceQpSet(sliceIter);
         commonState.calcSliceCounts(sliceIter);
+        commonState.calcSliceQpSet(sliceIter);
         // handle entire reduceScatter operation followed by allGather operation in case of a hierarchical allReduce
         if (commonState.m_collectiveOp == eHCLAllReduce || commonState.m_collectiveOp == eHCLReduce)
         {
@@ -564,10 +623,11 @@ hcclResult_t HclCollectiveRoutinesGen2Arch::hclCollectiveCall(HclCollectiveParam
             if ((commonState.m_collectiveOp == eHCLReduce) && !commonState.isRootBox())
             {
                 // Determine the exact single iteration that non-root boxes do the scaleout send
-                scaleoutSendBoxIter = mod(commonState.m_boxIterations + commonState.rootBox()
-                                          - commonState.m_dynamicComm.getMyScaleupGroup(), commonState.m_boxIterations);
-                gatherStartBoxIter = scaleoutSendBoxIter;
-                gatherEndBoxIter   = scaleoutSendBoxIter + 1;  // exactly 1 iteration
+                scaleoutSendBoxIter = mod(commonState.m_boxIterations + commonState.rootBox() -
+                                              commonState.m_dynamicComm.getMyScaleupGroup(),
+                                          commonState.m_boxIterations);
+                gatherStartBoxIter  = scaleoutSendBoxIter;
+                gatherEndBoxIter    = scaleoutSendBoxIter + 1;  // exactly 1 iteration
             }
 
             for (unsigned boxIter = gatherStartBoxIter; boxIter < gatherEndBoxIter; ++boxIter)
@@ -654,8 +714,9 @@ void HclCollectiveRoutinesGen2Arch::hclCollectiveCall(CommonState&     commonSta
 
     const unsigned nextBox = mod(commonState.m_dynamicComm.getMyScaleupGroup() + boxIter, commonState.m_boxIterations);
 
-    const unsigned prevBox = mod(commonState.m_boxIterations + (int)commonState.m_dynamicComm.getMyScaleupGroup() -
-                              (int)boxIter, commonState.m_boxIterations);
+    const unsigned prevBox =
+        mod(commonState.m_boxIterations + (int)commonState.m_dynamicComm.getMyScaleupGroup() - (int)boxIter,
+            commonState.m_boxIterations);
     BoxNumInfo boxNumInfo =
         BoxNumInfo(scaleOutFirstOp ? prevBox : nextBox,
                    scaleOutFirstOp ? BoxNumInfo::boxOrientation::PREV_BOX : BoxNumInfo::boxOrientation::NEXT_BOX);
@@ -755,6 +816,8 @@ void HclCollectiveRoutinesGen2Arch::hclCollectiveCall(CommonState&     commonSta
                                sliceIter,
                                prevBoxNumInfo,
                                m_streamId};
+
+    m_activeStreamManager.initializeDmaStreams(commonState, sendSliceState.m_boxNumInfo.m_boxNum);
 
     if (!m_signalsManager->isGraphLoaded())
     {
@@ -865,7 +928,7 @@ uint64_t HclCollectiveRoutinesGen2Arch::checkCollectiveDependency(CommonState& c
 
     if (commonState.m_inPlace && commonState.m_collectiveOp == eHCLReduceScatter)
     {
-        // Special case: Inplace, RS, scaleout, and Non RR - we use SendBuff to store partial results for scaleout,
+        // Special case: Inplace, RS and scaleout - we use SendBuff to store partial results for scaleout,
         // so in this case the Input rank is treated as write, for simplicity all RS inplace will be treated this way
         dependencyTargetVal = m_dependencyChecker->getTargetValueForWriteRange(commonState.m_sendBufferAddr,
                                                                                commonState.calcSendAddrSize(),

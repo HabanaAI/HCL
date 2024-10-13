@@ -19,7 +19,9 @@ using namespace lemon;
 static std::string getPCIAddress(const hwloc_obj_t device)
 {
     return fmt::format("{:02x}:{:02x}.{:01x}",
-                       device->attr->pcidev.bus, device->attr->pcidev.dev, device->attr->pcidev.func);
+                       device->attr->pcidev.bus,
+                       device->attr->pcidev.dev,
+                       device->attr->pcidev.func);
 }
 
 static hwloc_obj_t getOSDevice(const hwloc_obj_t device, const hwloc_obj_osdev_type_t type)
@@ -54,14 +56,14 @@ static std::string getOpenfabricName(const hwloc_obj_t device)
 static uint32_t getModuleId(const hwloc_obj_t device)
 {
     static std::map<hwloc_obj_t, uint32_t> device_module_id;
-    const auto it = device_module_id.find(device);
-    if (device_module_id.end()!= it)
+    const auto                             it = device_module_id.find(device);
+    if (device_module_id.end() != it)
     {
         return it->second;
     }
 
-    const auto name = getOpenfabricName(device);
-    const auto module_id_path = fmt::format("/sys/class/accel/accel{}/device//module_id", name.back());
+    const auto    name           = getOpenfabricName(device);
+    const auto    module_id_path = fmt::format("/sys/class/accel/accel{}/device//module_id", name.back());
     std::ifstream file(module_id_path);
     VERIFY(file.is_open(), "Failed to open accel module_id file");
     std::string line;
@@ -71,20 +73,24 @@ static uint32_t getModuleId(const hwloc_obj_t device)
     return device_module_id[device];
 }
 
-struct HwlocOAMCompare {
+struct HwlocOAMCompare
+{
     bool operator()(const hwloc_obj_t obj1, const hwloc_obj_t obj2) const
     {
         return getModuleId(obj1) < getModuleId(obj2);
     }
 };
 
-struct HwlocHNICCompare {
+struct HwlocHNICCompare
+{
     bool operator()(const hwloc_obj_t obj1, const hwloc_obj_t obj2) const
     {
         const auto obj1_address = getPCIAddress(obj1);
         const auto obj2_address = getPCIAddress(obj2);
-        return std::lexicographical_compare(obj1_address.cbegin(), obj1_address.cend(),
-                                            obj2_address.cbegin(), obj2_address.cend());
+        return std::lexicographical_compare(obj1_address.cbegin(),
+                                            obj1_address.cend(),
+                                            obj2_address.cbegin(),
+                                            obj2_address.cend());
     }
 };
 
@@ -224,7 +230,8 @@ std::vector<hwloc_obj_t> getParentsList(hwloc_obj_t obj)
  * @param obj2 hwloc object
  * @return First common ancestor in the parent linked list.
  */
-static hwloc_obj_t getCommonAncestorObj(const hwloc_obj_t obj1, const hwloc_obj_t obj2){
+static hwloc_obj_t getCommonAncestorObj(const hwloc_obj_t obj1, const hwloc_obj_t obj2)
+{
     const std::vector<hwloc_obj_t> parents1 = getParentsList(obj1);
     const std::vector<hwloc_obj_t> parents2 = getParentsList(obj2);
 
@@ -274,10 +281,10 @@ static hwloc_obj_t findBestConnections(const WeightMatrix& weights, const hwloc_
 {
     Mip mip;  // Mixed-Integer Programming solver
 
-    std::map<hwloc_obj_t, std::vector<Mip::Col>, HwlocOAMCompare>           oamVariables;
-    std::map<hwloc_obj_t, std::vector<Mip::Col>, HwlocHNICCompare>          hnicVariables;
-    std::map<Mip::Col, std::tuple<hwloc_obj_t, hwloc_obj_t>> variablesEdges;
-    Mip::Expr                                                objective;
+    std::map<hwloc_obj_t, std::vector<Mip::Col>, HwlocOAMCompare>  oamVariables;
+    std::map<hwloc_obj_t, std::vector<Mip::Col>, HwlocHNICCompare> hnicVariables;
+    std::map<Mip::Col, std::tuple<hwloc_obj_t, hwloc_obj_t>>       variablesEdges;
+    Mip::Expr                                                      objective;
     for (const auto& [oam, hnics] : weights)
     {
         for (const auto& [hnic, weight] : hnics)
@@ -328,7 +335,7 @@ static hwloc_obj_t findBestConnections(const WeightMatrix& weights, const hwloc_
     VERIFY((Mip::OPTIMAL == mip.type()), "Failed to find optimal OAM to HNIC pairing");
     const auto& v = oamVariables[targetOam];
     const auto  variable =
-        std::find_if(v.cbegin(), v.cend(), [&mip](const auto& variable) { return mip.sol(variable) == 1; });
+        std::find_if(v.cbegin(), v.cend(), [&mip](const auto& var) { return static_cast<int>(mip.sol(var)) == 1; });
     VERIFY((variable != v.cend()));
     return std::get<1>(variablesEdges[*variable]);
 }

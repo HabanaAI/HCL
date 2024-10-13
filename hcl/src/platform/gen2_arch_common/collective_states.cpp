@@ -11,10 +11,10 @@
 #include "hcl_utils.h"
 #include "platform/gen2_arch_common/device_buffer_manager.h"
 #include "intermediate_buffer_container.h"
-#include "hcl_log_manager.h"       // for LOG_*
+#include "hcl_log_manager.h"  // for LOG_*
 #include "interfaces/hcl_unique_sorted_vector.h"
 #include "platform/gen2_arch_common/hcl_address_generator.h"
-#include "platform/gen2_arch_common/port_mapping.h"
+#include "platform/gen2_arch_common/signals/manager.h"   // for SignalsManager
 #include "platform/gen2_arch_common/collective_utils.h"  // for getNextBox, getPrevBox
 #include "hcl_math_utils.h"                              // for div_round_up
 
@@ -28,9 +28,10 @@ CommonState::CommonState(HclCollectiveParams& other,
                          unsigned             workDistributionGroupSize,
                          const unsigned       maxNumScaleUpPortsPerConnection,
                          unsigned             numScaleOutPorts,
-                         synDeviceType        deviceType,
+                         SignalsCalculator&   signalsCalculator,
                          RemainderCalculator* remainderCalculator)
 : HclCollectiveParams(other),
+  m_hnicQpSprayThreshold(GCFG_HCL_HNIC_QP_SPRAY_THRESHOLD.value()),
   m_rootBox(m_root == HCL_INVALID_RANK ? (unsigned)-1 : m_dynamicComm.getRankToScaleupGroupMap()[m_root]),
   m_isMultiScaleupGroup(m_dynamicComm.isCommunicatorMultiScaleupGroup()),
   m_isRoot(m_root == m_dynamicComm.getMyRank()),
@@ -44,18 +45,18 @@ CommonState::CommonState(HclCollectiveParams& other,
   m_intermediateBufferManager(intermediateBufferManager),
   m_remainderCalculator(remainderCalculator),
   m_boxType((HclConfigType)GCFG_BOX_TYPE_ID.value()),
-  m_maxNumScaleUpPortsPerConnection(maxNumScaleUpPortsPerConnection)
+  m_maxNumScaleUpPortsPerConnection(maxNumScaleUpPortsPerConnection),
+  m_signalsCalculator(&signalsCalculator)
 {
-    initCollectiveOp(deviceType == synDeviceGaudi2);
+    initCollectiveOp(GCFG_HCL_IS_SINGLE_PEER_BROADCAST_ALLOWED.value());
 
     checkInPlaceOp();
     setIsReductionCollective();
     check16BitReductionOp();
     checkHierarchicalOp();
     calcMaxSliceCounts();
-    calcReproScaleoutLongterm();
+    calcScaleoutLongterm();
 
-    m_signalsCalculator = SignalsCalculatorFactory::create(deviceType == synDeviceGaudi3);
     m_signalsCalculator->initialize(*this);
 }
 
@@ -92,7 +93,7 @@ uint64_t CommonState::calculateCUID(bool isFirstBox, bool isLastBox)
         };
     };
 
-    static_assert(RR_SCALEOUT_FACTOR <= 8, "Not enough bits to represent boxIterPhase!");
+    VERIFY(DeviceBufferManager::getFactor(SCALEOUT_POOL) <= 8, "Not enough bits to represent boxIterPhase!");
     static_assert(sizeof(cuid_t) == sizeof(uint64_t), "Size of cuid_t structure is not as expected!");
 
     cuid_t ret;
@@ -110,7 +111,7 @@ uint64_t CommonState::calculateCUID(bool isFirstBox, bool isLastBox)
     ret.isBf16              = (m_dataType == hcclBfloat16);
     ret.all2allIter         = m_all2allIter;
     ret.comm                = m_comm;
-    ret.boxIterPhase        = m_boxIter % RR_SCALEOUT_FACTOR;
+    ret.boxIterPhase        = m_boxIter % DeviceBufferManager::getFactor(SCALEOUT_POOL);
     ret.firstBox            = isFirstBox;
     ret.lastBox             = isLastBox;
     ret.edgeIteration       = isEdgeIteration();
@@ -153,6 +154,11 @@ unsigned CommonState::rootBox() const
 bool CommonState::isHostNic() const
 {
     return m_isHostNic;
+}
+
+bool CommonState::isGDR() const
+{
+    return m_isGdr;
 }
 
 bool CommonState::isRemainderAllowedForCollective() const
@@ -248,12 +254,12 @@ bool CommonState::isRecvAddrValid() const
 
 bool CommonState::isEdgeIteration(BoxNumInfo& boxNumInfo) const
 {
-    return calcBoxIterRecv(boxNumInfo) + m_reproScaleoutBuffersAmount >= m_boxIterations;
+    return calcBoxIterRecv(boxNumInfo) + m_scaleoutBuffersAmount >= m_boxIterations;
 }
 
 bool CommonState::isEdgeIteration() const
 {
-    return m_boxIter + m_reproScaleoutBuffersAmount >= m_boxIterations;
+    return m_boxIter + m_scaleoutBuffersAmount >= m_boxIterations;
 }
 
 unsigned CommonState::calcBoxIterRecv(BoxNumInfo& boxNumInfo) const
@@ -549,10 +555,8 @@ void CommonState::calcMaxSliceCounts()
             break;
     }
 
-    m_isSlicing = m_remainderCalculator->isSlicing(m_count,
-                                                   totalCountPerRank,
-                                                   m_optimalBufferCount,
-                                                   numParticipatingRanks);
+    m_isSlicing =
+        m_remainderCalculator->isSlicing(m_count, totalCountPerRank, m_optimalBufferCount, numParticipatingRanks);
 
     if (!m_isSlicing)
     {
@@ -562,8 +566,13 @@ void CommonState::calcMaxSliceCounts()
 
     m_sliceIterations = getNumSlices(totalCountPerRank, numParticipatingRanks);
 
-    LOG_TRACE(HCL_ECR, "Counts for #slices: op {} count {} comm size {} slices {} optimal buffer count {}",
-              m_collectiveOp, m_count, commSize, m_sliceIterations, m_optimalBufferCount);
+    LOG_TRACE(HCL_ECR,
+              "Counts for #slices: op {} count {} comm size {} slices {} optimal buffer count {}",
+              m_collectiveOp,
+              m_count,
+              commSize,
+              m_sliceIterations,
+              m_optimalBufferCount);
 
     if (m_collectiveOp == eHCLAll2All)
     {
@@ -574,33 +583,33 @@ void CommonState::calcMaxSliceCounts()
     switch (m_collectiveOp)
     {
         case eHCLSimpleBroadcast:
-            m_rankScaleUpCount   = m_optimalBufferCount;
-            m_rankScaleOutCount  = m_rankScaleUpCount;
-            m_sliceOffsetCount   = m_optimalBufferCount;
-            m_boxCount           = m_optimalBufferCount;
+            m_rankScaleUpCount  = m_optimalBufferCount;
+            m_rankScaleOutCount = m_rankScaleUpCount;
+            m_sliceOffsetCount  = m_optimalBufferCount;
+            m_boxCount          = m_optimalBufferCount;
             break;
 
         case eHCLScatter:
-            m_rankScaleUpCount   = m_optimalBufferCount;
-            m_sliceOffsetCount   = m_optimalBufferCount;
-            m_boxStrideCount     = m_scaleUpStrideCount * ScaleupGroupSize;
-            m_boxCount           = m_rankScaleUpCount * ScaleupGroupSize;
-            m_rankScaleOutCount  = m_boxCount;
+            m_rankScaleUpCount  = m_optimalBufferCount;
+            m_sliceOffsetCount  = m_optimalBufferCount;
+            m_boxStrideCount    = m_scaleUpStrideCount * ScaleupGroupSize;
+            m_boxCount          = m_rankScaleUpCount * ScaleupGroupSize;
+            m_rankScaleOutCount = m_boxCount;
             break;
 
         case eHCLGather:
         case eHCLAllGather:
-            m_rankScaleUpCount   = m_optimalBufferCount;
-            m_rankScaleOutCount  = m_rankScaleUpCount;
-            m_sliceOffsetCount   = m_optimalBufferCount;
-            m_boxCount           = m_optimalBufferCount * ScaleupGroupSize;
+            m_rankScaleUpCount  = m_optimalBufferCount;
+            m_rankScaleOutCount = m_rankScaleUpCount;
+            m_sliceOffsetCount  = m_optimalBufferCount;
+            m_boxCount          = m_optimalBufferCount * ScaleupGroupSize;
             break;
 
         case eHCLBroadcast:
-            m_rankScaleUpCount   = m_optimalBufferCount;
-            m_boxCount           = m_optimalBufferCount * ScaleupGroupSize;
-            m_rankScaleOutCount  = m_rankScaleUpCount;
-            m_sliceOffsetCount   = m_boxCount;
+            m_rankScaleUpCount  = m_optimalBufferCount;
+            m_boxCount          = m_optimalBufferCount * ScaleupGroupSize;
+            m_rankScaleOutCount = m_rankScaleUpCount;
+            m_sliceOffsetCount  = m_boxCount;
             break;
 
         case eHCLSinglePeerBroadcast:
@@ -622,24 +631,24 @@ void CommonState::calcMaxSliceCounts()
             break;
 
         case eHCLAll2All:
-            m_rankScaleUpCount   = m_optimalBufferCount;
-            m_sliceOffsetCount   = m_optimalBufferCount;
-            m_rankScaleOutCount  = m_rankScaleUpCount;
-            m_boxCount           = m_optimalBufferCount * ScaleupGroupSize;
+            m_rankScaleUpCount  = m_optimalBufferCount;
+            m_sliceOffsetCount  = m_optimalBufferCount;
+            m_rankScaleOutCount = m_rankScaleUpCount;
+            m_boxCount          = m_optimalBufferCount * ScaleupGroupSize;
             break;
 
         case eHCLReduceScatter:
-            m_rankScaleUpCount   = m_optimalBufferCount;
-            m_rankScaleOutCount  = m_rankScaleUpCount;
-            m_sliceOffsetCount   = m_optimalBufferCount;
-            m_boxCount           = m_optimalBufferCount * ScaleupGroupSize;
+            m_rankScaleUpCount  = m_optimalBufferCount;
+            m_rankScaleOutCount = m_rankScaleUpCount;
+            m_sliceOffsetCount  = m_optimalBufferCount;
+            m_boxCount          = m_optimalBufferCount * ScaleupGroupSize;
             break;
 
         case eHCLNoCollective:
-            m_rankScaleUpCount   = m_optimalBufferCount;
-            m_rankScaleOutCount  = m_rankScaleUpCount;
-            m_boxCount           = m_optimalBufferCount;
-            m_sliceOffsetCount   = m_rankScaleUpCount;
+            m_rankScaleUpCount  = m_optimalBufferCount;
+            m_rankScaleOutCount = m_rankScaleUpCount;
+            m_boxCount          = m_optimalBufferCount;
+            m_sliceOffsetCount  = m_rankScaleUpCount;
             break;
 
         case eHCLCollectiveLastValue:
@@ -656,9 +665,10 @@ uint32_t CommonState::getNumSlices(uint64_t totalRankCount, uint32_t numRanks)
     uint32_t originalBufferCount = (uint32_t)m_optimalBufferCount;
     uint32_t minBufferCount      = (uint32_t)div(m_optimalBufferCount, GCFG_HCL_MIN_IMB_SIZE_FACTOR.value());
     uint32_t minSlices           = div_round_up(totalRankCount, m_optimalBufferCount);
-    uint32_t maxSlices           = minSlices + MAX_NUM_SLICES_SEARCH;;
-    uint32_t numSlices           = 0;
-    uint32_t minSliceRatio       = m_optimalBufferCount << SLICE_RATIO_FIXED_POINT_ACCURACY;
+    uint32_t maxSlices           = minSlices + MAX_NUM_SLICES_SEARCH;
+    ;
+    uint32_t numSlices     = 0;
+    uint32_t minSliceRatio = m_optimalBufferCount << SLICE_RATIO_FIXED_POINT_ACCURACY;
     uint32_t lastSliceCount;
     uint32_t sliceRatio;
     uint32_t sliceCount;
@@ -691,8 +701,8 @@ uint32_t CommonState::getNumSlices(uint64_t totalRankCount, uint32_t numRanks)
         // first get rough slice count according to #slices
         sliceCountNotRounded = div_round_up(totalRankCount, numSlicesToCheck);
         // next round up to comm size so slices other than last slice won't have remainder
-        sliceCount           = div_round_up(sliceCountNotRounded, numRanks) * numRanks;
-        sumSlices            = sliceCount * (numSlicesToCheck - 1);
+        sliceCount = div_round_up(sliceCountNotRounded, numRanks) * numRanks;
+        sumSlices  = sliceCount * (numSlicesToCheck - 1);
         // if rounding up results in last slice count <= 0 -> invalid, continue to next #slices
         if (totalRankCount <= sumSlices)
         {
@@ -700,12 +710,7 @@ uint32_t CommonState::getNumSlices(uint64_t totalRankCount, uint32_t numRanks)
         }
         lastSliceCount = totalRankCount - sumSlices;
         if (m_remainderCalculator
-                ->isValidSlicing(originalBufferCount,
-                                 sliceCount,
-                                 m_count,
-                                 numSlicesToCheck,
-                                 numRanks,
-                                 minBufferCount))
+                ->isValidSlicing(originalBufferCount, sliceCount, m_count, numSlicesToCheck, numRanks, minBufferCount))
         {
             sliceRatio = div(sliceCount << SLICE_RATIO_FIXED_POINT_ACCURACY, lastSliceCount);
             if (sliceRatio < minSliceRatio)
@@ -722,8 +727,12 @@ uint32_t CommonState::getNumSlices(uint64_t totalRankCount, uint32_t numRanks)
         }
     }
 
-    VERIFY(numSlices > 1, "Not found optimal buffer size. op {} count {} num Ranks {} optimal buffer count {}",
-           m_collectiveOp, m_count, numRanks, m_optimalBufferCount);
+    VERIFY(numSlices > 1,
+           "Not found optimal buffer size. op {} count {} num Ranks {} optimal buffer count {}",
+           m_collectiveOp,
+           m_count,
+           numRanks,
+           m_optimalBufferCount);
 
     return numSlices;
 }
@@ -732,8 +741,8 @@ void CommonState::calcSliceCounts(unsigned sliceIter)
 {
     if (sliceIter == (m_sliceIterations - 1))
     {
-        uint64_t ScaleupGroupSize  = m_dynamicComm.getScaleupGroupSize();
-        uint64_t commSize = m_dynamicComm.getCommSize();
+        uint64_t ScaleupGroupSize = m_dynamicComm.getScaleupGroupSize();
+        uint64_t commSize         = m_dynamicComm.getCommSize();
         uint64_t totalCountForLastSlice;
         switch (m_collectiveOp)
         {
@@ -760,8 +769,9 @@ void CommonState::calcSliceCounts(unsigned sliceIter)
                 m_scaleUpStrideCount   = m_rankScaleUpCount;
                 m_boxCount             = totalCountForLastSlice;
                 m_boxStrideCount       = 0;
-                m_remainderCount =
-                    m_remainderCalculator->getRemainderCount(totalCountForLastSlice, m_rankScaleUpCount, ScaleupGroupSize);
+                m_remainderCount       = m_remainderCalculator->getRemainderCount(totalCountForLastSlice,
+                                                                            m_rankScaleUpCount,
+                                                                            ScaleupGroupSize);
 
                 break;
 
@@ -790,7 +800,7 @@ void CommonState::calcSliceCounts(unsigned sliceIter)
                 m_rankScaleOutCount    = m_rankScaleUpCount;
                 if (m_isHostNic && !m_isSlicing)
                 {
-                    m_all2allIterations      = div_round_up(m_rankScaleUpCount * ScaleupGroupSize, m_optimalBufferCount);
+                    m_all2allIterations = div_round_up(m_rankScaleUpCount * ScaleupGroupSize, m_optimalBufferCount);
                     m_all2allIterStrideCount = m_optimalBufferCount;
                 }
                 break;
@@ -806,12 +816,11 @@ void CommonState::calcSliceCounts(unsigned sliceIter)
             {
                 totalCountForLastSlice = m_count - (m_boxCount * m_boxIterations * (m_sliceIterations - 1));
                 m_rankScaleUpCount     = m_remainderCalculator->getDiv(totalCountForLastSlice, commSize);
-                m_remainderCount       = m_remainderCalculator->getRemainderCount(totalCountForLastSlice,
-                                                                                  m_rankScaleUpCount,
-                                                                                  commSize);
-                m_rankScaleOutCount    = m_rankScaleUpCount;
-                m_scaleUpStrideCount   = m_rankScaleUpCount;
-                m_boxCount             = m_rankScaleUpCount * ScaleupGroupSize;
+                m_remainderCount =
+                    m_remainderCalculator->getRemainderCount(totalCountForLastSlice, m_rankScaleUpCount, commSize);
+                m_rankScaleOutCount  = m_rankScaleUpCount;
+                m_scaleUpStrideCount = m_rankScaleUpCount;
+                m_boxCount           = m_rankScaleUpCount * ScaleupGroupSize;
                 break;
             }
             case eHCLCollectiveLastValue:
@@ -899,7 +908,8 @@ void CommonState::checkInPlaceOp()
 
         case eHCLReduce:
             // no inplace for bf16 Reduce collective - same graph
-            if (m_dataType == hcclBfloat16 || m_dataType == hcclFloat16 || m_dynamicComm.isCommunicatorMultiScaleupGroup())
+            if (m_dataType == hcclBfloat16 || m_dataType == hcclFloat16 ||
+                m_dynamicComm.isCommunicatorMultiScaleupGroup())
             {
                 m_inPlace = false;
             }
@@ -937,44 +947,45 @@ void CommonState::check16BitReductionOp()
     m_16BitReduction = (m_isReductionCollective && (m_dataType == hcclBfloat16 || m_dataType == hcclFloat16));
 }
 
-void CommonState::calcReproScaleoutLongterm()
+void CommonState::calcScaleoutLongterm()
 {
     if (m_isMultiScaleupGroup &&
         (m_collectiveOp == eHCLReduceScatter || m_collectiveOp == eHCLAllReduce || m_collectiveOp == eHCLReduce))
     {
-        m_reproScaleoutLongtermAmount = (m_reproScaleoutBuffersAmount >= m_boxIterations)
-                                            ? 1
-                                            : (2 * m_reproScaleoutBuffersAmount >= m_boxIterations
-                                                   ? (m_boxIterations + 1 - m_reproScaleoutBuffersAmount)
-                                                   : m_reproScaleoutBuffersAmount + 1);
+        m_scaleoutLongtermAmount =
+            (m_scaleoutBuffersAmount >= m_boxIterations)
+                ? 1
+                : (2 * m_scaleoutBuffersAmount >= m_boxIterations ? (m_boxIterations + 1 - m_scaleoutBuffersAmount)
+                                                                  : m_scaleoutBuffersAmount + 1);
     }
     else
     {
         // Default, doesn't mean necessarily that a longterm gpso will be allocated.
-        m_reproScaleoutLongtermAmount = 1;
+        m_scaleoutLongtermAmount = 1;
     }
 
-    VERIFY(m_reproScaleoutLongtermAmount <= m_reproScaleoutBuffersAmount + 1);
+    VERIFY(m_scaleoutLongtermAmount <= m_scaleoutBuffersAmount + 1);
 }
 
 void CommonState::determineSyncUpBufferWithLtu()
 {
-    m_syncUpBufferWithLtu =
-        m_isMultiScaleupGroup && m_currentOp == eHCLReduceScatter && !isHostNic() && m_dynamicComm.getScaleupGroupSize() > 1;
+    m_syncUpBufferWithLtu = m_isMultiScaleupGroup && m_currentOp == eHCLReduceScatter &&
+                            (!isHostNic() || (isGDR() && GCFG_HCL_HNIC_LTU.value())) &&
+                            m_dynamicComm.getScaleupGroupSize() > 1;
 }
 
 void CommonState::checkHierarchicalOp()
 {
     if (!m_isMultiScaleupGroup)
     {
-        m_boxIterations = 1;
-        m_boxStrideCount     = 0;
+        m_boxIterations  = 1;
+        m_boxStrideCount = 0;
         return;
     }
     else if (eHCLNoCollective == m_collectiveOp)
     {
-        m_boxIterations = 1;
-        m_boxStrideCount     = 0;
+        m_boxIterations  = 1;
+        m_boxStrideCount = 0;
         return;
     }
 
@@ -1070,7 +1081,11 @@ bool CommonState::isScaleoutRequired(bool isSend, BoxNumInfo& sendBoxNumInfo)
 void CommonState::calcSliceQpSet(const unsigned sliceIter)
 {
     /* Params used to calculate m_qpSet, should be symmetric between ranks */
-    m_qpSet = mod(m_dynamicComm.getCollectiveCtr() + sliceIter, m_dynamicComm.getMaxScaleOutQpSetsNum());
+
+    const auto transactionSize = m_rankScaleOutCount * m_dataTypeSizeInBytes;
+    m_qpSet                    = (m_isHostNic && (transactionSize <= m_hnicQpSprayThreshold))
+                                     ? 0  // Use only the first qpSet below threshold
+                                     : mod(m_dynamicComm.getCollectiveCtr() + sliceIter, m_dynamicComm.getMaxScaleOutQpSetsNum());
 }
 
 unsigned CommonState::getBroadcastScatterOpBoxIterations() const
@@ -1087,7 +1102,7 @@ SliceState::SliceState(const CommonState&   commonState,
                        int                  streamId)
 : CommonState(commonState), m_isSend(isSend), m_sliceIter(sliceIter), m_boxNumInfo(boxNumInfo)
 {
-    m_currentOp         = currentOp;
+    m_currentOp = currentOp;
 
     calcBoxAndScaleOutCounts();
 
@@ -1123,7 +1138,7 @@ SliceState::SliceState(const CommonState&   commonState,
     {
         if (isHostNic())
         {
-            // Since in HNIC all2all we use SCALEUP_RR_AND_ALL2ALL_POOL IMB as the slicing factor, in some cases data
+            // Since in HNIC all2all we use SCALEUP_AND_ALL2ALL_POOL IMB as the slicing factor, in some cases data
             // stored in this IMB, Can be larger than the Host buffer size, so we will break iteration to multiple
             // all2all iteration so that the data will fit into the Host buffer (last all2all iteration can be smaller
             // than the other iterations)
@@ -1168,14 +1183,14 @@ void SliceState::calcBoxAndScaleOutCounts()
 {
     if (m_sliceIter == (m_sliceIterations - 1))
     {
-        uint64_t ScaleupGroupSize  = m_dynamicComm.getScaleupGroupSize();
+        uint64_t ScaleupGroupSize = m_dynamicComm.getScaleupGroupSize();
         switch (m_collectiveOp)
         {
             case eHCLReduce:
             case eHCLAllReduce:
             {
-                HCL_Rank myRankInScaleupGroup = m_dynamicComm.getRankInScaleupGroup();
-                unsigned boxIndex    = m_dynamicComm.getMyScaleupGroup();
+                HCL_Rank myRankInScaleupGroup     = m_dynamicComm.getRankInScaleupGroup();
+                unsigned boxIndex                 = m_dynamicComm.getMyScaleupGroup();
                 bool     isLastRankInScaleupGroup = m_dynamicComm.isLastRankInScaleupGroup();
 
                 if ((m_currentOp == eHCLReduceScatter && m_isSend) || (m_currentOp != eHCLReduceScatter && !m_isSend))
@@ -1184,11 +1199,11 @@ void SliceState::calcBoxAndScaleOutCounts()
                 }
 
                 m_boxCount          = m_remainderCalculator->getBoxCount(m_boxCount,
-                                                                         m_boxIterations,
+                                                                m_boxIterations,
                                                                 ScaleupGroupSize,
-                                                                         boxIndex,
-                                                                         m_rankScaleOutCount,
-                                                                         m_remainderCount);
+                                                                boxIndex,
+                                                                m_rankScaleOutCount,
+                                                                m_remainderCount);
                 m_rankScaleOutCount = m_remainderCalculator->getScaleOutCount(m_rankScaleOutCount,
                                                                               m_boxIterations,
                                                                               m_boxCount,
@@ -1254,7 +1269,8 @@ bool SliceState::gatherOpsWaitForRS(bool isScaleup)
         AGWaitForRS = m_collectiveOp == eHCLAllReduce && m_currentOp == eHCLAllGather &&
                       (!m_isMultiScaleupGroup || m_boxNumInfo.m_boxNum == myScaleupGroup);
 
-        GatherWaitForRS = m_collectiveOp == eHCLReduce && m_currentOp == eHCLGather && myScaleupGroup == m_rootBox && !m_isRoot;
+        GatherWaitForRS =
+            m_collectiveOp == eHCLReduce && m_currentOp == eHCLGather && myScaleupGroup == m_rootBox && !m_isRoot;
     }
     else  // scaleout
     {

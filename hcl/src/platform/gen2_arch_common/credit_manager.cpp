@@ -3,7 +3,7 @@
 
 #include "credit_manager.h"
 
-#include "hcl_utils.h"  // for VERIFY
+#include "hcl_utils.h"        // for VERIFY
 #include "hcl_log_manager.h"  // for LOG_*
 #include "hcl_math_utils.h"
 
@@ -26,7 +26,7 @@ int CreditManager::getCurrentCreditIndex(bool inc)
 uint64_t CreditManager::allocNextCredit(uint64_t targetValue)
 {
     unsigned idx             = getCurrentCreditIndex(true);
-    uint64_t  prevTargetValue = m_creditExpirations[idx];
+    uint64_t prevTargetValue = m_creditExpirations[idx];
 
     VERIFY(prevTargetValue != targetValue, "No available intermediate buffer");
 

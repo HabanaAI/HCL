@@ -11,14 +11,14 @@ sockaddr_str_t& sockaddr_str_t::set(const sockaddr_storage& address)
     if (AF_INET == address.ss_family)
     {
         sockaddr_in* addr = (sockaddr_in*)&address;
-        ptr  = inet_ntop(AF_INET, (&addr->sin_addr), str_addr, sizeof(str_addr));
-        port = ntohs(addr->sin_port);
+        ptr               = inet_ntop(AF_INET, (&addr->sin_addr), str_addr, sizeof(str_addr));
+        port              = ntohs(addr->sin_port);
     }
     else if (AF_INET6 == address.ss_family)
     {
         sockaddr_in6* addr = (sockaddr_in6*)&address;
-        ptr  = inet_ntop(AF_INET6, (&addr->sin6_addr), str_addr, sizeof(str_addr));
-        port = ntohs(addr->sin6_port);
+        ptr                = inet_ntop(AF_INET6, (&addr->sin6_addr), str_addr, sizeof(str_addr));
+        port               = ntohs(addr->sin6_port);
     }
 
     if (ptr)
@@ -71,7 +71,7 @@ void sockaddr_t::fromString(const std::string& ipaddress)
 {
     if (ipaddress == "")
     {
-        m_sockAddr = {};
+        m_sockAddr           = {};
         m_sockAddr.ss_family = AF_INET;
         return;
     }
@@ -110,4 +110,24 @@ void sockaddr_t::port(in_port_t _port)
 std::string sockaddr_t::str() const
 {
     return sockaddr_str_t(m_sockAddr);
+}
+
+std::string sockaddr_t::addr() const
+{
+    char str_addr[INET6_ADDRSTRLEN] = {};
+
+    const char* ptr = nullptr;
+
+    if (AF_INET == m_sockAddr.ss_family)
+    {
+        sockaddr_in* addr = sa4_;
+        ptr               = inet_ntop(AF_INET, (&addr->sin_addr), str_addr, sizeof(str_addr));
+    }
+    else if (AF_INET6 == m_sockAddr.ss_family)
+    {
+        sockaddr_in6* addr = sa6_;
+        ptr                = inet_ntop(AF_INET6, (&addr->sin6_addr), str_addr, sizeof(str_addr));
+    }
+
+    return ptr;
 }

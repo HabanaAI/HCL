@@ -14,11 +14,11 @@ HostStream::HostStream(const std::string& name,
 {
     LOG_HCL_INFO(HCL, "Create {}", m_streamName);
 
-    m_outerQueue   = std::make_shared<HostStreamFifo>(m_streamName);
-    m_timerStarted = false;
+    m_outerQueue        = std::make_shared<HostStreamFifo>(m_streamName);
+    m_timerStarted      = false;
     m_ongoingProcessing = false;
-    m_startTime    = std::chrono::steady_clock::now();
-    m_endTime      = std::chrono::steady_clock::now();
+    m_startTime         = std::chrono::steady_clock::now();
+    m_endTime           = std::chrono::steady_clock::now();
 }
 
 bool HostStream::isEmpty()

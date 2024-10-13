@@ -8,19 +8,19 @@
 #include "hcl_dynamic_communicator.h"
 #include "hcl_types.h"
 #include "infra/scal/gen2_arch_common/scal_stream.h"
-#include "platform/gaudi3/port_mapping.h"
-#include "platform/gen2_arch_common/types.h"  // for QpInfo
 #include "platform/gen2_arch_common/qp_manager.h"
 
 // since we use collective qps in gaudi3, we use the same qp IDs for all ranks in scaleUp, so the ranks is irelevant in
 // th DB. the same set of qp IDs are used throughout all scale up ports. but for scale out we use the same nics for all
 // peers, so each rank gets a new set of qps. and they are saved separately in the DB
 
-#define INVALID_COUNT ((uint64_t)-1)
+#define INVALID_COUNT ((uint64_t) - 1)
 
 constexpr unsigned MAX_QPS_PER_CONNECTION_G3 = 6;
 
-enum G3QP_e
+namespace G3
+{
+enum QP_e
 {
     QPE_RS_RECV = 0,
     QPE_AG_RECV,
@@ -29,27 +29,23 @@ enum G3QP_e
     QPE_AG_SEND,
     QPE_A2A_SEND
 };
+}
 
 class HclDeviceGaudi3;
-
-class QPUsage
-{
-public:
-    uint32_t qpn;
-    bool     disregardRank;
-};
 
 class QPManagerGaudi3 : public QPManager
 {
 public:
-    QPManagerGaudi3() = delete;
-    QPManagerGaudi3(HclDeviceGaudi3* device);
+    QPManagerGaudi3(HclDeviceGaudi3& device);
     virtual ~QPManagerGaudi3() = default;
 
-    virtual void registerQPs(HCL_Comm comm, const QpsVector& qps, const HCL_Rank remoteRank, const unsigned qpSets) = 0;
+    virtual void registerQPs(const QPManagerHints& hints, const QpsVector& qps) override = 0;
+    virtual void closeQPs(const QPManagerHints& hints) override                          = 0;
 
-    virtual uint32_t getQP(HCL_Comm comm, const unsigned qpi, const HCL_Rank remoteRank, const uint8_t qpSet) = 0;
-    virtual uint32_t getQPi(HCL_Comm comm, const uint8_t nic, const uint32_t qpn, const HCL_Rank remoteRank)  = 0;
+    virtual uint32_t getQPn(const QPManagerHints& hints) const override = 0;
+    virtual uint32_t getQPi(const QPManagerHints& hints) const override = 0;
+    virtual uint32_t getQPi(const HCL_CollectiveOp collectiveOp, const bool isSend) override;
+    virtual uint32_t getDestQPi(const unsigned qpi) const override;
 
     virtual QPUsage getBaseQpAndUsage(HclDynamicCommunicator& dynamicComm,
                                       HCL_CollectiveOp        collectiveOp,
@@ -63,97 +59,81 @@ public:
                                       bool                    isScaleOut        = false,
                                       HCL_Rank                remoteRank        = HCL_INVALID_RANK,
                                       uint8_t                 qpSet             = 0,
-                                      const bool              isReproReduction  = false,
+                                      const bool              isReduction       = false,
                                       HCL_CollectiveOp        complexCollective = eHCLNoCollective,
-                                      bool                    isRoot            = false);
+                                      bool                    isRoot            = false) override;
 
-    virtual void closeQPs(HCL_Comm comm, const UniqueSortedVector& ranks) = 0;
-
-protected:
-    HclDeviceGaudi3* m_device = nullptr;
-
-private:
-    virtual void resizeDB(HCL_Comm comm) = 0;
+    /* declared for the interface, but only implemented for scaleUp */
+    virtual void setConfiguration(hcl::ScalStream& stream, HCL_Comm comm, bool isSend) override {};
 };
 
-class QPManagerScaleUpGaudi3 : public QPManagerGaudi3
+class QPManagerGaudi3ScaleUp : public QPManagerGaudi3
 {
 public:
-    QPManagerScaleUpGaudi3() = delete;
-    QPManagerScaleUpGaudi3(HclDeviceGaudi3* device);
-    virtual ~QPManagerScaleUpGaudi3() = default;
+    QPManagerGaudi3ScaleUp(HclDeviceGaudi3& device);
+    virtual ~QPManagerGaudi3ScaleUp() = default;
 
-    void registerQPs(HCL_Comm         comm,
-                     const QpsVector& qps,
-                     const HCL_Rank   remoteRank = HCL_INVALID_RANK,
-                     const unsigned   qpSets     = 0) override;
-    void closeQPs(HCL_Comm comm, const UniqueSortedVector& ranks) override;
+    virtual void registerQPs(const QPManagerHints& hints, const QpsVector& qps) override;
+    virtual void closeQPs(const QPManagerHints& hints) override;
+    virtual void setConfiguration(hcl::ScalStream& stream, HCL_Comm comm, bool isSend) override;
 
-    uint32_t getQP(HCL_Comm       comm,
-                   const unsigned qpi,
-                   const HCL_Rank remoteRank = HCL_INVALID_RANK,
-                   const uint8_t  qpSet      = 0) override;
-    uint32_t
-    getQPi(HCL_Comm comm, const uint8_t nic, const uint32_t qpn, HCL_Rank const remoteRank = HCL_INVALID_RANK) override;
-
-    void setNicOffsets(hcl::ScalStream& Stream,
-                       HclDeviceGaudi3* device,
-                       HCL_Comm         comm,
-                       HCL_CollectiveOp collectiveOp,
-                       bool             isSend);
-
-    void setLastRankScaleup(hcl::ScalStream& Stream,
-                            HclDeviceGaudi3* device,
-                            HCL_Comm         comm,
-                            HCL_CollectiveOp collectiveOp,
-                            bool             isSend);
+    virtual uint32_t getQPn(const QPManagerHints& hints) const override;
+    virtual uint32_t getQPi(const QPManagerHints& hints) const override;
 
 protected:
-    uint32_t getLastRankPortMask(HclDynamicCommunicator&  dynamicComm,
-                                 HCL_CollectiveOp         collectiveOp,
-                                 bool                     isSend,
-                                 Gaudi3DevicePortMapping& portMapping);
+    virtual void
+    setNicOffsets(hcl::ScalStream& stream, const HCL_Comm comm, const HCL_CollectiveOp collectiveOp, const bool isSend);
+
+    virtual void setLastRankScaleup(hcl::ScalStream&       stream,
+                                    const HCL_Comm         comm,
+                                    const HCL_CollectiveOp collectiveOp,
+                                    const bool             isSend);
+
+    uint32_t getLastRankPortMask(HclDynamicCommunicator& dynamicComm,
+                                 const HCL_CollectiveOp  collectiveOp,
+                                 const bool              isSend) const;
 
 private:
-    void resizeDB(HCL_Comm comm) override;
+    void resizeDBForNewComms(HCL_Comm comm);
     void resizeOffsetDBs(HCL_Comm comm);
 
-    std::array<uint16_t, MAX_NICS_GEN2ARCH>& getRemoteRankIndices(HclDynamicCommunicator&  dynamicComm,
-                                                                  HCL_CollectiveOp         collectiveOp,
-                                                                  bool                     isSend,
-                                                                  Gaudi3DevicePortMapping& portMapping,
-                                                                  uint64_t                 nicsStatusMask,
-                                                                  const uint64_t           maxNics);
+    std::array<uint16_t, MAX_NICS_GEN2ARCH>&
+    getRemoteRankIndices(HCL_Comm comm, HCL_CollectiveOp collectiveOp, bool isSend);
 
     // m_qpInfoScaleUp[comm][qpi] -> qpn
-    std::vector<std::array<qpn, MAX_QPS_PER_CONNECTION_G3>> m_qpInfoScaleUp;
+    std::vector<std::array<QPn, MAX_QPS_PER_CONNECTION_G3>> m_qpInfoScaleUp;
 
     std::vector<std::array<uint16_t, MAX_NICS_GEN2ARCH>> m_remoteRankOffsets;
     std::vector<std::array<uint16_t, MAX_NICS_GEN2ARCH>> m_myRankOffsets;
 };
 
-class QPManagerScaleOutGaudi3 : public QPManagerGaudi3
+class QPManagerGaudi3ScaleOut : public QPManagerGaudi3
 {
 public:
-    QPManagerScaleOutGaudi3() = delete;
-    QPManagerScaleOutGaudi3(HclDeviceGaudi3* device);
-    virtual ~QPManagerScaleOutGaudi3() = default;
+    QPManagerGaudi3ScaleOut(HclDeviceGaudi3& device);
+    virtual ~QPManagerGaudi3ScaleOut() = default;
 
-    void registerQPs(HCL_Comm comm, const QpsVector& qps, const HCL_Rank remoteRank, const unsigned qpSets) override;
-    void closeQPs(HCL_Comm comm, const UniqueSortedVector& ranks) override;
-    void allocateCommQPs(HCL_Comm comm, const uint32_t commSize);
+    virtual void registerQPs(const QPManagerHints& hints, const QpsVector& qps) override;
+    virtual void allocateQPDBStorage(const HCL_Comm comm) override;
+    virtual void closeQPs(const QPManagerHints& hints) override;
 
-    uint32_t getQP(HCL_Comm comm, const unsigned qpi, const HCL_Rank remoteRank, const uint8_t qpSet) override;
-    uint32_t getQPi(HCL_Comm comm, const uint8_t nic, const uint32_t qpn, const HCL_Rank remoteRank) override;
+    virtual uint32_t getQPn(const QPManagerHints& hints) const override;
+    virtual uint32_t getQPi(const QPManagerHints& hints) const override;
 
-    static inline bool isRsQp(unsigned index) { return (index == QPE_RS_RECV || index == QPE_RS_SEND); };
-    static inline bool isA2AQp(unsigned index) { return (index == QPE_A2A_RECV || index == QPE_A2A_SEND); };
+    static inline bool isRsQp(const unsigned index)
+    {
+        return (index == G3::QP_e::QPE_RS_RECV || index == G3::QP_e::QPE_RS_SEND);
+    };
+    static inline bool isA2AQp(const unsigned index)
+    {
+        return (index == G3::QP_e::QPE_A2A_RECV || index == G3::QP_e::QPE_A2A_SEND);
+    };
 
 private:
-    void resizeDB(HCL_Comm comm) override;
-    void resizeDBForComm(HCL_Comm comm, const size_t commSize);
+    void resizeDBForNewComms(HCL_Comm comm);
+    void resizeDBPerComm(HCL_Comm comm);
 
     // m_qpInfoScaleOut[comm][remoteRank][qpSet][qpi] -> qpn
-    std::vector<std::vector<std::array<std::array<qpn, MAX_QPS_PER_CONNECTION_G3>, MAX_QPS_SETS_PER_CONNECTION>>>
+    std::vector<std::vector<std::array<std::array<QPn, MAX_QPS_PER_CONNECTION_G3>, MAX_QPS_SETS_PER_CONNECTION>>>
         m_qpInfoScaleOut;
 };

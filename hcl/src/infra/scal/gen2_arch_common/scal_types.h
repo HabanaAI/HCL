@@ -38,15 +38,15 @@ struct SmInfo
 
 struct HostFenceInfo
 {
-    unsigned                 smIndex;
-    unsigned                 smDcore;
+    unsigned smIndex;
+    unsigned smDcore;
 };
 
 struct InternalHostFenceInfo
 {
     HostFenceInfo                    hostFenceInfo;
-    const uint64_t*          decrementsPtr;
-    volatile const uint64_t* incrementsPtr;
+    const uint64_t*                  decrementsPtr;
+    volatile const uint64_t*         incrementsPtr;
     scal_host_fence_counter_handle_t hostFenceCounterHandle;
 };
 }  // namespace hcl

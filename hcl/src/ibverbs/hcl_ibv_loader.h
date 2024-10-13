@@ -12,14 +12,14 @@ typedef int (*hbldv_query_qp_fn)(struct ibv_qp* ibvqp, struct hbldv_query_qp_att
 typedef int (*hbldv_reserve_coll_qps_fn)(struct ibv_pd*             ibvpd,
                                          struct hbldv_coll_qp_attr* coll_qp_attr,
                                          struct hbldv_coll_qp*      coll_qp);
-typedef int (*hbldv_modify_qp_fn)(struct ibv_qp*            ibqp,
-                                      struct ibv_qp_attr*       attr,
-                                      int                       attr_mask,
-                                      struct hbldv_qp_attr* hl_attr);
+typedef int (*hbldv_modify_qp_fn)(struct ibv_qp*        ibqp,
+                                  struct ibv_qp_attr*   attr,
+                                  int                   attr_mask,
+                                  struct hbldv_qp_attr* hl_attr);
 
 typedef int (*hbldv_query_qp_fn)(struct ibv_qp* ibvqp, struct hbldv_query_qp_attr* qp_attr);
-typedef struct hbldv_usr_fifo* (*hbldv_create_usr_fifo_fn)(struct ibv_context*             context,
-                                                               struct hbldv_usr_fifo_attr* attr);
+typedef struct hbldv_usr_fifo* (*hbldv_create_usr_fifo_fn)(struct ibv_context*         context,
+                                                           struct hbldv_usr_fifo_attr* attr);
 typedef int (*hbldv_destroy_usr_fifo_fn)(struct hbldv_usr_fifo* usr_fifo);
 typedef int (*hbldv_query_port_fn)(struct ibv_context*           context,
                                    uint32_t                      port_num,
@@ -45,6 +45,7 @@ typedef int (*ibv_query_qp_fn)(struct ibv_qp*           qp,
                                int                      attr_mask,
                                struct ibv_qp_init_attr* init_attr);
 typedef int (*ibv_query_gid_fn)(struct ibv_context* context, uint8_t port_num, int index, union ibv_gid* gid);
+typedef int (*hbldv_query_device_fn)(struct ibv_context* context, struct hbldv_device_attr* attr);
 enum ibv_gid_type_sysfs
 {
     IBV_GID_TYPE_SYSFS_IB_ROCE_V1,
@@ -59,16 +60,17 @@ typedef int (*ibv_query_gid_type_fn)(struct ibv_context* context,
 class ibv_lib_t
 {
 public:
-    hbldv_open_device_fn         hbldv_open_device         = nullptr;
-    hbldv_set_port_ex_fn         hbldv_set_port_ex         = nullptr;
-    hbldv_create_cq_fn           hbldv_create_cq           = nullptr;
-    hbldv_query_qp_fn            hbldv_query_qp            = nullptr;
-    hbldv_modify_qp_fn           hbldv_modify_qp           = nullptr;
-    hbldv_create_usr_fifo_fn     hbldv_create_usr_fifo     = nullptr;
-    hbldv_destroy_usr_fifo_fn    hbldv_destroy_usr_fifo    = nullptr;
-    hbldv_reserve_coll_qps_fn    hbldv_reserve_coll_qps    = nullptr;
-    hbldv_query_port_fn          hbldv_query_port          = nullptr;
-    hbldv_is_supported_fn        hbldv_is_supported        = nullptr;
+    hbldv_open_device_fn      hbldv_open_device      = nullptr;
+    hbldv_set_port_ex_fn      hbldv_set_port_ex      = nullptr;
+    hbldv_create_cq_fn        hbldv_create_cq        = nullptr;
+    hbldv_query_qp_fn         hbldv_query_qp         = nullptr;
+    hbldv_modify_qp_fn        hbldv_modify_qp        = nullptr;
+    hbldv_create_usr_fifo_fn  hbldv_create_usr_fifo  = nullptr;
+    hbldv_destroy_usr_fifo_fn hbldv_destroy_usr_fifo = nullptr;
+    hbldv_reserve_coll_qps_fn hbldv_reserve_coll_qps = nullptr;
+    hbldv_query_port_fn       hbldv_query_port       = nullptr;
+    hbldv_is_supported_fn     hbldv_is_supported     = nullptr;
+    hbldv_query_device_fn     hbldv_query_device     = nullptr;
 
     ibv_get_device_name_fn  ibv_get_device_name  = nullptr;
     ibv_get_device_list_fn  ibv_get_device_list  = nullptr;

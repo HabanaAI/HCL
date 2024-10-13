@@ -8,7 +8,6 @@
 #include "platform/gaudi2/commands/hcl_commands.h"     // for HclCommandsGaudi2
 #include "platform/gaudi2/hcl_device.h"                // for HclDeviceGaudi2
 #include "platform/gaudi2/hcl_graph_sync.h"            // for HclGraphSyncGa...
-#include "platform/gaudi2/port_mapping.h"              // for Gaudi2DevicePortMapping
 #include "platform/gaudi2/hcl_address_generator.h"     // for HclAddressGeneratorGaudi2
 #include "platform/gen2_arch_common/collective_states.h"
 #include "platform/gen2_arch_common/hcl_device.h"         // for HclDeviceGen2Arch
@@ -19,11 +18,14 @@
 #include "hcl_collective_routines.h"
 #include "platform/gaudi2/wqe_tracker.h"
 #include "platform/gaudi2/hcl_mem_handler.h"
+#include "platform/gen2_arch_common/hcl_packets_utils.h"    // for getEdmaStreamCtxtId
+#include "platform/gen2_arch_common/server_connectivity.h"  // for Gen2ArchServerConnectivity
+#include "platform/gen2_arch_common/server_def.h"           // for Gen2ArchServerDef
 
 HclCollectiveRoutinesGaudi2::HclCollectiveRoutinesGaudi2(HclDeviceGaudi2* device, int streamId, WqeTracker* wqeTracker)
 : HclCollectiveRoutinesGen2Arch(device, streamId, wqeTracker),
   m_sendRecvAggr(m_deviceController.getGen2ArchScalManager().getNicsScaleUpEngines(),
-                 (Gaudi2DevicePortMapping&)m_device->getPortMapping(),
+                 m_device->getServerConnectivity(),
                  m_commands),
   m_gaudi2Commands((HclCommandsGaudi2&)m_commands)
 {
@@ -80,12 +82,12 @@ void HclCollectiveRoutinesGaudi2::createScaleUpCollectiveOp(hcl::ScalStreamBase&
     scaleUpOpG2.m_comm        = scaleUpOpG2.m_dynamicComm;
     scaleUpOpG2.m_numOfRanks  = (scaleUpOpG2.m_isReductionInIMB &&
                                 (scaleUpOpG2.m_dataType == hcclBfloat16 || scaleUpOpG2.m_dataType == hcclFloat16) &&
-                                scaleUpOpG2.m_reproReduction && !scaleUpOpG2.m_isSend)
+                                scaleUpOpG2.m_isReduction && !scaleUpOpG2.m_isSend)
                                     ? 2
                                     : 0;
-    scaleUpOpG2.m_poolId = !scaleUpOpG2.m_isSend && scaleUpOpG2.m_reproReduction
-                              ? DeviceBufferManager::getPoolSizeIndex(SCALEUP_RR_AND_ALL2ALL_POOL)
-                              : 0;
+    scaleUpOpG2.m_poolId      = !scaleUpOpG2.m_isSend && scaleUpOpG2.m_isReduction
+                                    ? DeviceBufferManager::getPoolSizeIndex(SCALEUP_AND_ALL2ALL_POOL)
+                                    : 0;
     m_gaudi2Commands.serializeScaleUpCollectiveOp(scalStream, scaleUpOpG2);
 }
 
@@ -100,11 +102,13 @@ unsigned HclCollectiveRoutinesGaudi2::countScaleUpSignalsSendRecv(CommonState&  
                                                                   const uint32_t numberOfSendBuckets,
                                                                   const uint32_t numberOfRecvBuckets,
                                                                   const uint32_t numberOfSends,
-                                                                  const uint32_t numberOfRecvs)
+                                                                  const uint32_t numberOfRecvs,
+                                                                  const HCL_Comm comm)
 {
-    const unsigned numScaleupPortsPerConnection = getDevice()->getHal()->getMaxNumScaleUpPortsPerConnection();
-    const unsigned boxSize = getDevice()->getHal()->getDefaultBoxSize();
-    unsigned numSignals = numScaleupPortsPerConnection * (boxSize - 1);
+    const unsigned numScaleupPortsPerConnection =
+        getDevice()->getServerConnectivity().getMaxNumScaleUpPortsPerConnection(comm);
+    const unsigned boxSize    = getDevice()->getServerDef().getDefaultBoxSize();
+    unsigned       numSignals = numScaleupPortsPerConnection * (boxSize - 1);
     if (commonState.m_dynamicComm.getScaleupGroupSize() == 1)
     {
         numSignals = 0;
@@ -125,15 +129,38 @@ unsigned HclCollectiveRoutinesGaudi2::countScaleUpSignalsSendRecv(CommonState&  
 
 unsigned HclCollectiveRoutinesGaudi2::countScaleOutSignalsSendRecv(const uint32_t numberOfSends,
                                                                    const uint32_t numberOfRecvs,
-                                                                   unsigned       spotlightType)
+                                                                   const HCL_Comm comm)
 {
-    const unsigned scaleoutSignals = (numberOfSends + numberOfRecvs) * m_scaleoutProvider->getNumOfNicsPerDevice();
+    const unsigned scaleoutSignals = (numberOfSends + numberOfRecvs) * m_scaleoutProvider->getNumOfNicsPerDevice(comm);
     LOG_HCL_TRACE(HCL,
                   "numberOfSends={}, numberOfRecvs={}, scaleoutSignals={}",
                   numberOfSends,
                   numberOfRecvs,
                   scaleoutSignals);
     return scaleoutSignals;
+}
+
+void HclCollectiveRoutinesGaudi2::memsetIMBsIfNeeded(SliceState&      sendSliceState,
+                                                     SliceState&      recvSliceState,
+                                                     unsigned int     sizeInBytes,
+                                                     hcclDataType_t   dataType,
+                                                     hcl::ScalStream* garbageStream)
+{
+    for (auto buffer_pool : m_memset_buffers)
+    {
+        m_memHandler->memsetIMBs(m_device->m_sibContainer,
+                                 m_signalsManager,
+                                 sendSliceState,
+                                 recvSliceState,
+                                 sizeInBytes,
+                                 m_longSo,
+                                 garbageStream->getSchedIdx(),
+                                 *garbageStream,
+                                 m_streamId,
+                                 buffer_pool,
+                                 getEdmaStreamCtxtId(sendSliceState.m_apiId, m_streamId),
+                                 dataType);
+    }
 }
 
 uint64_t RemainderCalculatorGaudi2::getBufferClearSize(HCL_CollectiveOp collective,
@@ -169,7 +196,7 @@ uint64_t RemainderCalculatorGaudi2::getScaleOutCount(uint64_t nonRemainderScaleO
                                                      uint64_t myRankInScaleupGroup,
                                                      uint64_t scaleUpCount,
                                                      uint64_t remainderCount,
-                                                     bool lastRankInScaleupGroup)
+                                                     bool     lastRankInScaleupGroup)
 {
     return std::min((int)scaleUpCount, std::max(0, (int)(boxCount - (myRankInScaleupGroup * scaleUpCount))));
 }

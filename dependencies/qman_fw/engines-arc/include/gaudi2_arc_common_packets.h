@@ -163,6 +163,16 @@ enum scheduler_type_t {
 };
 
 /**
+ * Max number of MMEs
+ */
+#define GAUDI2_MAX_MME_COUNT				2
+
+/**
+ * Max number of MMEs
+ */
+#define GAUDI2_MAX_EDMA_COUNT				5
+
+/**
  * Total number of engine groups supported by firmware
  */
 #define QMAN_ENGINE_GROUP_TYPE_COUNT		16
@@ -218,8 +228,9 @@ enum sched_cmpt_sync_scheme_bitmap {
  */
 enum {
 	SYNC_SCHEME_FENCE_ID = 0,
+	EXT_SIGNAL_FENCE_ID = SYNC_SCHEME_FENCE_ID,
 	B2B_FENCE_ID = 1,
-	EXT_SIGNAL_FENCE_ID = 2
+	GC_USED_FENCE_ID = 2
 };
 
 /**<

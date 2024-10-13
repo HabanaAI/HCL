@@ -675,6 +675,15 @@ struct sched_arc_cmd_alloc_barrier_v2_t {
 	 * Array of engine group types to which the alloc barrier
 	 * needs to be sent
 	 */
+	uint32_t watch_dog_sig_value:15;
+	/**<
+	 * Value to be used by firmware to increment the watchdog SOB.
+	 * Watchdog SOB ID is sent as part of Engine Config
+	 */
+	uint32_t reserved2:17;
+	/**<
+	 * reserved
+	 */
 	uint32_t degrade_mcid_count:16;
 	/**<
 	 * Required number of Degrade MCIDs.
@@ -741,7 +750,8 @@ struct sched_arc_cmd_alloc_nic_barrier_t {
 	 */
 	struct sched_arc_fence_id_arr_t fence_arr[0];
 	/**<
-	 * array of fence Ids. Each element can contain upto 4 fence IDs
+	 * array of fence Ids. Each element can contain upto 4 fence IDs.
+	 * Uses ACP fence
 	 */
 } __attribute__ ((aligned(4), __packed__));
 
@@ -893,7 +903,7 @@ struct sched_arc_cmd_lbw_write_t {
 	uint32_t fence_id:6;
 	/**<
 	 * fence id on which fence wait needs to be done. Valid only if
-	 * fence is true
+	 * fence is true. Uses ACP fence
 	 */
 	uint32_t target:6;
 	/**< target value of the fence */

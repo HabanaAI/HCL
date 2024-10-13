@@ -2,18 +2,19 @@
 
 #include <cstdint>
 #include <vector>
-#include <array>                                   // for array
-#include <map>                                     // for map
-#include <set>                                     // for set
-#include <utility>                                 // for pair
-#include "hcl_api_types.h"                         // for HCL_Comm, HCL_Rank
-#include "platform/gaudi2/types.h"                 // for eDWords, HLS2_BOX_...
-#include "sched_pkts.h"                            // for g2fw
-#include "interfaces/hcl_idevice.h"                // for IHclDevice
+#include <array>                    // for array
+#include <map>                      // for map
+#include <set>                      // for set
+#include <utility>                  // for pair
+#include "hcl_api_types.h"          // for HCL_Comm, HCL_Rank
+#include "platform/gaudi2/types.h"  // for eDWords, HLS2_BOX_...
+#include "sched_pkts.h"             // for g2fw
 #include "platform/gaudi2/context_manager_priv.h"
 #include "platform/gaudi2/qp_manager.h"
+#include "platform/gaudi2/hcl_device.h"                           // for HclDeviceGaudi2
+#include "platform/gen2_arch_common/server_connectivity.h"        // for Gen2ArchServerConnectivity
+#include "platform/gen2_arch_common/server_connectivity_types.h"  // for DEFAULT_COMM_ID
 
-class Gaudi2DevicePortMapping;
 class HclCommandsGen2Arch;
 
 namespace hcl
@@ -21,25 +22,16 @@ namespace hcl
 class ScalStreamBase;
 }
 
-enum G2QP_e  // QP index descritptor
-{
-    QPE_RS_RECV = 0,
-    QPE_AG_RECV,
-    QPE_RS_SEND,
-    QPE_AG_SEND,
-};
-
 class ContextManager
 {
 public:
-    ContextManager(const std::vector<unsigned>&   nicEngines,
-                   Gaudi2DevicePortMapping&       portMapping,
-                   QPManagerScaleUpGaudi2Handle&  qpManagerScaleUp,
-                   QPManagerScaleOutGaudi2Handle& qpManagerScaleOut,
-                   IHclDevice&                    device);
+    ContextManager(const std::vector<unsigned>& nicEngines,
+                   QPManager&                   qpManagerScaleUp,
+                   QPManager&                   qpManagerScaleOut,
+                   HclDeviceGaudi2&             device);
     virtual ~ContextManager() = default;
 
-    void createCollectiveContexts(HclCommandsGen2Arch& commands);
+    void createCollectiveContexts(HclCommandsGen2Arch& commands, const HCL_Comm hclCommId = DEFAULT_COMM_ID);
     void registerEarc(HCL_Comm comm, int nic);
 
     uint16_t
@@ -48,7 +40,7 @@ public:
     void serializeUpdateGlobalContext(hcl::ScalStreamBase& scalStream,
                                       uint32_t             soAddressLSB,
                                       uint64_t             intermediateBaseAddress = 0,
-                                      unsigned             intermediatSliceSize    = 0);
+                                      unsigned             intermediateSliceSize   = 0);
 
     void serializeUpdateGlobalContextScaleOut(hcl::ScalStreamBase& scalStream, uint32_t soAddressLSB);
 
@@ -86,12 +78,12 @@ public:
                                         unsigned&                        syncObjectAddressIndex,
                                         unsigned&                        commDescIndex);
 
-    void updateCollectiveContextScaleOut(unsigned                         collectiveContextIndex,
-                                         const RequiredCollectiveContext& requiredContext,
-                                         edwords_t&                       dwordsForUpdate,
-                                         unsigned&                        syncObjectAddressIndex,
-                                         ContextValues&                   contextValues);
-    Gaudi2DevicePortMapping& m_portMapping;
+    void                              updateCollectiveContextScaleOut(unsigned                         collectiveContextIndex,
+                                                                      const RequiredCollectiveContext& requiredContext,
+                                                                      edwords_t&                       dwordsForUpdate,
+                                                                      unsigned&                        syncObjectAddressIndex,
+                                                                      ContextValues&                   contextValues);
+    const Gen2ArchServerConnectivity& getServerConnectivity() const { return m_serverConnectivity; }
 
 private:
     void updateCommonDword(unsigned                         collectiveContextIndex,
@@ -124,12 +116,14 @@ private:
                                       unsigned& commDescIndex,
                                       bool      isScaleup);
 
+    uint32_t idx2qpi(unsigned ctxIndex);
+
     const std::vector<unsigned> m_nicEngines;
 
     using CachedCollectiveContextScaleOut = CachedCollectiveContext;
 
-    QPManagerScaleUpGaudi2Handle&                m_qpManagerScaleUp;
-    QPManagerScaleOutGaudi2Handle&               m_qpManagerScaleOut;
+    QPManager&                                   m_qpManagerScaleUp;
+    QPManager&                                   m_qpManagerScaleOut;
     std::vector<g2fw::nic_glbl_ctxt_t>           m_globalContexts;                    // one per EARC
     std::vector<g2fw::nic_glbl_ctxt_t>           m_scaleoutGlobalContexts;            // one per EARC
     std::vector<CachedCollectiveContextScaleUp>  m_cachedCollectiveContextsScaleUp;   // one per Collective Context
@@ -137,7 +131,8 @@ private:
 
     std::array<bool, MAX_NICS_GEN2ARCH> m_activeNics;
 
-    int m_maxNics               = -1;
-    int m_maxCollectiveContexts = -1;
-    IHclDevice& m_device;
+    int                               m_maxNics               = -1;
+    int                               m_maxCollectiveContexts = -1;
+    HclDeviceGaudi2&                  m_device;
+    const Gen2ArchServerConnectivity& m_serverConnectivity;
 };

@@ -5,6 +5,7 @@
 #include "hcl_utils.h"
 #include "platform/gen2_arch_common/commands/hcl_commands_types.h"
 #include "internal/hcl_profiler_api.h"
+#include "platform/gen2_arch_common/hcl_device_controller.h"
 
 namespace hcl
 {
@@ -12,16 +13,6 @@ class ScalStreamBase;
 
 constexpr uint8_t DEFAULT_STREAM_IDX = 0;
 
-inline uint8_t encodeStreamContextID(uint8_t apiId, unsigned streamIndex)
-{
-    StreamContextEncoding streamCtxtID;
-
-    // Ensure apiId and streamIndex are within the valid range
-    streamCtxtID.api_id       = apiId & 0b11111;     // 5 bits
-    streamCtxtID.stream_index = streamIndex & 0b11;  // 2 bits
-
-    return streamCtxtID.raw;
-}
 }  // namespace hcl
 
 class HclDeviceGen2Arch;
@@ -30,10 +21,10 @@ struct SendRecvEntry;
 class HclCommandsGen2Arch
 {
 public:
-    HclCommandsGen2Arch()                           = default;
-    HclCommandsGen2Arch(HclCommandsGen2Arch&&)      = delete;
-    HclCommandsGen2Arch(const HclCommandsGen2Arch&) = delete;
-    HclCommandsGen2Arch& operator=(HclCommandsGen2Arch&&) = delete;
+    HclCommandsGen2Arch()                                      = default;
+    HclCommandsGen2Arch(HclCommandsGen2Arch&&)                 = delete;
+    HclCommandsGen2Arch(const HclCommandsGen2Arch&)            = delete;
+    HclCommandsGen2Arch& operator=(HclCommandsGen2Arch&&)      = delete;
     HclCommandsGen2Arch& operator=(const HclCommandsGen2Arch&) = delete;
     virtual ~HclCommandsGen2Arch()                             = default;
 
@@ -46,25 +37,35 @@ public:
                                         uint32_t             soAddressLSB,
                                         uint8_t              streamCtxtID,
                                         hcclDataType_t       dataType,
-                                        hcclRedOp_t          reduceOp             = hcclOpNone,
-                                        bool                 useSibo              = false,
-                                        uint32_t             poolId               = 0,
-                                        bool                 isForScaleout        = false,
-                                        uint32_t             numberOfRanks        = 0,
-                                        uint32_t             numberOfReproBuffers = 0,
-                                        uint32_t             indexOfReproBuffer   = 0,
-                                        uint32_t             memsetValue          = 0) = 0;
+                                        hcclRedOp_t          reduceOp           = hcclOpNone,
+                                        bool                 useSibo            = false,
+                                        uint32_t             poolId             = 0,
+                                        bool                 isForScaleout      = false,
+                                        uint32_t             numberOfRanks      = 0,
+                                        uint32_t             numberOfSubBuffers = 0,
+                                        uint32_t             indexOfSubBuffer   = 0,
+                                        uint32_t             memsetValue        = 0) = 0;
 
-    virtual void serializeAllocBarrierCommand(hcl::ScalStreamBase& scalStream,
-                                              unsigned             schedIdx,
-                                              uint32_t             completionGroupIndex,
-                                              uint32_t             requiredSobs) = 0;
+    virtual void
+    serializeAllocBarrierCommand(hcl::ScalStreamBase&                                     scalStream,
+                                 unsigned                                                 schedIdx,
+                                 uint32_t                                                 completionGroupIndex,
+                                 uint32_t                                                 requiredSobs,
+                                 llvm_vecsmall::SmallVector<uint32_t, MAX_STREAM_TO_INC>* fences = nullptr) = 0;
 
     virtual void serializeLbwWriteCommand(hcl::ScalStreamBase& scalStream,
                                           unsigned             schedIdx,
                                           uint32_t             destination,
                                           uint32_t             data,
                                           bool                 blockUntilCompletion = false) = 0;
+
+    virtual void serializeLbwWriteWithFenceDecCommand(hcl::ScalStreamBase& scalStream,
+                                                      unsigned             schedIdx,
+                                                      uint32_t             destination,
+                                                      uint32_t             data,
+                                                      uint32_t             fenceIndex,
+                                                      uint32_t             fenceTarget          = 1,
+                                                      bool                 blockUntilCompletion = false) = 0;
 
     virtual void serializeLbwBurstWriteCommand(hcl::ScalStreamBase&      scalStream,
                                                unsigned                  schedIdx,
@@ -75,6 +76,8 @@ public:
                                           unsigned             schedIdx,
                                           uint32_t             fenceIndex,
                                           uint32_t             target = 1) = 0;
+
+    virtual void serializeSetTraceMarker(hcl::ScalStreamBase& scalStream, unsigned schedIdx, uint32_t val) = 0;
 
     /**
      * @brief Update FW with the SIMB base address and stride size, to allow batch reduction via EDMA.

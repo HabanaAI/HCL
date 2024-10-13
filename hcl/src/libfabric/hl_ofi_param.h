@@ -47,7 +47,7 @@ extern "C" {
  * List of interface names (comma-separated) to be filtered out for TCP
  * provider. By default, it is set to eliminate lo and docker0 interfaces.
  */
-HL_OFI_PARAM_STR(exclude_tcp_if, "EXCLUDE_TCP_IF", "lo,docker0");
+HL_OFI_PARAM_STR(exclude_tcp_if, "EXCLUDE_TCP_IF", "lo,docker0,tunl0");
 
 #ifdef _cplusplus
 }

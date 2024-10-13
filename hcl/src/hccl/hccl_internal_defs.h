@@ -14,11 +14,11 @@
 
 #include <sys/types.h>
 #include <sys/socket.h>
-#include <atomic>                        // for atomic
-#include <bits/stdc++.h>                 // for INT_MAX
-#include "hccl_types.h"                  // for hcclResult_t, hcclComm_t, hcc...
-#include <hcl_api_types.h>               // for HCL_UniqueId
-#include "hcl_utils.h"                   // for LOG_HCL_
+#include <atomic>           // for atomic
+#include <bits/stdc++.h>    // for INT_MAX
+#include "hccl_types.h"     // for hcclResult_t, hcclComm_t, hcc...
+#include <hcl_api_types.h>  // for HCL_UniqueId
+#include "hcl_utils.h"      // for LOG_HCL_
 
 class ofi_req_t;
 struct ofiComm_t;
@@ -35,12 +35,12 @@ struct internal_unique_id_t
 typedef enum
 {
     COMM_INIT_NEW_CONN = 1,
-    COMM_INIT_HANDSHAKE1,       // handshake phase 1
-    COMM_INIT_HANDSHAKE2,       // handshake phase 2
+    COMM_INIT_HANDSHAKE1,  // handshake phase 1
+    COMM_INIT_HANDSHAKE2,  // handshake phase 2
     SYNC_BETWEEN_RANKS,
     DATA_BETWEEN_RANKS,
     BOOTSTRAP_COMM_DESTROY,
-    COLLECTIVE_LOG,             // log over bootstrap network
+    COLLECTIVE_LOG,  // log over bootstrap network
 } bootstrap_hdr_id_t;
 
 struct msg_header_t
@@ -48,8 +48,8 @@ struct msg_header_t
     bootstrap_hdr_id_t id;
     uint32_t           sequence;
     uint32_t           payload_size;
-    int                source_peer;
-    int                dest_peer;
+    HCL_Rank           source_peer;
+    HCL_Rank           dest_peer;
 };
 
 #define COMM_INIT_MSG_HEADER_SIZE (sizeof(msg_header));
@@ -66,13 +66,13 @@ struct hcclBsCommInfo
 {
     int                 nRanks;
     bootstrapSocketType socketType;
-    int                 hcclRank;
+    HCL_Rank            hcclRank;
 };
 
 struct comm_init_rank_info_t
 {
-    int hccl_rank;
-    int host_id;
+    HCL_Rank hccl_rank;
+    int      host_id;
 };
 
 struct client_info_t
@@ -84,7 +84,7 @@ struct client_info_t
 struct hccl_rank_discovery_data_t
 {
     int          user_rank;
-    int          hcl_rank;
+    HCL_Rank     hcl_rank;
     int          host_id;
     HCL_UniqueId hcl_uniqueId;
 };
@@ -96,22 +96,8 @@ struct hccl_rank_discover_data_payload_t
 
 struct hccl_bootstrap_general_payload_t
 {
-    int rank;
+    HCL_Rank rank;
 };
-
-typedef enum hcclOp
-{
-    eHCCLReduce        = 0,
-    eHCCLAllReduce     = 1,
-    eHCCLReduceScatter = 2,
-    eHCCLBroadcast     = 3,
-    eHCCLAllGather     = 4,
-    eHCCLAllToAll      = 5,
-    eHCCLCollectiveMax = 5,    // last collective API
-    eHCCLSend          = 6,
-    eHCCLRecv          = 7,
-    eHCCLOpMax         = 7,
-} hcclOp;
 
 /**
  * @brief collective call parameters
@@ -119,19 +105,16 @@ typedef enum hcclOp
  */
 struct CollectiveParamsSignature
 {
-    size_t         count = 0;       // elements count
-    hcclDataType_t datatype = hcclFloat32;    // data type
-    hcclRedOp_t    reduceOp = hcclOpNone;    // reduce operation for reduction APIs
-    int            peer = -1;        // peer rank when valid
-    int            root = -1;        // root rank when valid
+    size_t         count    = 0;                 // elements count
+    hcclDataType_t datatype = hcclFloat32;       // data type
+    hcclRedOp_t    reduceOp = hcclOpNone;        // reduce operation for reduction APIs
+    HCL_Rank       peer     = HCL_INVALID_RANK;  // peer rank when valid
+    HCL_Rank       root     = HCL_INVALID_RANK;  // root rank when valid
 
-    bool operator==(const CollectiveParamsSignature &other) const
+    bool operator==(const CollectiveParamsSignature& other) const
     {
-        return (count    == other.count &&
-                datatype == other.datatype &&
-                reduceOp == other.reduceOp &&
-                peer     == other.peer &&
-                root     == other.root);
+        return (count == other.count && datatype == other.datatype && reduceOp == other.reduceOp &&
+                peer == other.peer && root == other.root);
     }
 };
 
@@ -148,9 +131,7 @@ struct SendRecvSignature
 
     bool operator==(const SendRecvSignature& other) const
     {
-        return (sender   == other.sender &&
-                receiver == other.receiver &&
-                count    == other.count &&
+        return (sender == other.sender && receiver == other.receiver && count == other.count &&
                 datatype == other.datatype);
     }
 };
@@ -161,20 +142,22 @@ struct SendRecvSignature
  */
 struct CollectiveLogMessage
 {
-    int64_t timestamp;                  // system_clock time_point
-    int     rank;                       // caller rank
+    int64_t  timestamp;  // system_clock time_point
+    HCL_Rank rank;       // caller rank
 
     // operation parameters
-    hcclOp                    op;       // API operation
-    CollectiveParamsSignature params;   // call parameters
+    HCL_CollectiveOp          op;      // API operation
+    CollectiveParamsSignature params;  // call parameters
 
     bool bootstrapValidationError = false;
 
-    CollectiveLogMessage(int _rank, hcclOp _op, CollectiveParamsSignature _params)
+    CollectiveLogMessage() = default;
+
+    CollectiveLogMessage(HCL_Rank _rank, HCL_CollectiveOp _op, CollectiveParamsSignature _params)
     : rank(_rank), op(_op), params(_params)
     {
     }
-    CollectiveLogMessage(int _rank, bool _bootstrapValidationError)
+    CollectiveLogMessage(HCL_Rank _rank, bool _bootstrapValidationError)
     : rank(_rank), bootstrapValidationError(_bootstrapValidationError)
     {
     }
@@ -233,7 +216,7 @@ struct hcclHandle
 
 struct hcclOpParams
 {
-    hcclOpParams(hcclOp             op,
+    hcclOpParams(HCL_CollectiveOp   op,
                  const void*        sendbuff,
                  void*              recvbuff,
                  size_t             count,
@@ -259,7 +242,7 @@ struct hcclOpParams
         this->m_handle        = std::make_shared<hcclHandle>();
     }
 
-    hcclOp                      m_op;
+    HCL_CollectiveOp            m_op;
     const void*                 m_sendbuff;
     void*                       m_recvbuff;
     size_t                      m_count;

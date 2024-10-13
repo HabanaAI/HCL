@@ -12,30 +12,29 @@
 
 #include "hccl.h"  // for HCCL_VERSION_CODE
 
-#include <common/shim_typedefs.h>                 // for PFN_ShimFinish, PFN...
-#include <dlfcn.h>                                // for dlclose, dlsym, dle...
-#include <climits>                                // for INT_MAX
-#include <cstdlib>                                // for getenv
-#include <cstring>                                // for strcmp
-#include <memory>                                 // for shared_ptr
-#include <string>                                 // for string
+#include <common/shim_typedefs.h>  // for PFN_ShimFinish, PFN...
+#include <dlfcn.h>                 // for dlclose, dlsym, dle...
+#include <climits>                 // for INT_MAX
+#include <cstdlib>                 // for getenv
+#include <cstring>                 // for strcmp
+#include <memory>                  // for shared_ptr
+#include <string>                  // for string
 
-#include "common/shim_types.h"                    // for SHIM_API_HCCL, SHIM...
-#include "dfa_defines.hpp"                        // for DfaErrorCode, DfaEr...
-#include "hccl_api_funcs.h"                       // for hccl_functions_poin...
-#include "hccl_communicator.h"                    // for hccl_communicator
-#include "hccl_context.h"                         // for hccl_context, g_hcc...
-#include "hccl_helpers.h"                         // for to_string, to_hccl_...
-#include "hccl_internal_defs.h"                   // for hcclOpParams, eHCCL...
-#include "hccl_types.h"                           // for hcclResult_t, hcclC...
-#include "hcl_global_conf.h"                      // for GCFG_BOX_TYPE_ID
-#include "hcl_public_streams.h"                   // for tdrDetectionFlag
-#include "hcl_types.h"                            // for HclConfigType, LOOP...
-#include "hcl_utils.h"                            // for HCL_API_LOG_ENTRY
-#include "internal/hccl_internal.h"               // for hcclDFA, hcclDestro...
-#include "network_utils.h"                        // for get_global_comm_id
-#include "hcl_log_manager.h"                      // for LOG_ERR, LOG_DEBUG
-#include "hccl_gen2_impl.h"                       // for Gen2 hccl impl under HclGen2
+#include "common/shim_types.h"       // for SHIM_API_HCCL, SHIM...
+#include "dfa_defines.hpp"           // for DfaErrorCode, DfaEr...
+#include "hccl_api_funcs.h"          // for hccl_functions_poin...
+#include "hccl_communicator.h"       // for hccl_communicator
+#include "hccl_context.h"            // for hccl_context, g_hcc...
+#include "hccl_helpers.h"            // for to_string, to_hccl_...
+#include "hccl_internal_defs.h"      // for hcclOpParams, eHCCL...
+#include "hccl_types.h"              // for hcclResult_t, hcclC...
+#include "hcl_public_streams.h"      // for tdrDetectionFlag
+#include "hcl_types.h"               // for HclConfigType, LOOP...
+#include "hcl_utils.h"               // for HCL_API_LOG_ENTRY
+#include "internal/hccl_internal.h"  // for hcclDFA, hcclDestro...
+#include "network_utils.h"           // for get_global_comm_id
+#include "hcl_log_manager.h"         // for LOG_ERR, LOG_DEBUG
+#include "hccl_gen2_impl.h"          // for Gen2 hccl impl under HclGen2
 
 struct HCL_Request;
 
@@ -45,9 +44,9 @@ struct HCL_Request;
 
 #define HCCL_API_CALL __attribute__((visibility("default")))
 
-hccl_context        hccl_ctx;
-DfaPhase                  g_dfaPhase    = DfaPhase::NONE;
-std::mutex                g_dfaMutex;
+hccl_context hccl_ctx;
+DfaPhase     g_dfaPhase = DfaPhase::NONE;
+std::mutex   g_dfaMutex;
 
 static hcclResult_t syncHCLStreamHandle(synStreamHandle stream_handle)
 {
@@ -127,6 +126,11 @@ static bool hcclIsACcbHalfFull_Original(const unsigned archStreamIdx)
     HCL_API_EXIT(res)
 }
 
+static void hcclSetTraceMarker_Original(const synStreamHandle stream_handle, uint32_t val)
+{
+    hccl_device()->setTraceMarker(stream_handle, val);
+}
+
 hcclResult_t HCCL_API_CALL hcclCommDestroy_Original(hcclComm_t comm)
 {
     HCCL_TRY
@@ -169,8 +173,7 @@ hcclResult_t HCCL_API_CALL hcclCommSynDevice_Original(hcclComm_t comm, int* devi
     HCCL_TRY
     auto* hccl_comm = hccl_ctx.communicator(comm);
     RETURN_ON_INVALID_HCCL_COMM(hccl_comm);
-    hcclResult_t status = hccl_comm->syn_device(device);
-    HCCL_API_EXIT(status)
+    HCCL_API_EXIT(hcclSuccess)
 }
 
 hcclResult_t HCCL_API_CALL hcclCommUserRank_Original(hcclComm_t comm, int* rank)
@@ -201,7 +204,7 @@ hcclResult_t HCCL_API_CALL hcclReduceScatter_Original(const void*     sendbuff,
                                                       synStreamHandle stream_handle)
 {
     HCCL_TRY
-    auto* hccl_comm   = hccl_ctx.communicator(comm);
+    auto* hccl_comm = hccl_ctx.communicator(comm);
     // Data validation
     RETURN_ON_INVALID_ADDR(sendbuff);
     RETURN_ON_INVALID_ADDR(recvbuff);
@@ -212,9 +215,11 @@ hcclResult_t HCCL_API_CALL hcclReduceScatter_Original(const void*     sendbuff,
     uint8_t apiId = hccl_ctx.generateApiId();
 
     // report collective log
-    HCL_COLLECTIVE_LOG(eHCCLReduceScatter, recvcount, datatype, reduceOp, -1, -1);
+    HCL_COLLECTIVE_LOG(eHCLReduceScatter, recvcount, datatype, reduceOp, -1, -1);
 
-    hcclResult_t status = hccl_comm->reduce_scatter(sendbuff, recvbuff, recvcount, datatype, reduceOp, stream_handle, eHCCLAPICall, apiId);
+    hcclResult_t status =
+        hccl_comm
+            ->reduce_scatter(sendbuff, recvbuff, recvcount, datatype, reduceOp, stream_handle, eHCCLAPICall, apiId);
     HCCL_API_EXIT(status)
 }
 
@@ -227,7 +232,7 @@ hcclResult_t HCCL_API_CALL hcclAllReduce_Original(const void*     sendbuff,
                                                   synStreamHandle stream_handle)
 {
     HCCL_TRY
-    auto* hccl_comm   = hccl_ctx.communicator(comm);
+    auto* hccl_comm = hccl_ctx.communicator(comm);
     RETURN_ON_INVALID_ADDR(sendbuff);
     RETURN_ON_INVALID_ADDR(recvbuff);
     RETURN_ON_INVALID_DATA_TYPE(datatype);
@@ -237,7 +242,7 @@ hcclResult_t HCCL_API_CALL hcclAllReduce_Original(const void*     sendbuff,
     uint8_t apiId = hccl_ctx.generateApiId();
 
     // report collective log
-    HCL_COLLECTIVE_LOG(eHCCLAllReduce, count, datatype, reduceOp, -1, -1);
+    HCL_COLLECTIVE_LOG(eHCLAllReduce, count, datatype, reduceOp, -1, -1);
 
     hcclResult_t status =
         hccl_comm->allreduce(sendbuff, recvbuff, count, datatype, reduceOp, stream_handle, eHCCLAPICall, apiId);
@@ -254,7 +259,7 @@ hcclResult_t HCCL_API_CALL hcclReduce_Original(const void*     sendbuff,
                                                synStreamHandle stream_handle)
 {
     HCCL_TRY
-    auto* hccl_comm   = hccl_ctx.communicator(comm);
+    auto* hccl_comm = hccl_ctx.communicator(comm);
     RETURN_ON_INVALID_ADDR(sendbuff);
     if (hccl_comm->user_rank() == root)  // recvbuff may be NULL on all calls except for root device
     {
@@ -268,7 +273,7 @@ hcclResult_t HCCL_API_CALL hcclReduce_Original(const void*     sendbuff,
     uint8_t apiId = hccl_ctx.generateApiId();
 
     // report collective log
-    HCL_COLLECTIVE_LOG(eHCCLReduce, count, datatype, reduceOp, -1, root);
+    HCL_COLLECTIVE_LOG(eHCLReduce, count, datatype, reduceOp, -1, root);
 
     hcclResult_t status =
         hccl_comm->reduce(sendbuff, recvbuff, count, datatype, reduceOp, root, stream_handle, eHCCLAPICall, apiId);
@@ -304,7 +309,7 @@ hcclResult_t HCCL_API_CALL hcclBroadcast_Original(const void*     sendbuff,
     uint8_t apiId = hccl_ctx.generateApiId();
 
     // report collective log
-    HCL_COLLECTIVE_LOG(eHCCLBroadcast, count, datatype, hcclOpNone, -1, root);
+    HCL_COLLECTIVE_LOG(eHCLBroadcast, count, datatype, hcclOpNone, -1, root);
 
     hcclResult_t status =
         hccl_comm->broadcast(sendbuff, recvbuff, count, datatype, root, stream_handle, eHCCLAPICall, apiId);
@@ -328,7 +333,7 @@ hcclResult_t HCCL_API_CALL hcclAllGather_Original(const void*     sendbuff,
     uint8_t apiId = hccl_ctx.generateApiId();
 
     // report collective log
-    HCL_COLLECTIVE_LOG(eHCCLAllGather, sendcount, datatype, hcclOpNone, -1, -1);
+    HCL_COLLECTIVE_LOG(eHCLAllGather, sendcount, datatype, hcclOpNone, -1, -1);
 
     uint64_t sendSizePerRank = sendcount * hccl_data_type_elem_size(datatype);
 
@@ -377,10 +382,9 @@ hcclResult_t hcclAlltoAll_Original(const void*     sendbuff,
     }
 
     // report collective log
-    HCL_COLLECTIVE_LOG(eHCCLAllToAll, count, datatype, hcclOpNone, -1, -1);
+    HCL_COLLECTIVE_LOG(eHCLAll2All, count, datatype, hcclOpNone, -1, -1);
 
-    hcclResult_t status =
-        hccl_comm->alltoall(sendbuff, recvbuff, count, datatype, stream_handle, eHCCLAPICall, apiId);
+    hcclResult_t status = hccl_comm->alltoall(sendbuff, recvbuff, count, datatype, stream_handle, eHCCLAPICall, apiId);
 
     HCCL_API_EXIT(status)
 }
@@ -408,10 +412,9 @@ hcclResult_t HCCL_API_CALL hcclSend_Original(const void*     sendbuff,
     RETURN_ON_RANK_CHECK(peer, hccl_comm);
 
     // report collective log
-    HCL_COLLECTIVE_LOG(eHCCLSend, count, datatype, hcclOpNone, peer, -1);
+    HCL_COLLECTIVE_LOG(eHCLNoCollective, count, datatype, hcclOpNone, peer, 0);
 
-    hcclResult_t status =
-        hccl_comm->hccl_send(sendbuff, count, datatype, peer, stream_handle, HCL_DEFAULT_API_ID);
+    hcclResult_t status = hccl_comm->hccl_send(sendbuff, count, datatype, peer, stream_handle, HCL_DEFAULT_API_ID);
 
     HCCL_API_EXIT(status)
 }
@@ -432,15 +435,10 @@ hcclResult_t HCCL_API_CALL hcclRecv_Original(void*           recvbuff,
     RETURN_ON_RANK_CHECK(peer, hccl_comm);
 
     // report collective log
-    HCL_COLLECTIVE_LOG(eHCCLRecv, count, datatype, hcclOpNone, peer, -1);
+    HCL_COLLECTIVE_LOG(eHCLNoCollective, count, datatype, hcclOpNone, peer, -1);
 
     // Receive using HCL will be aggregated on HCL level
-    hcclResult_t status = hccl_comm->hccl_receive(recvbuff,
-                                                  count,
-                                                  datatype,
-                                                  peer,
-                                                  stream_handle,
-                                                  HCL_DEFAULT_API_ID);
+    hcclResult_t status = hccl_comm->hccl_receive(recvbuff, count, datatype, peer, stream_handle, HCL_DEFAULT_API_ID);
 
     HCCL_API_EXIT(status)
 }
@@ -462,14 +460,14 @@ hcclResult_t HCCL_API_CALL hcclGroupEnd_Original()
 hcclResult_t hcclInitDevice_Original(const synDeviceId deviceId)
 {
     HCCL_TRY
-    hcclResult_t status = hccl_ctx.init_device(deviceId, hccl_ctx.generateApiId());
+    hcclResult_t status = hccl_ctx.init_device(hccl_ctx.generateApiId());
     HCCL_API_EXIT(status)
 }
 
 hcclResult_t hcclDestroyDevice_Original(const synDeviceId deviceId)
 {
     HCCL_TRY
-    hcclResult_t status = hccl_ctx.destroy_device(deviceId);
+    hcclResult_t status = hccl_ctx.destroy_device();
     HCCL_API_EXIT(status)
 }
 
@@ -544,7 +542,7 @@ hcclResult_t hcclDfaUpdateState_Original(DfaPhase dfaPhase)
             {
                 updateErr = true;
             }
-            g_status      = hcclResult_t::hcclSuccess;
+            g_status = hcclResult_t::hcclSuccess;
             break;
 
         case DfaPhase::STARTED:
@@ -557,7 +555,7 @@ hcclResult_t hcclDfaUpdateState_Original(DfaPhase dfaPhase)
             {
                 updateErr = true;
             }
-            g_status      = hcclResult_t::hcclInternalError;
+            g_status = hcclResult_t::hcclInternalError;
             break;
         }
 
@@ -570,7 +568,7 @@ hcclResult_t hcclDfaUpdateState_Original(DfaPhase dfaPhase)
             {
                 updateErr = true;
             }
-            g_status      = hcclResult_t::hcclInternalError;
+            g_status = hcclResult_t::hcclInternalError;
             break;
     }
 
@@ -591,6 +589,14 @@ hcclResult_t hcclGetVersionString_Original(char* pVersion, const unsigned len)
     getHclVersion(pVersion, len);
     LOG_DEBUG(HCL_API, "HCCL Version String is: {}", pVersion);
     HCCL_API_EXIT(hcclSuccess)
+}
+
+hcclResult_t HCCL_API_CALL hcclDeviceInit_Original(void* device, void* context)
+{
+    HCCL_TRY
+    LOG_ERR(HCL_API, "hcclDeviceInit not implemented!");
+    hcclResult_t status = hcclInvalidUsage;
+    HCCL_API_EXIT(status)
 }
 
 static struct hccl_functions_pointers default_functions_pointers_table = {
@@ -629,7 +635,8 @@ static struct hccl_functions_pointers default_functions_pointers_table = {
     .pfn_hcclDFA                        = hcclDFA_Original,
     .pfn_hcclDfaUpdateState             = hcclDfaUpdateState_Original,
     .pfn_hcclGetVersionString           = hcclGetVersionString_Original,
-    .pfn_hcclCommFinalize               = hcclCommFinalize_Original};
+    .pfn_hcclCommFinalize               = hcclCommFinalize_Original,
+    .pfn_hcclDeviceInit                 = hcclDeviceInit_Original};
 // functions_pointers_table will maintain the current functions pointers table
 // Initialized to the original functions
 static struct hccl_functions_pointers* functions_pointers_table = &default_functions_pointers_table;
@@ -734,6 +741,13 @@ bool HCCL_API_CALL hcclIsACcbHalfFull_impl(const unsigned archStreamIdx)
     HCCL_TRY
     const bool res = hcclIsACcbHalfFull_Original(archStreamIdx);
     HCL_API_EXIT(res)
+}
+
+void HCCL_API_CALL hcclSetTraceMarker_impl(const synStreamHandle stream_handle, uint32_t val)
+{
+    hcclResult_t status = syncHCLStreamHandle(stream_handle);
+    if (status != hcclSuccess) return;
+    hcclSetTraceMarker_Original(stream_handle, val);
 }
 
 hcclResult_t HCCL_API_CALL hcclCommDestroy_impl(hcclComm_t comm)
@@ -1155,6 +1169,12 @@ hcclResult_t HCCL_API_CALL hcclGetVersionString(char* pVersion, const unsigned l
 {
     HCL_API_LOG_ENTRY("pVersion={:p}, len={}", pVersion, len);
     return (*functions_pointers_table->pfn_hcclGetVersionString)(pVersion, len);
+}
+
+hcclResult_t HCCL_API_CALL hcclDeviceInit_impl(void* device, void* context)
+{
+    HCL_API_LOG_ENTRY("(&device={:p}, &context={:p})", device, context);
+    return (*functions_pointers_table->pfn_hcclDeviceInit)(device, context);
 }
 
 }  // namespace HclGen2

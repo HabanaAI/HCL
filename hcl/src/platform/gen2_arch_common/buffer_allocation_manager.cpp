@@ -3,7 +3,7 @@
 
 BufferAllocationManager::BufferAllocationManager()
 {
-    m_repetitions = 0;
+    m_repetitions               = 0;
     m_nextBufferToAllocateIndex = 0;
 }
 
@@ -16,16 +16,16 @@ unsigned BufferAllocationManager::alloc(DeviceBufferManager&                devi
     VERIFY(m_repetitions > 0, "trying to alloc buffers without registration");
 
     unsigned bufferAllocationIndex;
-    uint64_t  lastTargetVal;
+    uint64_t lastTargetVal;
     int64_t  signalsDiff;
 
     for (bufferAllocationIndex = 0; bufferAllocationIndex < m_nextBufferToAllocateIndex; bufferAllocationIndex++)
     {
-        lastTargetVal = deviceBufferManager.allocNextBuffer(longSo.targetValue +
-                                                                m_allocations[bufferAllocationIndex].m_iterations,
-                                                            m_allocations[bufferAllocationIndex].m_poolId);
+        lastTargetVal =
+            deviceBufferManager.allocNextBuffer(longSo.targetValue + m_allocations[bufferAllocationIndex].m_iterations,
+                                                m_allocations[bufferAllocationIndex].m_poolId);
 
-        if (m_allocations[bufferAllocationIndex].m_poolId == SCALEUP_RR_AND_ALL2ALL_POOL)
+        if (m_allocations[bufferAllocationIndex].m_poolId == SCALEUP_AND_ALL2ALL_POOL)
         {
             unsigned currentBufferIdx =
                 deviceBufferManager.getCurrentBufferIdx(m_allocations[bufferAllocationIndex].m_poolId);
@@ -57,7 +57,8 @@ unsigned BufferAllocationManager::alloc(DeviceBufferManager&                devi
                 requiredExtraCredits = (unsigned)(cgSize - signalsDiff);
             }
         }
-        LOG_TRACE(HCL_ECR, "IMB allocation: pool {}, iterations {}, current so {}, required extra credits {}",
+        LOG_TRACE(HCL_ECR,
+                  "IMB allocation: pool {}, iterations {}, current so {}, required extra credits {}",
                   m_allocations[bufferAllocationIndex].m_poolId,
                   m_allocations[bufferAllocationIndex].m_iterations,
                   longSo.targetValue,
@@ -70,8 +71,10 @@ unsigned BufferAllocationManager::alloc(DeviceBufferManager&                devi
 
 void BufferAllocationManager::addAllocation(e_devicePoolID poolId, unsigned int numIterations, bool dontWaitOnCg)
 {
-    VERIFY(m_nextBufferToAllocateIndex < MAX_BUFFERS_TO_ALLOCATE, "trying to allocate more than {} buffers. pool {}",
-           MAX_BUFFERS_TO_ALLOCATE, poolId);
+    VERIFY(m_nextBufferToAllocateIndex < MAX_BUFFERS_TO_ALLOCATE,
+           "trying to allocate more than {} buffers. pool {}",
+           MAX_BUFFERS_TO_ALLOCATE,
+           poolId);
     m_allocations[m_nextBufferToAllocateIndex] = {.m_poolId     = poolId,
                                                   .m_iterations = numIterations,
                                                   .dontWaitOnCg = dontWaitOnCg};
@@ -125,7 +128,7 @@ void BufferAllocationManager::registerStaticBuffersAllocations(CommonState& comm
                     {
                         numIterations++;
                     }
-                    addAllocation(SCALEOUT_RR_POOL, numIterations);
+                    addAllocation(SCALEOUT_POOL, numIterations);
                 }
             }
             else  // boxIter > 0
@@ -135,20 +138,21 @@ void BufferAllocationManager::registerStaticBuffersAllocations(CommonState& comm
 
             if (commonState.m_dynamicComm.getScaleupGroupSize() > 1)
             {
-                if (!commonState.m_isMultiScaleupGroup && commonState.isComplexImplementation() && !commonState.isRoot())
+                if (!commonState.m_isMultiScaleupGroup && commonState.isComplexImplementation() &&
+                    !commonState.isRoot())
                 {
-                    addAllocation(SCALEUP_RR_AND_ALL2ALL_POOL, 1);
+                    addAllocation(SCALEUP_AND_ALL2ALL_POOL, 1);
                 }
                 else
                 {
-                    addAllocation(SCALEUP_RR_AND_ALL2ALL_POOL, 0, commonState.m_syncUpBufferWithLtu);
+                    addAllocation(SCALEUP_AND_ALL2ALL_POOL, 0, commonState.m_syncUpBufferWithLtu);
                 }
             }
             if (commonState.m_collectiveOp == eHCLReduce && !commonState.isRoot() && commonState.m_16BitReduction)
             {
                 if (commonState.m_isMultiScaleupGroup && boxIter == (numBoxes - 1))
                 {
-                    addAllocation(REDUCE_RR_POOL, 1);
+                    addAllocation(REDUCE_POOL, 1);
                     numRepetitions = 1;
                 }
                 else if (boxIter > 0)
@@ -161,9 +165,10 @@ void BufferAllocationManager::registerStaticBuffersAllocations(CommonState& comm
         }
         case eHCLGather:
         {
-            if (boxIter > 0 && commonState.m_dynamicComm.getMyScaleupGroup() == commonState.rootBox() && !commonState.isRoot())
+            if (boxIter > 0 && commonState.m_dynamicComm.getMyScaleupGroup() == commonState.rootBox() &&
+                !commonState.isRoot())
             {
-                addAllocation(REDUCE_RR_POOL, 0);
+                addAllocation(REDUCE_POOL, 0);
                 setRepetitions(1);
             }
             break;
@@ -172,7 +177,7 @@ void BufferAllocationManager::registerStaticBuffersAllocations(CommonState& comm
         {
             if (boxIter > 0 && commonState.m_dynamicComm.getScaleupGroupSize() > 1 && commonState.m_all2allIter == 0)
             {
-                addAllocation(SCALEUP_RR_AND_ALL2ALL_POOL, commonState.m_all2allIterations - 1);
+                addAllocation(SCALEUP_AND_ALL2ALL_POOL, commonState.m_all2allIterations - 1);
                 setRepetitions(1);
             }
             break;

@@ -17,18 +17,18 @@ struct WqeWraparoundBits
     bool wait_for_rndv_acks;
 };
 
-typedef std::array<std::vector<std::vector<uint64_t>>, (unsigned)QpType::QPTypeSize> WqePerConnection;
+typedef std::array<std::vector<std::vector<uint64_t>>, (unsigned)QpType::QPTypeSize>          WqePerConnection;
 typedef std::array<std::vector<std::vector<WqeWraparoundBits>>, (unsigned)QpType::QPTypeSize> WqeWraparoundBitsPerQp;
 
 class WqeTracker
 {
 public:
-    WqeTracker() = default;
+    WqeTracker()          = default;
     virtual ~WqeTracker() = default;
 
-    WqeTracker(WqeTracker&&)      = default;  // ALLOW move ctor
-    WqeTracker(const WqeTracker&) = delete;
-    WqeTracker& operator=(WqeTracker&&) = delete;
+    WqeTracker(WqeTracker&&)                 = default;  // ALLOW move ctor
+    WqeTracker(const WqeTracker&)            = delete;
+    WqeTracker& operator=(WqeTracker&&)      = delete;
     WqeTracker& operator=(const WqeTracker&) = delete;
 
     virtual void              incWqe(const HCL_Comm commId, const unsigned rank, const QpType qpType) {}
@@ -37,7 +37,7 @@ public:
     {
         return {false, false};
     }
-    void setRecvWqeEntriesNum(unsigned recvWqeEntriesNum) {m_recvWqeEntriesNum = recvWqeEntriesNum;}
+    void setRecvWqeEntriesNum(unsigned recvWqeEntriesNum) { m_recvWqeEntriesNum = recvWqeEntriesNum; }
 
 protected:
     unsigned m_recvWqeEntriesNum = 0;

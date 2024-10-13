@@ -1,17 +1,17 @@
 #include "hcl_debug_stats.h"
 
-#include <algorithm>                    // for replace
-#include <iostream>                     // for operator<<, basic_ostream
+#include <algorithm>  // for replace
+#include <iostream>   // for operator<<, basic_ostream
 #include <fstream>
-#include <ratio>                        // for micro
-#include <utility>                      // for pair, move
-#include "hcl_global_conf.h"            // for GCFG_HCL_DEBUG_STATS_LEVEL
-#include "hcl_log_manager.h"            // for LOG_*
-#include "synapse_api.h"                // for synProfilerAddCustomMeasurement
+#include <ratio>              // for micro
+#include <utility>            // for pair, move
+#include "hcl_global_conf.h"  // for GCFG_HCL_DEBUG_STATS_LEVEL
+#include "hcl_log_manager.h"  // for LOG_*
+#include "synapse_api.h"      // for synProfilerAddCustomMeasurement
 #include <sstream>
 #include <hcl_utils.h>  // for VERIFY
 
-HclDebugStats g_dbgStats;
+HclDebugStats                                   g_dbgStats;
 thread_local HclDebugStats::HclThreadDebugStats HclDebugStats::m_threadInfo;
 thread_local const char*                        g_profilerContextName;
 
@@ -60,12 +60,12 @@ HclDebugStats::HclDebugStats()
 }
 
 // take function info on start
-// recurcive function are not supported for now
+// recursive function are not supported for now
 void HclDebugStats::startFunc(const std::string& funcName, const char* contextName)
 {
-    FuncInfo& funcInfo = m_threadInfo.threadWorkingFunc[funcName];
-    funcInfo.active    = true;
-    funcInfo.lastStart = hcl_clk::now();
+    FuncInfo& funcInfo   = m_threadInfo.threadWorkingFunc[funcName];
+    funcInfo.active      = true;
+    funcInfo.lastStart   = hcl_clk::now();
     funcInfo.contextName = contextName;
     synProfilerGetCurrentTimeNS(&funcInfo.profilerStart);
 }

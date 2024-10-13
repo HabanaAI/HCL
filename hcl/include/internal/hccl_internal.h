@@ -25,3 +25,4 @@ hcclResult_t hcclDFA(DfaStatus& dfaStatus, void (*dfaLogFunc)(int, const char*))
 hcclResult_t hcclDfaUpdateState(DfaPhase dfaPhase);
 hcclResult_t hcclGetVersionString(char* pVersion, const unsigned len);
 bool         hcclIsACcbHalfFull(const unsigned archStreamIdx);
+void         hcclSetTraceMarker(const synStreamHandle stream_handle, uint32_t val);

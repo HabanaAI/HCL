@@ -1,6 +1,10 @@
 #include "hcl_utils.h"
 #include "hcl_ibverbs.h"
 #include "hlthunk.h"
+#include "hcl_types.h"                                    // for portMaskConfig
+#include "platform/gen2_arch_common/types.h"              // for MAX_NICS_GEN2ARCH
+#include "platform/gen2_arch_common/hcl_device_config.h"  // for HclDeviceConfig
+
 #include <string>
 #include <dlfcn.h>
 #include <poll.h>
@@ -11,16 +15,17 @@ hcl_ibverbs_t g_ibv;
 
 std::ostream& operator<<(std::ostream& os, const ibv_gid& gid)
 {
-    return os << "GID(0x" << std::hex << gid.global.interface_id << ", 0x" << gid.global.subnet_prefix << std::dec << ")";
+    return os << "GID(0x" << std::hex << gid.global.interface_id << ", 0x" << gid.global.subnet_prefix << std::dec
+              << ")";
 }
 
-hcclResult_t hcl_ibverbs_t::init(IHclDevice* device)
+hcclResult_t hcl_ibverbs_t::init(const HclDeviceConfig& deviceConfig)
 {
-    device_ = device;
+    LOG_IBV("Called for fd={}", deviceConfig.getFd());
 
-    cqs_.resize(device_->getHal()->getMaxNics(), nullptr);
+    cqs_.resize(MAX_NICS_GEN2ARCH, nullptr);
 
-    int fd = device_->getFd();
+    int fd = deviceConfig.getFd();
 
     if (!ibv_.load())
     {
@@ -28,14 +33,7 @@ hcclResult_t hcl_ibverbs_t::init(IHclDevice* device)
         return hcclInternalError;
     }
 
-#define PCI_ID_STR_LEN 13
-
-    char pci_bus_id[PCI_ID_STR_LEN];
-    int rc = hlthunk_get_pci_bus_id_from_fd(fd, pci_bus_id, sizeof(pci_bus_id));
-    VERIFY(rc == 0, "hlthunk_get_pci_bus_id_from_fd() failed: {}", rc);
-
-    /* Get device index from bus ID */
-    int device_idx = hlthunk_get_device_index_from_pci_bus_id(pci_bus_id);
+    const int device_idx = deviceConfig.getDeviceIndex();
 
     /* Prepare IB device name using device index, for each hlX device there will be a hlib_X device */
     ib_devname_ = "hbl_" + std::to_string(device_idx);
@@ -78,15 +76,8 @@ hcclResult_t hcl_ibverbs_t::init(IHclDevice* device)
         return hcclInternalError;
     }
 
-    hlthunk_nic_get_ports_masks_out mask = {};
-    int ret  = hlthunk_nic_get_ports_masks(fd, &mask);
-    VERIFY(ret == 0, "hlthunk_nic_get_ports_masks() failed: {}", ret);
-    LOG_IBV("mask.ports_mask={:024b}", mask.ports_mask);
-
-    map_ib_ports(mask.ports_mask);
-
     hbldv_ucontext_attr attr = {};
-    attr.core_fd = (uint32_t)fd;
+    attr.core_fd             = (uint32_t)fd;
 
     ibctx_ = ibv_.hbldv_open_device(ibdev_, &attr);
     VERIFY(ibctx_, "hbldv_open_device({}(fd:{})), mask: 0x{:x}) failed.", ib_devname_, fd, attr.ports_mask);
@@ -94,23 +85,34 @@ hcclResult_t hcl_ibverbs_t::init(IHclDevice* device)
     ibpd_ = ibv_.ibv_alloc_pd(ibctx_);
     VERIFY(ibpd_, "ibv_alloc_pd() failed.");
 
-    struct hlthunk_hw_ip_info hw_ip = {};
-    hlthunk_get_hw_ip_info(fd, &hw_ip);
-    dram_enabled_ = hw_ip.dram_enabled;
+    portMaskConfig mask;
+    get_port_mask(mask);
+
+    map_ib_ports(mask.hwPortsMask);
+
+    dram_enabled_ = deviceConfig.getDramEnabled();
 
     parse_sysfs_infiniband();
 
+    init_ = true;
     return hcclSuccess;
+}
+
+void hcl_ibverbs_t::set_hcl_device(IHclDevice* device)
+{
+    VERIFY(init_, "Cant set device w/o init called first");
+    LOG_IBV("Setting device to {}", device->getDeviceTypeStr());
+    device_ = device;
 }
 
 void hcl_ibverbs_t::map_ib_ports(const nics_mask_t nics_mask)
 {
     LOG_IBV("0x{:x}", (uint64_t)nics_mask);
-    nic2port_.resize(device_->getHal()->getMaxNics(), -1);
-    port2nic_.resize(device_->getHal()->getMaxNics() + 1, -1);
+    nic2port_.resize(MAX_NICS_GEN2ARCH, -1);
+    port2nic_.resize(MAX_NICS_GEN2ARCH + 1, -1);
 
     uint32_t ib_port = 1;
-    FOR_I(device_->getHal()->getMaxNics())
+    FOR_I(MAX_NICS_GEN2ARCH)
     {
         if (!nics_mask[i]) continue;
 
@@ -139,8 +141,12 @@ void hcl_ibverbs_t::close()
     }
 
     _free_objs(qps_, [&](auto& _pair) { ibv_.ibv_destroy_qp(_pair.second); });
-    _free_objs(cqs_, [&](auto& _cq) { if (_cq) ibv_.ibv_destroy_cq(_cq); });
-    _free_objs(fifos_, [&](auto& _fifo) { if (_fifo) ibv_.hbldv_destroy_usr_fifo(_fifo); });
+    _free_objs(cqs_, [&](auto& _cq) {
+        if (_cq) ibv_.ibv_destroy_cq(_cq);
+    });
+    _free_objs(fifos_, [&](auto& _fifo) {
+        if (_fifo) ibv_.hbldv_destroy_usr_fifo(_fifo);
+    });
 
     sysfs_ports_.clear();
 
@@ -165,9 +171,10 @@ void hcl_ibverbs_t::setup_nic(uint32_t nic, uint32_t num_wqes, uint32_t bp, eNic
 
     LOG_IBV("nic: {}, num_wqes: {}, bp: 0x{:x}, nt: {}", nic, num_wqes, bp, nt);
 
-    static std::map<eNicType, hbldv_wq_array_type> nicType2wqType = {{ntGeneric, HBLDV_WQ_ARRAY_TYPE_GENERIC},
-                                                                     {ntCollective, HBLDV_WQ_ARRAY_TYPE_COLLECTIVE},
-                                                                     {ntScaleOut, HBLDV_WQ_ARRAY_TYPE_SCALE_OUT_COLLECTIVE}};
+    static std::map<eNicType, hbldv_wq_array_type> nicType2wqType = {
+        {ntGeneric, HBLDV_WQ_ARRAY_TYPE_GENERIC},
+        {ntCollective, HBLDV_WQ_ARRAY_TYPE_COLLECTIVE},
+        {ntScaleOut, HBLDV_WQ_ARRAY_TYPE_SCALE_OUT_COLLECTIVE}};
 
     hbldv_port_ex_attr port_attr = {};
 
@@ -200,6 +207,31 @@ void hcl_ibverbs_t::create_cq(uint32_t nic, int num_cqes)
     VERIFY(ibvcq, "hbldv_create_cq(num_cqes: {}) failed. nic: {}", nic, num_cqes);
 
     cqs_[nic] = ibvcq;
+}
+
+void hcl_ibverbs_t::get_port_mask(portMaskConfig& portsMasks)
+{
+    hbldv_device_attr device_attr {};
+
+    int rc = ibv_.hbldv_query_device(ibctx_, &device_attr);
+    VERIFY(rc == 0, "hbldv_query_device() failed. rc: {}", rc);
+
+    portsMasks.hwPortsMask = device_attr.hw_ports_mask;
+
+    const nics_mask_t hw_nics_mask      = device_attr.hw_ports_mask;
+    const nics_mask_t ib_ext_ports_mask = device_attr.ext_ports_mask;
+
+    uint32_t ib_port          = 1;
+    portsMasks.hwExtPortsMask = 0;
+    for (auto nic : hw_nics_mask)
+    {
+        if (ib_ext_ports_mask[ib_port])
+        {
+            portsMasks.hwExtPortsMask |= (1 << nic);
+        }
+
+        ib_port++;
+    }
 }
 
 uint32_t hcl_ibverbs_t::create_qp(bool sender, uint32_t nic, uint32_t qpHint)
@@ -245,6 +277,11 @@ uint32_t hcl_ibverbs_t::create_qp(bool sender, uint32_t nic, uint32_t qpHint)
     qp_attr.qp_access_flags = IBV_ACCESS_REMOTE_WRITE;
 
     hl_qp_attr.wq_type = sender ? HBLDV_WQ_SEND_RDV : HBLDV_WQ_RECV_RDV;
+
+    if (GCFG_HCL_USE_NIC_COMPRESSION.value())
+    {
+        hl_qp_attr.caps |= HBLDV_QP_CAP_COMPRESSION;
+    }
 
     if (qpHint != 0)
     {
@@ -387,9 +424,9 @@ void hcl_ibverbs_t::set_qp_ctx(uint32_t qpn,
             src_mac,
             dst_mac);
 
-    ibv_qp_attr       qp_attr    = {};
-    hbldv_qp_attr     hl_qp_attr = {};
-    ibv_qp*           ibv_qp     = qps_(nic, qpn);
+    ibv_qp_attr   qp_attr    = {};
+    hbldv_qp_attr hl_qp_attr = {};
+    ibv_qp*       ibv_qp     = qps_(nic, qpn);
 
     /* Initialize the generic IBV QP params */
     qp_attr.qp_state           = IBV_QPS_RTR;  // Responder
@@ -428,10 +465,14 @@ void hcl_ibverbs_t::set_qp_ctx(uint32_t qpn,
         IBV_QP_STATE | IBV_QP_TIMEOUT | IBV_QP_RETRY_CNT | IBV_QP_RNR_RETRY | IBV_QP_SQ_PSN | IBV_QP_MAX_QP_RD_ATOMIC;
 
     /* Append the requester relevant params into the hl-attr */
-    hl_qp_attr.dest_wq_size     = device_->getSenderWqeTableSize();
-    hl_qp_attr.priority         = GCFG_REQUESTER_PRIORITY.value();
-    hl_qp_attr.congestion_wnd   = GCFG_CONGESTION_WINDOW.value();
-    hl_qp_attr.caps            |= GCFG_CONGESTION_CONTROL_ENABLE.value() ? HBLDV_QP_CAP_CONG_CTRL : 0;
+    hl_qp_attr.dest_wq_size   = device_->getSenderWqeTableSize();
+    hl_qp_attr.priority       = GCFG_REQUESTER_PRIORITY.value();
+    hl_qp_attr.congestion_wnd = GCFG_CONGESTION_WINDOW.value();
+    hl_qp_attr.caps |= GCFG_CONGESTION_CONTROL_ENABLE.value() ? HBLDV_QP_CAP_CONG_CTRL : 0;
+    if (GCFG_HCL_USE_NIC_COMPRESSION.value())
+    {
+        hl_qp_attr.caps |= HBLDV_QP_CAP_COMPRESSION;
+    }
     hl_qp_attr.coll_lag_idx     = lagIdx;
     hl_qp_attr.coll_last_in_lag = lastInLag;
 
@@ -449,7 +490,7 @@ void hcl_ibverbs_t::destroy_qp(uint32_t nic, uint32_t qpn)
 void hcl_ibverbs_t::create_fifos(scal_handle_t scal_handle)
 {
     unsigned nicUserDbFifoParamsCount = 0;
-    int rc = scal_nics_db_fifos_init_and_allocV2(scal_handle, nullptr, nullptr, &nicUserDbFifoParamsCount);
+    int      rc = scal_nics_db_fifos_init_and_allocV2(scal_handle, nullptr, nullptr, &nicUserDbFifoParamsCount);
     VERIFY(rc == 0, "scal_nics_db_fifos_init_and_allocV2(h, 0 , 0, &cnt) failed: {}", rc);
 
     fifos_.resize(nicUserDbFifoParamsCount);
@@ -459,7 +500,8 @@ void hcl_ibverbs_t::create_fifos(scal_handle_t scal_handle)
     initParams.ibverbsLibHandle = ibv_.lib_handle();
     initParams.nicsMask         = device_->getNicsStatusMask();
 
-    scal_nics_db_fifos_init_and_allocV2(scal_handle, &initParams, fifos_.data(), &nicUserDbFifoParamsCount);
+    LOG_IBV("initParams.nicsMask: {:x}", initParams.nicsMask);
+    rc = scal_nics_db_fifos_init_and_allocV2(scal_handle, &initParams, fifos_.data(), &nicUserDbFifoParamsCount);
     VERIFY(rc == 0,
            "scal_nics_db_fifos_init_and_allocV2 failed: {}, nicMask: {:x}, fifoCnt: {}",
            rc,
@@ -540,7 +582,7 @@ void hcl_ibverbs_t::walk_fs(const std::string& path, uint32_t port)
         else
         {
             std::string full_name = path + "/" + entry->d_name;
-            auto index = atoi(entry->d_name);
+            auto        index     = atoi(entry->d_name);
 
             if (full_name.find("/gids/") != std::string::npos)
             {

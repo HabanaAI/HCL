@@ -1,12 +1,13 @@
 #include "hcl_dynamic_comms_manager.h"
 
-#include <algorithm>                   // for max
-#include "hcl_api_types.h"             // for HCL_Comm, HCL_COMM_WORLD
-#include "hcl_dynamic_communicator.h"  // for HclDynamicCommunicator
-#include "hcl_types.h"                 // for DEFAULT_COMMUNICATORS_SIZE
-#include "hcl_utils.h"                 // for VERIFY
-#include "hcl_log_manager.h"           // for LOG_*
-#include "interfaces/hcl_hal.h"        // for HalPtr
+#include <algorithm>                               // for max
+#include "hcl_api_types.h"                         // for HCL_Comm, HCL_COMM_WORLD
+#include "hcl_dynamic_communicator.h"              // for HclDynamicCommunicator
+#include "hcl_types.h"                             // for DEFAULT_COMMUNICATORS_SIZE
+#include "hcl_utils.h"                             // for VERIFY
+#include "hcl_log_manager.h"                       // for LOG_*
+#include "interfaces/hcl_hal.h"                    // for HalPtr
+#include "platform/gen2_arch_common/server_def.h"  // for Gen2ArchServerDef
 
 HclDynamicCommsManager::HclDynamicCommsManager()
 {
@@ -26,7 +27,7 @@ HclDynamicCommsManager::~HclDynamicCommsManager()
     }
 }
 
-HCL_Comm HclDynamicCommsManager::createNextComm(hcl::HalPtr hal)
+HCL_Comm HclDynamicCommsManager::createNextComm(hcl::HalPtr hal, Gen2ArchServerDef& serverDef)
 {
     HCL_Comm comm = m_nextCommId++;
     if (unlikely(comm >= m_communicators.size()))
@@ -39,7 +40,7 @@ HCL_Comm HclDynamicCommsManager::createNextComm(hcl::HalPtr hal)
 
     // By default we should hope that the above sequence can be avoided - if the array is resized by default to a
     // big enough size, this will result in a simple assignment.
-    m_communicators[comm] = new HclDynamicCommunicator(comm, hal);
+    m_communicators[comm] = new HclDynamicCommunicator(comm, serverDef, hal);
     m_size++;
     return comm;
 }
@@ -63,19 +64,6 @@ void HclDynamicCommsManager::destroyComm(HCL_Comm comm)
         m_communicators[comm] = nullptr;
         m_size--;
     }
-}
-
-bool HclDynamicCommsManager::createHclCommWorld(hcl::HalPtr hal)
-{
-    if (m_size != 0 || m_nextCommId != 1)
-    {
-        LOG_ERR(HCL, "HCL_COMM_WORLD must be the first and only dynamic communicator");
-        return false;
-    }
-
-    m_communicators[HCL_COMM_WORLD] = new HclDynamicCommunicator(HCL_COMM_WORLD, hal);
-    m_size++;
-    return true;
 }
 
 int HclDynamicCommsManager::getNumOfActiveComms() const

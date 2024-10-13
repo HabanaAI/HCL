@@ -375,43 +375,163 @@ struct synConvolution3DParamsV2 : synConvolution3DParams
     }
 };
 
+enum class synRotateRelMode : uint8_t
+{
+    ABSOLUTE = 0,
+    RELATIVE = 1
+};
+
+enum class synRotateMeshFormat : uint8_t
+{
+    RESERVED0 = 0,
+    FLEX      = 1,
+    RESERVED2 = 2,
+    RESERVED3 = 3,
+    FP32      = 4
+};
+
+enum class synRotateMeshOrder : uint8_t
+{
+    PRE_DISTORTION  = 0,
+    POST_DISTORTION = 1
+};
+
+enum class synRotateMeshDataType : uint8_t
+{
+    INT8  = 0,
+    INT16 = 1,
+    FP16  = 2,
+    BF16  = 3,
+    FP32  = 4
+};
+
+enum class synRotateMeshMode : uint8_t
+{
+    ROTATION   = 0,
+    AFFINE     = 1,
+    PROJECTION = 2,
+    DISTORTION = 3
+};
+
+enum class synRotateMode : uint8_t
+{
+    ROTATION      = 0,
+    AFFINE        = 1,
+    PROJECTION    = 2,
+    MESH          = 3,
+    RESAMPLE_FWD  = 4,
+    RESAMPLE_BWD1 = 5,
+    RESAMPLE_BWD2 = 6,
+    RESCALE       = 7,
+    BILINEAR_GRAD = 8
+};
+
+enum class synRotateInterpolationMode : uint8_t
+{
+    ROT_BILINEAR         = 0,
+    ROT_NEAREST_NEIGHBOR = 1,
+    ROT_LANCZOS2         = 2,
+    ROT_LANCZOS3         = 3,
+    ROT_BICUBIC          = 4
+};
+
+enum class synRotateCoordinateMode : uint8_t
+{
+    FIXED_POINT    = 0,
+    FLOATING_POINT = 1
+};
+
 struct synRotateParams
 {
     synRotateParams() = default;
 
-    synRotateParams(float angle,
-                    uint32_t input_center_X, uint32_t input_center_Y,
-                    uint32_t output_center_X, uint32_t output_center_Y,
-                    uint8_t background) :
-                    m_angle(angle),
-                    m_inputCenterX(input_center_X), m_inputCenterY(input_center_Y),
-                    m_outputCenterX(output_center_X), m_outputCenterY(output_center_Y),
-                    m_background(background),
-                    m_isDumpDescriptors(false), m_descFilePrefix("") {}
+    // rotation
+    synRotateParams(float    angle,
+                    uint32_t input_center_X,
+                    uint32_t input_center_Y,
+                    uint32_t output_center_X,
+                    uint32_t output_center_Y,
+                    uint8_t  background)
+    : m_angle(angle),
+      m_inputCenterX(input_center_X),
+      m_inputCenterY(input_center_Y),
+      m_outputCenterX(output_center_X),
+      m_outputCenterY(output_center_Y),
+      m_background(background)
+    {
+    }
 
-    synRotateParams(float angle,
-                    uint32_t input_center_X, uint32_t input_center_Y,
-                    uint32_t output_center_X, uint32_t output_center_Y,
-                    uint8_t background,
-                    bool isDumpDescriptors, std::string descFilePrefix) :
-                    m_angle(angle),
-                    m_inputCenterX(input_center_X), m_inputCenterY(input_center_Y),
-                    m_outputCenterX(output_center_X), m_outputCenterY(output_center_Y),
-                    m_background(background),
-                    m_isDumpDescriptors(isDumpDescriptors),
-                    m_descFilePrefix(descFilePrefix) {}
+    // rotation with output dims
+    synRotateParams(float    angle,
+                    uint32_t input_center_X,
+                    uint32_t input_center_Y,
+                    uint32_t output_center_X,
+                    uint32_t output_center_Y,
+                    uint8_t  background,
+                    uint32_t out_w,
+                    uint32_t out_h)
+    : m_angle(angle),
+      m_inputCenterX(input_center_X),
+      m_inputCenterY(input_center_Y),
+      m_outputCenterX(output_center_X),
+      m_outputCenterY(output_center_Y),
+      m_background(background),
+      m_out_width(out_w),
+      m_out_height(out_h)
+    {
+    }
 
-    float    m_angle;
-    uint32_t m_inputCenterX;
-    uint32_t m_inputCenterY;
-    uint32_t m_outputCenterX;
-    uint32_t m_outputCenterY;
-    uint8_t  m_background;
+    // debug info
+    synRotateParams(float       angle,
+                    uint32_t    input_center_X,
+                    uint32_t    input_center_Y,
+                    uint32_t    output_center_X,
+                    uint32_t    output_center_Y,
+                    uint8_t     background,
+                    bool        isDumpDescriptors,
+                    std::string descFilePrefix)
+    : m_angle(angle),
+      m_inputCenterX(input_center_X),
+      m_inputCenterY(input_center_Y),
+      m_outputCenterX(output_center_X),
+      m_outputCenterY(output_center_Y),
+      m_background(background),
+      m_isDumpDescriptors(isDumpDescriptors),
+      m_descFilePrefix(descFilePrefix)
+    {
+    }
+
+    float    m_angle         = 0;
+    uint32_t m_inputCenterX  = 0;
+    uint32_t m_inputCenterY  = 0;
+    uint32_t m_outputCenterX = 0;
+    uint32_t m_outputCenterY = 0;
+    uint8_t  m_background    = 0;
+
+    synRotateMode              m_rotation_mode      = synRotateMode::ROTATION;
+    synRotateInterpolationMode m_interpolation_mode = synRotateInterpolationMode::ROT_BILINEAR;
+
+    uint32_t m_out_width             = 0;
+    uint32_t m_out_height            = 0;
+    bool     m_preserve_aspect_ratio = false;
+    bool     m_antialias             = false;
+
+    // mesh highlevel params
+    synRotateMeshFormat   m_mesh_format       = synRotateMeshFormat::FLEX;
+    synRotateRelMode      m_mesh_rel_mode     = synRotateRelMode::ABSOLUTE;
+    synRotateMeshMode     m_mesh_mode         = synRotateMeshMode::ROTATION;
+    synRotateMeshOrder    m_mesh_order        = synRotateMeshOrder::PRE_DISTORTION;
+    float                 m_mesh_distortion_x = 0;
+    float                 m_mesh_distortion_y = 0;
+    float                 m_mesh_distortion_r = 0;
+    float                 m_mesh_Sh           = 0;
+    float                 m_mesh_Sv           = 0;
+    synRotateMeshDataType m_mesh_datatype     = synRotateMeshDataType::INT8;
 
     // For debug
-    bool     m_isDumpDescriptors;
-    uint16_t m_structPad = 0;
-    std::string m_descFilePrefix;
+    bool        m_isDumpDescriptors = false;
+    uint16_t    m_structPad         = 0;
+    std::string m_descFilePrefix    = "";
 };
 
 struct synWaitParams

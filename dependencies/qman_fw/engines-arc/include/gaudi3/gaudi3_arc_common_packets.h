@@ -248,16 +248,17 @@ enum scheduler_type_t {
 };
 
 /**
- * \enum    scheduler_type_t
+ * \enum    fence_id_t
  * \brief   Fence IDs used by Engines FW
  * \details Engine Firmware uses following two fences
  *	    for sync scheme and back to back execution
  */
 enum {
 	SYNC_SCHEME_FENCE_ID = 0,
+	EXT_SIGNAL_FENCE_ID = SYNC_SCHEME_FENCE_ID,
 	B2B_FENCE_ID = 1,
 	QMAN_SYNC_FENCE_ID = 1,
-	EXT_SIGNAL_FENCE_ID = 2,
+	GC_USED_FENCE_ID = 2,
 	MCID_ROLLOVER_FENCE_ID = 3
 };
 
@@ -273,6 +274,11 @@ enum mcid_wr64_base_ids_t {
 	DISCARD_MCID_WR64_BASE_ID_0 = 30,
 	DISCARD_MCID_WR64_BASE_ID_1 = 31
 };
+
+/**
+ * Max number of MMEs
+ */
+#define GAUDI3_MAX_MME_COUNT		8
 
 /**
  * Total number of engine groups supported by firmware

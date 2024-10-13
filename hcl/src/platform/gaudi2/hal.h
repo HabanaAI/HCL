@@ -8,8 +8,12 @@ namespace hcl
 class Gaudi2Hal : public Gen2ArchHal
 {
 public:
-    Gaudi2Hal() = default;
-    uint64_t getFlushPCIeReg() const override;
+    Gaudi2Hal()                            = default;
+    virtual ~Gaudi2Hal()                   = default;
+    Gaudi2Hal(const Gaudi2Hal&)            = delete;
+    Gaudi2Hal& operator=(const Gaudi2Hal&) = delete;
+
+    uint64_t         getFlushPCIeReg() const override;
     virtual uint32_t getMaxQpPerInternalNic() const override;
     virtual uint32_t getMaxQpPerExternalNic() const override;
     virtual uint32_t getCollectiveContextsCount() const;

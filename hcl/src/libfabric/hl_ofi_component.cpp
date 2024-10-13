@@ -36,7 +36,7 @@ ofi_component_t::ofi_component_t(const int               ofiDeviceID,
   m_fabric(create_fabric(m_prov)),
   m_domain(create_domain(m_prov, m_fabric.get())),
   m_cq(create_cq(m_domain.get(), cpuid, cq_format)),
-  m_flush_provider(IF_GDR(get_flush_provider())),
+  m_flush_provider(IF_GDR(m_prov)),
   m_flush_fabric(IF_GDR(create_fabric(*m_flush_provider))),
   m_flush_domain(IF_GDR(create_domain(*m_flush_provider, m_flush_fabric.value().get()))),
   m_flush_cq(IF_GDR(create_cq(m_flush_domain.value().get(), m_cpuid, FI_CQ_FORMAT_TAGGED))),
@@ -56,25 +56,6 @@ ofi_component_t::~ofi_component_t()
     {
         MRMapping::get_instance().closeFD();
     }
-
-    if (m_flush_provider.has_value())
-    {
-        ofi_plugin->w_fi_freeinfo(m_flush_provider.value());
-    }
-}
-
-fi_info* ofi_component_t::get_flush_provider()
-{
-    struct fi_info* const hints = ofi_plugin->w_fi_allocinfo();
-    VERIFY(nullptr != hints);
-
-    get_hints(hints, true);
-
-    struct fi_info* fi_getinfo_result = nullptr;
-    VERIFY(0 == ofi_plugin->w_fi_getinfo(ofi_version, nullptr, nullptr, 0ULL, hints, &fi_getinfo_result));
-    ofi_plugin->w_fi_freeinfo(hints);
-    LOG_DEBUG(HCL_OFI, "Found provider for fabric flush: {}", ofi_plugin->w_fi_tostr(fi_getinfo_result, FI_TYPE_INFO));
-    return fi_getinfo_result;
 }
 
 FiObject<struct fid_fabric*> ofi_component_t::create_fabric(const struct fi_info* const provider)
@@ -125,6 +106,12 @@ FiObject<struct fid_ep*> ofi_component_t::create_ep(struct fi_info* const    pro
     VERIFY(0 == ofi_plugin->w_fi_ep_bind(ep, &cq->fid, FI_SEND | FI_RECV));
     VERIFY(0 == ofi_plugin->w_fi_ep_bind(ep, &av->fid, 0));
     VERIFY(0 == ofi_plugin->w_fi_enable(ep));
+    LOG_DEBUG(HCL_OFI,
+              "Created endpoint {} for domain {} bound to cq {} and av {}",
+              fmt::ptr(ep),
+              provider->domain_attr->name,
+              fmt::ptr(cq),
+              fmt::ptr(av));
     return ep;
 }
 
@@ -269,37 +256,49 @@ int ofi_component_t::ofi_flush_progress()
 int ofi_component_t::register_mr(void*           data,
                                  size_t          size,
                                  fi_hmem_iface   fi_hmem_iface,
-                                 int             device_fd,
+                                 int             dmabuf_fd,
                                  struct fid_mr** mHandle,
                                  bool            isFlush)
 {
-    int               ret     = hcclUninitialized;
-    struct fi_mr_attr mr_attr = {0};
-    struct iovec      iov     = {0};
+    int                 ret     = hcclUninitialized;
+    uint64_t            flags   = 0;
+    struct fi_mr_attr   mr_attr = {0};
+    struct fi_mr_dmabuf dmabuf  = {0};
+    struct iovec        iov     = {0};
 
-    iov.iov_base = data;
-    iov.iov_len  = size;
+    /* for device MR registration. */
+    if (dmabuf_fd > 0)
+    {
+        dmabuf.fd        = dmabuf_fd;
+        dmabuf.base_addr = data;
+        dmabuf.len       = size;
 
-    mr_attr.mr_iov    = &iov;
+        mr_attr.dmabuf = &dmabuf;
+        flags |= FI_MR_DMABUF;
+    }
+    /* for host MR registration. */
+    else
+    {
+        iov.iov_base   = data;
+        iov.iov_len    = size;
+        mr_attr.mr_iov = &iov;
+    }
+
     mr_attr.iov_count = 1;
     mr_attr.access    = FI_SEND | FI_RECV;
     mr_attr.iface     = fi_hmem_iface;
-    if (device_fd > 0)
-    {
-        mr_attr.device.synapseai = device_fd;
-    }
 
-    LOG_HCL_DEBUG(HCL_OFI, "MR registration attempt for {}, size {}", iov.iov_base, (void*)iov.iov_len);
+    LOG_HCL_DEBUG(HCL_OFI, "MR registration attempt for {}, size {}", data, size);
     const auto domain = isFlush ? m_flush_domain.value().get() : m_domain.get();
-    OFI_EXIT_ON_ERROR(ofi_plugin->w_fi_mr_regattr(domain, &mr_attr, 0, mHandle));
+    OFI_EXIT_ON_ERROR(ofi_plugin->w_fi_mr_regattr(domain, &mr_attr, flags, mHandle));
 
     LOG_HCL_INFO(HCL_OFI,
                  "MR registration{} complete. mHandle={}, key={} address={} size={}MB",
                  isFlush ? " for flush" : "",
                  *mHandle,
                  (*mHandle)->key,
-                 iov.iov_base,
-                 B2MB(iov.iov_len));
+                 data,
+                 B2MB(size));
 
     ret = hcclSuccess;
 error:

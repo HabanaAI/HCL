@@ -50,7 +50,7 @@ typedef enum /* aligned to ncclRedOp_t */
 typedef enum
 {
     hcclUninitialized = -1,
-    hcclSuccess = 0,
+    hcclSuccess       = 0,
     hcclNoDeviceFound,
     hcclUnsupported,
     hcclOutOfMemory,

@@ -43,6 +43,7 @@
 #include <errno.h>
 #include <string.h>
 #include <linux/types.h>
+#include <linux/if_ether.h>
 #include <sys/types.h>
 #include <infiniband/verbs_api.h>
 
@@ -418,6 +419,7 @@ enum ibv_port_cap_flags2 {
 	IBV_PORT_LINK_WIDTH_2X_SUP		= 1 << 4,
 	IBV_PORT_LINK_SPEED_HDR_SUP		= 1 << 5,
 	IBV_PORT_LINK_SPEED_NDR_SUP		= 1 << 10,
+	IBV_PORT_LINK_SPEED_XDR_SUP		= 1 << 12,
 };
 
 struct ibv_port_attr {
@@ -443,6 +445,7 @@ struct ibv_port_attr {
 	uint8_t			link_layer;
 	uint8_t			flags;
 	uint16_t		port_cap_flags2;
+	uint32_t		active_speed_ex;
 };
 
 enum ibv_event_type {
@@ -1114,6 +1117,8 @@ enum ibv_wr_opcode {
 	IBV_WR_ATOMIC_WRITE = 15,
 };
 
+const char *hlibv_wr_opcode_str(enum ibv_wr_opcode opcode);
+
 enum ibv_send_flags {
 	IBV_SEND_FENCE		= 1 << 0,
 	IBV_SEND_SIGNALED	= 1 << 1,
@@ -1732,9 +1737,10 @@ enum ibv_flow_spec_type {
 	IBV_FLOW_SPEC_ACTION_COUNT	= 0x1003,
 };
 
+#define ETHERNET_LL_SIZE ETH_ALEN
 struct ibv_flow_eth_filter {
-	uint8_t		dst_mac[6];
-	uint8_t		src_mac[6];
+	uint8_t		dst_mac[ETHERNET_LL_SIZE];
+	uint8_t		src_mac[ETHERNET_LL_SIZE];
 	uint16_t	ether_type;
 	/*
 	 * same layout as 802.1q: prio 3, cfi 1, vlan id 12
@@ -2616,7 +2622,7 @@ __hlibv_reg_mr_iova(struct ibv_pd *pd, void *addr, size_t length, uint64_t iova,
 				  ((access) & IBV_ACCESS_OPTIONAL_RANGE) == 0))
 
 /**
- * hlibv_reg_dmabuf_mr - Register a dambuf-based memory region
+ * hlibv_reg_dmabuf_mr - Register a dmabuf-based memory region
  */
 struct ibv_mr *hlibv_reg_dmabuf_mr(struct ibv_pd *pd, uint64_t offset, size_t length,
 				 uint64_t iova, int fd, int access);
@@ -3480,7 +3486,6 @@ const char *hlibv_port_state_str(enum ibv_port_state port_state);
  */
 const char *hlibv_event_type_str(enum ibv_event_type event);
 
-#define ETHERNET_LL_SIZE 6
 int hlibv_resolve_eth_l2_from_gid(struct ibv_context *context,
 				struct ibv_ah_attr *attr,
 				uint8_t eth_mac[ETHERNET_LL_SIZE],

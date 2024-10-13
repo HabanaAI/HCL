@@ -20,30 +20,30 @@ static void init_error_tables()
     err2str[IBV_EVENT_GID_CHANGE]          = "GID table change",
 
     /* Rx packet errors*/
-    qp_syndroms[0x1]  = "[RX] pkt err, pkt bad format";
-    qp_syndroms[0x2]  = "[RX] pkt err, pkt tunnel invalid";
-    qp_syndroms[0x3]  = "[RX] pkt err, BTH opcode invalid";
-    qp_syndroms[0x4]  = "[RX] pkt err, syndrome invalid";
-    qp_syndroms[0x5]  = "[RX] pkt err, Reliable QP max size invalid";
-    qp_syndroms[0x6]  = "[RX] pkt err, Reliable QP min size invalid";
-    qp_syndroms[0x7]  = "[RX] pkt err, Raw min size invalid";
-    qp_syndroms[0x8]  = "[RX] pkt err, Raw max size invalid";
-    qp_syndroms[0x9]  = "[RX] pkt err, QP invalid";
-    qp_syndroms[0xa]  = "[RX] pkt err, Transport Service mismatch";
-    qp_syndroms[0xb]  = "[RX] pkt err, QPC Requester QP state invalid";
-    qp_syndroms[0xc]  = "[RX] pkt err, QPC Responder QP state invalid";
-    qp_syndroms[0xd]  = "[RX] pkt err, QPC Responder resync invalid";
-    qp_syndroms[0xe]  = "[RX] pkt err, QPC Requester PSN invalid";
-    qp_syndroms[0xf]  = "[RX] pkt err, QPC Requester PSN unset";
-    qp_syndroms[0x10] = "[RX] pkt err, QPC Responder RKEY invalid";
-    qp_syndroms[0x11] = "[RX] pkt err, WQE index mismatch";
-    qp_syndroms[0x12] = "[RX] pkt err, WQE write opcode invalid";
-    qp_syndroms[0x13] = "[RX] pkt err, WQE Rendezvous opcode invalid";
-    qp_syndroms[0x14] = "[RX] pkt err, WQE Read  opcode invalid";
-    qp_syndroms[0x15] = "[RX] pkt err, WQE Write Zero";
-    qp_syndroms[0x16] = "[RX] pkt err, WQE multi zero";
-    qp_syndroms[0x17] = "[RX] pkt err, WQE Write send big";
-    qp_syndroms[0x18] = "[RX] pkt err, WQE multi big";
+        qp_syndroms[0x1] = "[RX] pkt err, pkt bad format";
+    qp_syndroms[0x2]     = "[RX] pkt err, pkt tunnel invalid";
+    qp_syndroms[0x3]     = "[RX] pkt err, BTH opcode invalid";
+    qp_syndroms[0x4]     = "[RX] pkt err, syndrome invalid";
+    qp_syndroms[0x5]     = "[RX] pkt err, Reliable QP max size invalid";
+    qp_syndroms[0x6]     = "[RX] pkt err, Reliable QP min size invalid";
+    qp_syndroms[0x7]     = "[RX] pkt err, Raw min size invalid";
+    qp_syndroms[0x8]     = "[RX] pkt err, Raw max size invalid";
+    qp_syndroms[0x9]     = "[RX] pkt err, QP invalid";
+    qp_syndroms[0xa]     = "[RX] pkt err, Transport Service mismatch";
+    qp_syndroms[0xb]     = "[RX] pkt err, QPC Requester QP state invalid";
+    qp_syndroms[0xc]     = "[RX] pkt err, QPC Responder QP state invalid";
+    qp_syndroms[0xd]     = "[RX] pkt err, QPC Responder resync invalid";
+    qp_syndroms[0xe]     = "[RX] pkt err, QPC Requester PSN invalid";
+    qp_syndroms[0xf]     = "[RX] pkt err, QPC Requester PSN unset";
+    qp_syndroms[0x10]    = "[RX] pkt err, QPC Responder RKEY invalid";
+    qp_syndroms[0x11]    = "[RX] pkt err, WQE index mismatch";
+    qp_syndroms[0x12]    = "[RX] pkt err, WQE write opcode invalid";
+    qp_syndroms[0x13]    = "[RX] pkt err, WQE Rendezvous opcode invalid";
+    qp_syndroms[0x14]    = "[RX] pkt err, WQE Read  opcode invalid";
+    qp_syndroms[0x15]    = "[RX] pkt err, WQE Write Zero";
+    qp_syndroms[0x16]    = "[RX] pkt err, WQE multi zero";
+    qp_syndroms[0x17]    = "[RX] pkt err, WQE Write send big";
+    qp_syndroms[0x18]    = "[RX] pkt err, WQE multi big";
 
     /* QPC errors */
     qp_syndroms[0x40] = "[qpc] [TMR] max-retry-cnt exceeded";
@@ -71,13 +71,19 @@ static void init_error_tables()
     qp_syndroms[0x86] = "[TX] pkt error, WQE.opcode is send but WQE.size is 0";
     qp_syndroms[0x87] = "[TX] pkt error, WQE.opcode is rendezvous-write|rendezvous-read but WQE.size is 0";
     qp_syndroms[0x88] = "[TX] pkt error, WQE.opcode is write but size > configured max-write-send-size";
-    qp_syndroms[0x89] = "[TX] pkt error, WQE.opcode is multi-stride|local-stride|multi-dual but size > configured max-stride-size";
-    qp_syndroms[0x8a] = "[TX] pkt error, WQE.opcode is rendezvous-write|rendezvous-read but QPC.remote_wq_log_size <= configured min-remote-log-size";
-    qp_syndroms[0x8b] = "[TX] pkt error, WQE.opcode is rendezvous-write but WQE.size != configured rdv-wqe-size (per granularity)";
-    qp_syndroms[0x8c] = "[TX] pkt error, WQE.opcode is rendezvous-read but WQE.size != configured rdv-wqe-size (per granularity)";
-    qp_syndroms[0x8d] = "[TX] pkt error, WQE.inline is set but WQE.size != configured inline-wqe-size (per granularity)";
+    qp_syndroms[0x89] =
+        "[TX] pkt error, WQE.opcode is multi-stride|local-stride|multi-dual but size > configured max-stride-size";
+    qp_syndroms[0x8a] = "[TX] pkt error, WQE.opcode is rendezvous-write|rendezvous-read but QPC.remote_wq_log_size <= "
+                        "configured min-remote-log-size";
+    qp_syndroms[0x8b] =
+        "[TX] pkt error, WQE.opcode is rendezvous-write but WQE.size != configured rdv-wqe-size (per granularity)";
+    qp_syndroms[0x8c] =
+        "[TX] pkt error, WQE.opcode is rendezvous-read but WQE.size != configured rdv-wqe-size (per granularity)";
+    qp_syndroms[0x8d] =
+        "[TX] pkt error, WQE.inline is set but WQE.size != configured inline-wqe-size (per granularity)";
     qp_syndroms[0x8e] = "[TX] pkt error, QPC.gaudi1 is set but WQE.inline is set";
-    qp_syndroms[0x8f] = "[TX] pkt error, WQE.opcode is multi-stride|local-stride|multi-dual but QPC.swq_granularity is 0";
+    qp_syndroms[0x8f] =
+        "[TX] pkt error, WQE.opcode is multi-stride|local-stride|multi-dual but QPC.swq_granularity is 0";
     qp_syndroms[0x90] = "[TX] pkt error, WQE.opcode != NOP but WQE.reserved0 != 0";
     qp_syndroms[0x91] = "[TX] pkt error, WQE.opcode != NOP but WQE.wqe_index != execution-index [7.0]";
     qp_syndroms[0x92] = "[TX] pkt error, WQE.opcode is multi-stride|local-stride|multi-dual but WQE.size < stride-size";
@@ -97,7 +103,7 @@ static void init_error_tables()
     qp_syndroms[0xAB] = "WQE bad opcode";
     qp_syndroms[0xAC] = "WQE bad size";
     qp_syndroms[0xAD] = "WQE SE not RAW";
-    qp_syndroms[0xAE] = "Gaudi1 tunnal";
+    qp_syndroms[0xAE] = "Gaudi1 tunnel";
     qp_syndroms[0xAF] = "Tunnel 0-size";
     qp_syndroms[0xB0] = "Tunnel max size";
 };
@@ -106,7 +112,7 @@ static void init_error_tables()
 
 const char* parse_qp_syndrome(uint32_t syndrome)
 {
-    int syndrome_type;
+    int         syndrome_type;
     const char* str = nullptr;
 
     /* syndrome comprised from 8 bits
@@ -122,19 +128,20 @@ const char* parse_qp_syndrome(uint32_t syndrome)
     {
         syndrome_type = SYNDROME_TYPE(syndrome);
 
-        switch (syndrome_type) {
-        case 0:
-            str = "RX packet syndrome unknown";
-            break;
-        case 1:
-            str = "QPC syndrome unknown";
-            break;
-        case 2:
-            str = "TX packet syndrome unknown";
-            break;
-        default:
-            str = "syndrome unknown";
-            break;
+        switch (syndrome_type)
+        {
+            case 0:
+                str = "RX packet syndrome unknown";
+                break;
+            case 1:
+                str = "QPC syndrome unknown";
+                break;
+            case 2:
+                str = "TX packet syndrome unknown";
+                break;
+            default:
+                str = "syndrome unknown";
+                break;
         }
     }
     else
@@ -157,8 +164,8 @@ void hcl_ibverbs_t::eq_poll(bool& stop, uint32_t _usleep)
     ibv_async_event ibev = {};
     pollfd          pfd  = {};
 
-    auto flgs = fcntl(ibctx_->async_fd, F_GETFL);
-    int  rc   = fcntl(ibctx_->async_fd, F_SETFL, flgs | O_NONBLOCK);
+    auto flags = fcntl(ibctx_->async_fd, F_GETFL);
+    int  rc    = fcntl(ibctx_->async_fd, F_SETFL, flags | O_NONBLOCK);
     VERIFY(rc == 0, "fcntl failed: {}", rc);
 
     pfd.fd      = ibctx_->async_fd;

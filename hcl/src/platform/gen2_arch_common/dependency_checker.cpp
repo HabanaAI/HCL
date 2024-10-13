@@ -143,14 +143,14 @@ uint64_t DependencyChecker::checkDependency(DataOperationFlow         operationF
     if (itFirst != db.m_map.end())
     {
         // Found the first range that intersect, now lets find the last range.
-        uint64_t addressEnd = address + size;
-        itRange             = db.m_map.lower_bound(addressEnd);
+        uint64_t firstAddressEnd = address + size;
+        itRange                  = db.m_map.lower_bound(firstAddressEnd);
         if (itRange != db.m_map.end())
         {
             if (itRange != db.m_map.begin())
             {
                 itRange--;
-                if (doRangesIntersect(address, addressEnd, itRange->first, itRange->second.m_endAddress))
+                if (doRangesIntersect(address, firstAddressEnd, itRange->first, itRange->second.m_endAddress))
                 {
                     itLast = itRange;
                 }
@@ -160,7 +160,7 @@ uint64_t DependencyChecker::checkDependency(DataOperationFlow         operationF
         {
             itRange = db.m_map.end();
             itRange--;
-            if (doRangesIntersect(address, addressEnd, itRange->first, itRange->second.m_endAddress))
+            if (doRangesIntersect(address, firstAddressEnd, itRange->first, itRange->second.m_endAddress))
             {
                 itLast = itRange;
             }
@@ -171,8 +171,8 @@ uint64_t DependencyChecker::checkDependency(DataOperationFlow         operationF
         if (operationFlow == DataOperationFlow::READ_AFTER_READ)
         {
             // In Read after Read - we merge ranges and give them an updated targetValue.
-            address    = std::min(address, itFirst->first);
-            addressEnd = std::max(addressEnd, itLast->second.m_endAddress);
+            address         = std::min(address, itFirst->first);
+            firstAddressEnd = std::max(firstAddressEnd, itLast->second.m_endAddress);
         }
         else if (operationFlow == DataOperationFlow::WRITE_AFTER_WRITE)
         {
@@ -181,8 +181,8 @@ uint64_t DependencyChecker::checkDependency(DataOperationFlow         operationF
                 // Since in group context we only update the db and don't signal dependency to the user we have to merge
                 // ranges, to keep the db correctness for future operations. In case we will support dependency checker
                 // inside group context, we should merge only ranges with the same target value as the this new range.
-                address    = std::min(address, it->first);
-                addressEnd = std::max(addressEnd, it->second.m_endAddress);
+                address         = std::min(address, it->first);
+                firstAddressEnd = std::max(firstAddressEnd, it->second.m_endAddress);
                 if (it->second.m_targetValue != targetValue)
                 {
                     rcTargetValue = std::max(rcTargetValue, it->second.m_targetValue);
@@ -261,10 +261,19 @@ uint64_t DependencyChecker::getTargetValueForWriteRange(uint64_t address,
 
     if (size != 0)
     {
-        rcTargetValue = checkDependency(DataOperationFlow::WRITE_AFTER_READ, m_readDb, address, size, targetValue, dbModificationIsAllowed);
-        rcTargetValue =
-            std::max(rcTargetValue,
-                     checkDependency(DataOperationFlow::WRITE_AFTER_WRITE, m_writeDb, address, size, targetValue, dbModificationIsAllowed));
+        rcTargetValue = checkDependency(DataOperationFlow::WRITE_AFTER_READ,
+                                        m_readDb,
+                                        address,
+                                        size,
+                                        targetValue,
+                                        dbModificationIsAllowed);
+        rcTargetValue = std::max(rcTargetValue,
+                                 checkDependency(DataOperationFlow::WRITE_AFTER_WRITE,
+                                                 m_writeDb,
+                                                 address,
+                                                 size,
+                                                 targetValue,
+                                                 dbModificationIsAllowed));
     }
 
     if (dbModificationIsAllowed) updateDb(rcTargetValue);
@@ -286,10 +295,19 @@ uint64_t DependencyChecker::getTargetValueForReadRange(uint64_t address,
 
     if (size != 0)
     {
-        rcTargetValue = checkDependency(DataOperationFlow::READ_AFTER_READ, m_readDb, address, size, targetValue, dbModificationIsAllowed);
-        rcTargetValue =
-            std::max(rcTargetValue,
-                     checkDependency(DataOperationFlow::READ_AFTER_WRITE, m_writeDb, address, size, targetValue, dbModificationIsAllowed));
+        rcTargetValue = checkDependency(DataOperationFlow::READ_AFTER_READ,
+                                        m_readDb,
+                                        address,
+                                        size,
+                                        targetValue,
+                                        dbModificationIsAllowed);
+        rcTargetValue = std::max(rcTargetValue,
+                                 checkDependency(DataOperationFlow::READ_AFTER_WRITE,
+                                                 m_writeDb,
+                                                 address,
+                                                 size,
+                                                 targetValue,
+                                                 dbModificationIsAllowed));
     }
 
     if (dbModificationIsAllowed) updateDb(rcTargetValue);

@@ -2,22 +2,23 @@
 #include "platform/gaudi3/hcl_collective_routines.h"
 
 #include "hcl_api_types.h"
-#include "hcl_dynamic_communicator.h"                     // for HclDynamicComm...
-#include "infra/scal/gaudi3/scal_utils.h"                 // for Gaudi3HclScalUtils
-#include "hcl_log_manager.h"                              // for LOG_*
-#include "platform/gaudi3/commands/hcl_commands.h"        // for HclCommandsGaudi3
-#include "platform/gaudi3/hcl_device.h"                   // for HclDeviceGaudi3
-#include "platform/gaudi3/hcl_graph_sync.h"               // for HclGraphSyncGa...
+#include "hcl_dynamic_communicator.h"               // for HclDynamicComm...
+#include "infra/scal/gaudi3/scal_utils.h"           // for Gaudi3HclScalUtils
+#include "hcl_log_manager.h"                        // for LOG_*
+#include "platform/gaudi3/commands/hcl_commands.h"  // for HclCommandsGaudi3
+#include "platform/gaudi3/hcl_device.h"             // for HclDeviceGaudi3
+#include "platform/gaudi3/hcl_graph_sync.h"         // for HclGraphSyncGa...
 #include "platform/gen2_arch_common/collective_states.h"
-#include "platform/gen2_arch_common/hcl_device.h"         // for HclDeviceGen2Arch
-#include "platform/gen2_arch_common/hcl_graph_sync.h"     // for HclGraphSyncGe...
+#include "platform/gen2_arch_common/hcl_device.h"            // for HclDeviceGen2Arch
+#include "platform/gen2_arch_common/hcl_graph_sync.h"        // for HclGraphSyncGe...
 #include "platform/gen2_arch_common/send_recv_aggregator.h"  // for SendRecvEntry
-#include "platform/gen2_arch_common/scaleout_provider.h"  // for ScaleoutProvider
-#include "hcl_math_utils.h"                               // for mod
-#include "platform/gaudi3/port_mapping.h"                 // for Gaudi3DevicePortMapping
-#include "platform/gaudi3/send_recv_aggregator.h"         // for SendRecvAggregatorGaudi3
+#include "platform/gen2_arch_common/scaleout_provider.h"     // for ScaleoutProvider
+#include "hcl_math_utils.h"                                  // for mod
+#include "platform/gaudi3/send_recv_aggregator.h"            // for SendRecvAggregatorGaudi3
 #include "platform/gaudi3/hcl_mem_handler.h"
-#include "platform/gaudi3/hcl_address_generator.h"        // for HclAddressGeneratorGaudi3
+#include "platform/gaudi3/hcl_address_generator.h"            // for HclAddressGeneratorGaudi3
+#include "platform/gaudi3/gaudi3_base_server_connectivity.h"  // for Gaudi3BaseServerConnectivity
+#include "platform/gen2_arch_common/server_def.h"             // for Gen2ArchServerDef
 
 class DeviceBufferManager;
 class ScaleoutProvider;
@@ -25,8 +26,17 @@ class ScaleoutProvider;
 HclCollectiveRoutinesGaudi3::HclCollectiveRoutinesGaudi3(HclDeviceGaudi3* device, int streamId, WqeTracker* wqeTracker)
 : HclCollectiveRoutinesGen2Arch(device, streamId, wqeTracker),
   m_gaudi3Commands((HclCommandsGaudi3&)m_commands),
-  m_sendAggr(true, getDevice().getDeviceConfig().getHwModuleId(), getDevice().getPortMappingGaudi3(), m_gaudi3Commands),
-  m_recvAggr(false, getDevice().getDeviceConfig().getHwModuleId(), getDevice().getPortMappingGaudi3(), m_gaudi3Commands)
+  m_serverConnectivity(device->getServerConnectivityGaudi3()),
+  m_sendAggr(true,
+             getDevice().getDeviceConfig().getHwModuleId(),
+             device->getServerConnectivityGaudi3(),
+             device->getServerDef().getHwModules(),
+             m_gaudi3Commands),
+  m_recvAggr(false,
+             getDevice().getDeviceConfig().getHwModuleId(),
+             device->getServerConnectivityGaudi3(),
+             device->getServerDef().getHwModules(),
+             m_gaudi3Commands)
 {
     m_addressGenerator    = std::make_unique<HclAddressGeneratorGaudi3>(m_commands);
     m_memHandler          = std::make_unique<HclCollectiveMemHandlerGaudi3>(m_streamId,
@@ -57,16 +67,18 @@ void HclCollectiveRoutinesGaudi3::createScaleUpSendRecvOp(hcl::ScalStreamBase& s
                                                           bool                 waitForRndvAcks)
 {
     HclDynamicCommunicator& dynamicComm = m_device->getComm(comm);
-    QPManagerScaleUpGaudi3& qpManager   = *(((HclDeviceGaudi3*)m_device)->m_qpManagerScaleUp);
-    QPUsage                 qpUsage     = qpManager.getBaseQpAndUsage(dynamicComm,
-                                                  eHCLNoCollective,
-                                                  isSend,
-                                                  false,
-                                                  false,
-                                                  false,
-                                                  INVALID_COUNT,
-                                                  INVALID_COUNT,
-                                                  m_boxType);
+    HclDeviceGaudi3*        device      = dynamic_cast<HclDeviceGaudi3*>(m_device);
+    VERIFY(device != nullptr);
+
+    QPUsage qpUsage = device->getBaseQpAndUsage(dynamicComm,
+                                                eHCLNoCollective,
+                                                isSend,
+                                                false,
+                                                false,
+                                                false,
+                                                INVALID_COUNT,
+                                                INVALID_COUNT,
+                                                m_boxType);
 
     sob_info sobInfo = ((hcl::Gaudi3HclScalUtils*)(m_utils))->getSOBInfo(soAddress);
 
@@ -75,13 +87,12 @@ void HclCollectiveRoutinesGaudi3::createScaleUpSendRecvOp(hcl::ScalStreamBase& s
         if (entry.isValid)
         {
             LOG_HCL_TRACE(HCL, "Calculating port mask for rank {}", entry.remoteRank);
-            getDevice().getPortMappingGaudi3().getRankToPortMask(entry.remoteRank, dynamicComm);
+            m_serverConnectivity.getRankToPortMask(entry.remoteRank, dynamicComm);
         }
     }
 
-    const RemoteDevicePortMasksArray& remoteDevicesPortMasks =
-        getDevice().getPortMappingGaudi3().getRemoteDevicesPortMasks();
-    size_t index = 0;
+    const RemoteDevicePortMasksArray& remoteDevicesPortMasks = m_serverConnectivity.getRemoteDevicesPortMasks(comm);
+    size_t                            index                  = 0;
     for (auto& remoteDevicePortMask : remoteDevicesPortMasks)
     {
         LOG_HCL_TRACE(HCL,
@@ -100,31 +111,33 @@ void HclCollectiveRoutinesGaudi3::createScaleUpSendRecvOp(hcl::ScalStreamBase& s
                                               qpUsage.qpn,
                                               sendRecvArray,
                                               remoteDevicesPortMasks,
+                                              comm,
                                               isSend ? m_sendAggr : m_recvAggr,
-                                              getDevice().getHal()->getMaxNumScaleUpPortsPerConnection());
+                                              m_serverConnectivity.getMaxNumScaleUpPortsPerConnection(comm));
 }
 
 void HclCollectiveRoutinesGaudi3::createScaleUpCollectiveOp(hcl::ScalStreamBase& scalStream,
                                                             ScaleUpCollectiveOp& scaleUpCollectiveOp)
 {
-    ScaleUpCollectiveOpG3    scaleUpOp {scaleUpCollectiveOp};
-    Gaudi3DevicePortMapping* portMapping = &getDevice().getPortMappingGaudi3();
-    QPManagerScaleUpGaudi3&  qpManager   = *(((HclDeviceGaudi3*)m_device)->m_qpManagerScaleUp);
-    QPUsage                  qpUsage     = qpManager.getBaseQpAndUsage(scaleUpOp.m_dynamicComm,
-                                                  scaleUpOp.m_collectiveOp,
-                                                  scaleUpOp.m_isSend,
-                                                  scaleUpOp.m_isComplexCollective,
-                                                  scaleUpOp.m_isReductionInIMB,
-                                                  scaleUpOp.m_isHierarchical,
-                                                  scaleUpOp.m_count,
-                                                  scaleUpOp.m_cellCount,
-                                                  m_boxType,
-                                                  false,
-                                                  HCL_INVALID_RANK,
-                                                  SINGLE_QP_SET_INDEX,
-                                                  scaleUpOp.m_reproReduction,
-                                                  scaleUpOp.m_complexCollective,
-                                                  scaleUpOp.m_isRoot);
+    ScaleUpCollectiveOpG3 scaleUpOp {scaleUpCollectiveOp};
+    HclDeviceGaudi3*      device = dynamic_cast<HclDeviceGaudi3*>(m_device);
+    VERIFY(device != nullptr);
+
+    QPUsage qpUsage = device->getBaseQpAndUsage(scaleUpOp.m_dynamicComm,
+                                                scaleUpOp.m_collectiveOp,
+                                                scaleUpOp.m_isSend,
+                                                scaleUpOp.m_isComplexCollective,
+                                                scaleUpOp.m_isReductionInIMB,
+                                                scaleUpOp.m_isHierarchical,
+                                                scaleUpOp.m_count,
+                                                scaleUpOp.m_cellCount,
+                                                m_boxType,
+                                                false,
+                                                HCL_INVALID_RANK,
+                                                SINGLE_QP_SET_INDEX,
+                                                scaleUpOp.m_isReduction,
+                                                scaleUpOp.m_complexCollective,
+                                                scaleUpOp.m_isRoot);
 
     sob_info sobInfo        = ((hcl::Gaudi3HclScalUtils*)(m_utils))->getSOBInfo(scaleUpOp.m_soAddress);
     bool     doPortMaskCalc = (scaleUpOp.m_collectiveOp == eHCLSimpleBroadcast && !scaleUpOp.m_isSend) ||
@@ -145,41 +158,44 @@ void HclCollectiveRoutinesGaudi3::createScaleUpCollectiveOp(hcl::ScalStreamBase&
     scaleUpOp.m_ScaleupGroupSize = scaleUpOp.m_dynamicComm.getScaleupGroupSize();
     scaleUpOp.m_qpn              = qpUsage.qpn;
     scaleUpOp.m_disregardRank    = qpUsage.disregardRank;
-    scaleUpOp.m_ports_mask =
-        doPortMaskCalc
-            ? portMapping->getDeviceToRemoteIndexPortMask(scaleUpOp.m_dynamicComm, scaleUpOp.m_deviceToRemoteIndex)
-            : portMapping->getInnerRanksPortMask(scaleUpOp.m_dynamicComm);
+    scaleUpOp.m_ports_mask       = doPortMaskCalc
+                                       ? m_serverConnectivity.getDeviceToRemoteIndexPortMask(scaleUpOp.m_dynamicComm,
+                                                                                       scaleUpOp.m_deviceToRemoteIndex)
+                                       : m_serverConnectivity.getInnerRanksPortMask(scaleUpOp.m_dynamicComm);
     scaleUpOp.m_strideCount =
-        (scaleUpOp.m_reproReduction && !scaleUpOp.m_isSend)
-            ? sizeToCount(m_intermediateBufferManager.getSingleBufferSize(SCALEUP_RR_AND_ALL2ALL_POOL),
+        (scaleUpOp.m_isReduction && !scaleUpOp.m_isSend)
+            ? sizeToCount(m_intermediateBufferManager.getSingleBufferSize(SCALEUP_AND_ALL2ALL_POOL),
                           scaleUpOp.m_dataType)
             : scaleUpOp.m_strideCount;
 
-    m_gaudi3Commands.serializeScaleUpCollectiveOp(scalStream,
-                                                  scaleUpOp,
-                                                  getDevice().getHal()->getMaxNumScaleUpPortsPerConnection());
+    m_gaudi3Commands.serializeScaleUpCollectiveOp(
+        scalStream,
+        scaleUpOp,
+        m_serverConnectivity.getMaxNumScaleUpPortsPerConnection(scaleUpOp.m_dynamicComm));
 }
 
 void HclCollectiveRoutinesGaudi3::createScaleOutCollectiveOp(hcl::ScalStreamBase&  scalStream,
                                                              ScaleOutCollectiveOp& scaleOutCollectiveOp)
 {
-    ScaleOutCollectiveOpG3   scaleOutOpG3 {scaleOutCollectiveOp};
-    Gaudi3DevicePortMapping* portMapping = &getDevice().getPortMappingGaudi3();
-    QPManagerScaleOutGaudi3& qpManager     = *(((HclDeviceGaudi3*)m_device)->m_qpManagerScaleOut);
-    sob_info                 sobInfo       = ((hcl::Gaudi3HclScalUtils*)(m_utils))->getSOBInfo(scaleOutOpG3.m_soAddress);
-    auto&                    m_dynamicComm = m_device->getComm(scaleOutOpG3.m_comm);
-    QPUsage                  qpUsage       = qpManager.getBaseQpAndUsage(m_dynamicComm,
-                                                  scaleOutOpG3.m_collectiveOp,
-                                                  scaleOutOpG3.m_isSend,
-                                                  false,
-                                                  scaleOutOpG3.m_isReductionInIMB,
-                                                  true,
-                                                  scaleOutOpG3.m_count,
-                                                  scaleOutOpG3.m_cellCount,
-                                                  m_boxType,
-                                                  true,
-                                                  scaleOutOpG3.m_remoteRank,
-                                                  scaleOutOpG3.m_qpSet);
+    ScaleOutCollectiveOpG3 scaleOutOpG3 {scaleOutCollectiveOp};
+
+    sob_info         sobInfo       = ((hcl::Gaudi3HclScalUtils*)(m_utils))->getSOBInfo(scaleOutOpG3.m_soAddress);
+    auto&            m_dynamicComm = m_device->getComm(scaleOutOpG3.m_comm);
+    HclDeviceGaudi3* device        = dynamic_cast<HclDeviceGaudi3*>(m_device);
+    VERIFY(device != nullptr);
+
+    QPUsage qpUsage = device->getBaseQpAndUsage(m_dynamicComm,
+                                                scaleOutOpG3.m_collectiveOp,
+                                                scaleOutOpG3.m_isSend,
+                                                false,
+                                                scaleOutOpG3.m_isReductionInIMB,
+                                                true,
+                                                scaleOutOpG3.m_count,
+                                                scaleOutOpG3.m_cellCount,
+                                                m_boxType,
+                                                true,
+                                                scaleOutOpG3.m_remoteRank,
+                                                scaleOutOpG3.m_qpSet);
 
     scaleOutOpG3.m_dcore            = sobInfo.dcore;
     scaleOutOpG3.m_ssm              = sobInfo.ssm;
@@ -187,8 +203,8 @@ void HclCollectiveRoutinesGaudi3::createScaleOutCollectiveOp(hcl::ScalStreamBase
     scaleOutOpG3.m_ScaleupGroupSize = m_dynamicComm.getScaleupGroupSize();
     scaleOutOpG3.m_qpn              = qpUsage.qpn;
     scaleOutOpG3.m_disregardRank    = qpUsage.disregardRank;
-    scaleOutOpG3.m_ports_mask       = portMapping->getExternalPortsMask();
-    scaleOutOpG3.m_lagSize          = portMapping->getNumScaleOutPorts(m_dynamicComm.getSpotlightType());
+    scaleOutOpG3.m_ports_mask       = m_serverConnectivity.getExternalPortsMask(m_dynamicComm);
+    scaleOutOpG3.m_lagSize          = m_serverConnectivity.getNumScaleOutPorts(m_dynamicComm);
 
     m_gaudi3Commands.serializeScaleOutCollectiveOp(scalStream, scaleOutOpG3);
 }
@@ -197,9 +213,10 @@ unsigned HclCollectiveRoutinesGaudi3::countScaleUpSignalsSendRecv(CommonState&  
                                                                   const uint32_t numberOfSendBuckets,
                                                                   const uint32_t numberOfRecvBuckets,
                                                                   const uint32_t numberOfSends,
-                                                                  const uint32_t numberOfRecvs)
+                                                                  const uint32_t numberOfRecvs,
+                                                                  const HCL_Comm comm)
 {
-    unsigned numSignals = getDevice().getHal()->getMaxNumScaleUpPortsPerConnection();
+    unsigned numSignals = getDevice().getServerConnectivity().getMaxNumScaleUpPortsPerConnection(comm);
     if (commonState.m_dynamicComm.getCommSize() == 1 && !commonState.m_isMultiScaleupGroup)
     {
         numSignals = 0;
@@ -220,11 +237,11 @@ unsigned HclCollectiveRoutinesGaudi3::countScaleUpSignalsSendRecv(CommonState&  
 
 unsigned HclCollectiveRoutinesGaudi3::countScaleOutSignalsSendRecv(const uint32_t numberOfSends,
                                                                    const uint32_t numberOfRecvs,
-                                                                   unsigned       spotlightType)
+                                                                   const HCL_Comm comm)
 {
     const unsigned signalsPerRecv = m_scaleoutProvider->isHostNic() ? 1 : 2;  // GNICs require additional signal for ACK
     const unsigned scaleoutSignals =
-        (numberOfSends + numberOfRecvs * signalsPerRecv) * m_scaleoutProvider->getNumOfNicsPerDevice(spotlightType);
+        (numberOfSends + numberOfRecvs * signalsPerRecv) * m_scaleoutProvider->getNumOfNicsPerDevice(comm);
     LOG_HCL_TRACE(HCL,
                   "numberOfSends={}, numberOfRecvs={}, scaleoutSignals={}",
                   numberOfSends,
@@ -251,7 +268,7 @@ uint64_t RemainderCalculatorGaudi3::getBufferClearSize(HCL_CollectiveOp collecti
     }
     if (collective == eHCLReduce)
     {
-        if (bufferId == SCALEOUT_RR_POOL)
+        if (bufferId == SCALEOUT_POOL)
         {
             if (isBf16Reduction || isRoot)
             {
@@ -259,7 +276,7 @@ uint64_t RemainderCalculatorGaudi3::getBufferClearSize(HCL_CollectiveOp collecti
             }
             return scaleOutSendCount * dataTypeSize;
         }
-        if (bufferId == REDUCE_RR_POOL)
+        if (bufferId == REDUCE_POOL)
         {
             if (sendBoxNumInfo.m_boxNum == rootBox)
             {
@@ -292,7 +309,7 @@ uint64_t RemainderCalculatorGaudi3::getScaleOutCount(uint64_t nonRemainderScaleO
                                                      uint64_t myRankInScaleupGroup,
                                                      uint64_t scaleUpCount,
                                                      uint64_t remainderCount,
-                                                     bool lastRankInScaleupGroup)
+                                                     bool     lastRankInScaleupGroup)
 {
     if (boxIndex == (numBoxes - 1) && lastRankInScaleupGroup)
     {

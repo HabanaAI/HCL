@@ -12,18 +12,18 @@
 
 #pragma once
 
-#include <cstddef>                      // for size_t
-#include <string>                       // for string
-#include "synapse_common_types.h"       // for synStatus
-#include "hccl_types.h"                 // for hcclDataType_t, hcclResult_t,...
-#include "hcl_log_manager.h"            // for LOG_INFO, LOG_TRACE
-#include "hcl_utils.h"                  // for checkReductionOp
+#include <cstddef>                 // for size_t
+#include <string>                  // for string
+#include "synapse_common_types.h"  // for synStatus
+#include "hccl_types.h"            // for hcclDataType_t, hcclResult_t,...
+#include "hcl_log_manager.h"       // for LOG_INFO, LOG_TRACE
+#include "hcl_utils.h"             // for checkReductionOp
 
 #define RETURN_ON_COND(_condition_for_error, _result, _message)                                                        \
     {                                                                                                                  \
         if (_condition_for_error)                                                                                      \
         {                                                                                                              \
-            LOG_ERR(HCL, "{}", _message);                                                                              \
+            LOG_ERR(HCL_API, "{}", _message);                                                                          \
             return to_hccl_result(_result);                                                                            \
         }                                                                                                              \
     }
@@ -41,17 +41,13 @@
 
 // Support for fp16 not enabled
 #define RETURN_ON_INVALID_DATA_TYPE(_arg)                                                                              \
-    {                                                                                                                  \
-        if (_arg != hcclFloat32 && _arg != hcclBfloat16 && _arg != hcclFloat16)                                                               \
-        {                                                                                                              \
-            LOG_ERR(HCL, "Invalid or unsupported data type {}.", to_string(_arg));                                     \
-            return to_hccl_result(hcclInvalidArgument);                                                                \
-        }                                                                                                              \
-    }
+    RETURN_ON_INVALID_ARG(_arg != hcclFloat32 && _arg != hcclBfloat16 && _arg != hcclFloat16,                          \
+                          _arg,                                                                                        \
+                          "Invalid or unsupported data type");
 
 #define RETURN_ON_INVALID_ADDR(addr)                                                                                   \
     {                                                                                                                  \
-        bool valid = hccl_device()->isDramAddressValid((uint64_t)addr);                                        \
+        bool valid = hccl_device()->isDramAddressValid((uint64_t)addr);                                                \
         RETURN_ON_INVALID_ARG(!valid, addr, "Invalid address");                                                        \
     }
 
@@ -64,30 +60,15 @@
     RETURN_ON_INVALID_ARG(_arg == nullptr, _arg, "Invalid HCCL communicator handle.")
 
 #define RETURN_ON_INVALID_REDUCTION_OP(_reduction_op)                                                                  \
-    {                                                                                                                  \
-        if (checkReductionOp(_reduction_op) == false)                                                                  \
-        {                                                                                                              \
-            LOG_ERR(HCL, "Invalid reduction op: {}", _reduction_op);                                                   \
-            return hcclInvalidArgument;                                                                                \
-        }                                                                                                              \
-    }
+    RETURN_ON_INVALID_ARG(checkReductionOp(_reduction_op) == false, _arg, "Invalid reduction op");
 
-#define RETURN_ON_INVALID_FD(_arg)                                                                                     \
-    {                                                                                                                  \
-        if (_arg == nullptr)                                                                                           \
-        {                                                                                                              \
-            LOG_ERR(HCL, "Invalid FD was provided.");                                                                  \
-            return hcclInvalidArgument;                                                                                \
-        }                                                                                                              \
-    }
+#define RETURN_ON_INVALID_FD(_arg) RETURN_ON_INVALID_ARG(_arg == nullptr, _arg, "Invalid FD was provided.");
 
 #define RETURN_ON_RANK_CHECK(rank, comm)                                                                               \
     if ((HclConfigType)GCFG_BOX_TYPE_ID.value() != HclConfigType::LOOPBACK)                                            \
     {                                                                                                                  \
         RETURN_ON_INVALID_RANK(rank, comm->getCommSize());                                                             \
     }
-
-
 
 const char*  get_error_string(hcclResult_t result);
 hcclResult_t to_hccl_result(const synStatus status);

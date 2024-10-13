@@ -3,6 +3,7 @@
 
 #include "gaudi2/asic_reg_structs/sob_objs_regs.h"
 #include "gaudi2/asic_reg/gaudi2_blocks.h"
+#include "gaudi2_arc_host_packets.h"  // for gaudi2 FW COMP_SYNC_GROUP_CMAX_TARGET
 
 uint64_t hcl::Gaudi2HclScalUtils::calculateSoAddressFromIdxAndSM(unsigned smIdx, unsigned idx)
 {
@@ -86,4 +87,10 @@ std::string hcl::Gaudi2HclScalUtils::printSOBInfo(uint32_t addr)
 std::string hcl::Gaudi2HclScalUtils::printSOBInfo(sob_info sob)
 {
     return "DCORE" + std::to_string(sob.dcore) + "_SYNC_MNGR_OBJS SOB_OBJ_" + std::to_string(sob.sobId);
+}
+
+// return the gaudi2 value from QMAN FW gaudi2_arc_host_packets.h
+uint32_t hcl::Gaudi2HclScalUtils::getCMaxTargetValue()
+{
+    return COMP_SYNC_GROUP_CMAX_TARGET;
 }

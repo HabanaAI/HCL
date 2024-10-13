@@ -2168,6 +2168,14 @@ hlthunk_public int hlthunk_nic_dump_qp(int fd, uint32_t port, uint32_t qpn, uint
 					char *buf, uint32_t buf_size);
 
 /**
+ * This function retrieves the NIC ports enabled ports masks. This function is common for all ASICs.
+ * @param fd file descriptor handle of habanalabs main device.
+ * @param mask returned masks.
+ * @return 0 if success. Non-zero for any error.
+ */
+hlthunk_public int hlthunk_nic_get_enabled_ports_mask(int fd, uint64_t *mask);
+
+/**
  * This function retrieves the NIC ports and external ports masks. This function shall be used
  * only for Gaudi2 and later ASICs.
  * @param fd file descriptor handle of habanalabs main device.

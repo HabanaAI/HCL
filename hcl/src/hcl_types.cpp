@@ -11,8 +11,8 @@
 
 std::ostream& operator<<(std::ostream& os, const HCL_CollectiveOp& hclCollectiveOp)
 {
-    static constexpr size_t maxEnum               = static_cast<size_t>(HCL_CollectiveOp::eHCLCollectiveLastValue);
-    VERIFY( (size_t) hclCollectiveOp < maxEnum);
+    static constexpr size_t maxEnum = static_cast<size_t>(HCL_CollectiveOp::eHCLCollectiveLastValue);
+    VERIFY((size_t)hclCollectiveOp < maxEnum);
     static const std::array HCL_COLLECTIVE_OP_STR = {"Reduce",
                                                      "AllReduce",
                                                      "ReduceScatter",
@@ -51,14 +51,16 @@ GaudiNicQPs::NicQPs& GaudiNicQPs::operator[](uint8_t nic)
     return qp[0];
 }
 
-std::ostream& operator<<(std::ostream& os, const std::set<HCL_HwModuleId>& hwModules)
+namespace std
 {
-    unsigned vecCount = 1;
-    for (const HCL_HwModuleId moduleId : hwModules)
-    {
-        os << moduleId << (vecCount < hwModules.size() ? ", " : "");
-        vecCount++;
-    }
-
+std::ostream& operator<<(std::ostream& os, const DevicesSet& devices)
+{
+    std::stringstream              ss;
+    const std::set<HCL_HwModuleId> orderedDevices(devices.begin(), devices.end());
+    std::copy(orderedDevices.begin(),
+              orderedDevices.end(),
+              std::ostream_iterator<decltype(*orderedDevices.begin())>(ss, ","));
+    os << ss.str();
     return os;
 }
+}  // namespace std

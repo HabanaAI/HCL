@@ -1,14 +1,14 @@
 #include "infra/scal/gaudi2/scal_manager.h"
 
-#include <cstdint>  // for uint64_t
+#include <cstdint>                    // for uint64_t
+#include "gaudi2_arc_host_packets.h"  // for gaudi2 FW COMP_SYNC_GROUP_CMAX_TARGET
 #include "hcl_utils.h"
-#include "infra/scal/gaudi2/scal_wrapper.h"            // for Gaudi2ScalWrapper
-#include "infra/scal/gen2_arch_common/scal_wrapper.h"  // for Gen2ArchScalWr...
-#include "platform/gaudi2/commands/hcl_commands.h"     // for HclCommandsGaudi2
-#include "platform/gaudi2/hcl_device.h"                // for HclDeviceGaudi2
+#include "infra/scal/gaudi2/scal_wrapper.h"               // for Gaudi2ScalWrapper
+#include "infra/scal/gen2_arch_common/scal_wrapper.h"     // for Gen2ArchScalWr...
+#include "platform/gaudi2/commands/hcl_commands.h"        // for HclCommandsGaudi2
+#include "platform/gaudi2/hcl_device.h"                   // for HclDeviceGaudi2
 #include "platform/gen2_arch_common/hcl_packets_utils.h"  // for getCompCfg
 #include "infra/scal/gen2_arch_common/scal_exceptions.h"
-#include "infra/scal/gaudi2/arch_stream.h"
 #include "platform/gen2_arch_common/intermediate_buffer_container.h"
 
 class HclCommandsGen2Arch;
@@ -24,7 +24,7 @@ Gaudi2ScalManager::Gaudi2ScalManager(int fd, HclCommandsGen2Arch& commands) : Ge
 {
     if (fd == -1) return;
     m_scalWrapper.reset(new Gaudi2ScalWrapper(fd, m_scalNames));
-    init();
+    init(CyclicBufferType::GAUDI2);
 }
 
 Gaudi2ScalManager::~Gaudi2ScalManager() {}
@@ -103,15 +103,8 @@ void Gaudi2ScalManager::initGlobalContext(HclDeviceGen2Arch* device, uint8_t api
     LOG_HCL_DEBUG(HCL_SCAL, "HCL initialized ScalManager Global Context");
 }
 
-void Gaudi2ScalManager::init()
+// return the gaudi2 value from QMAN FW gaudi2_arc_host_packets.h
+uint32_t Gaudi2ScalManager::getCMaxTargetValue()
 {
-    Gen2ArchScalManager::init();
-
-    for (size_t i = 0; i < m_archStreams.size(); i++)
-    {
-        scal_comp_group_handle_t internalCgHandle = m_cgInfoArray[i][(int)SchedulerType::internal].cgHandle;
-        scal_comp_group_handle_t externalCgHandle = m_cgInfoArray[i][(int)SchedulerType::external].cgHandle;
-        m_archStreams[i]                          = std::unique_ptr<ArchStream>(
-            new Gaudi2ArchStream(i, *m_scalWrapper, externalCgHandle, internalCgHandle, m_scalNames, m_commands));
-    }
+    return COMP_SYNC_GROUP_CMAX_TARGET;
 }

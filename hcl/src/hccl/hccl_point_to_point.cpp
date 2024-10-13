@@ -10,24 +10,22 @@
  *
  ******************************************************************************/
 
-#include <cstddef>                    // for size_t
-#include <cstdint>                    // for uint64_t
-#include <memory>                     // for allocator_traits<>:...
-#include "hccl_communicator.h"        // for hccl_communicator
-#include "hccl_coordinator_client.h"  // for HcclCoordinatorClient
-#include "hccl_helpers.h"             // for hccl_data_type_elem...
-#include "hccl_internal_defs.h"       // for hcclHandle
-#include "hccl_types.h"               // for hcclSuccess, hcclRe...
-#include "hccl_device.h"              // for HclApi
-#include "hccl_device.h"              // for HclApi
-#include "hcl_api_types.h"            // for HCL_Rank
-#include "hcl_global_conf.h"          // for GCFG_BOX_TYPE_ID
-#include "hcl_types.h"                // for HclConfigType, LOOP...
-#include "hcl_utils.h"                // for LOG_HCL_ERR
-#include "ofi_communicator.h"         // for ofi_communicator
-#include "libfabric/mr_mapping.h"     // for MRMapping
-#include "hcl_log_manager.h"          // for LOG_ERR
-#include "synapse_api_types.h"        // for synStreamHandle
+#include <cstddef>                                  // for size_t
+#include <cstdint>                                  // for uint64_t
+#include <memory>                                   // for allocator_traits<>:...
+#include "hccl_communicator.h"                      // for hccl_communicator
+#include "hccl_coordinator_client.h"                // for HcclCoordinatorClient
+#include "hccl_helpers.h"                           // for hccl_data_type_elem...
+#include "hccl_internal_defs.h"                     // for hcclHandle
+#include "hccl_types.h"                             // for hcclSuccess, hcclRe...
+#include "platform/gen2_arch_common/hccl_device.h"  // for HclApi
+#include "hcl_api_types.h"                          // for HCL_Rank
+#include "hcl_types.h"                              // for HclConfigType, LOOP...
+#include "hcl_utils.h"                              // for LOG_HCL_ERR
+#include "ofi_communicator.h"                       // for ofi_communicator
+#include "libfabric/mr_mapping.h"                   // for MRMapping
+#include "hcl_log_manager.h"                        // for LOG_ERR
+#include "synapse_api_types.h"                      // for synStreamHandle
 #include "hcl_dynamic_communicator.h"
 #include "hcl_api_types.h"
 #include "hcl_dynamic_communicator.h"
@@ -73,5 +71,4 @@ hcclResult_t hccl_communicator::hccl_send(const void*     sendbuff,
                             m_comm->isRankInsideScaleupGroup(peer)};
 
     return hccl_device().send_recv_call(m_comm->getMyRank(), entry);
-
 }

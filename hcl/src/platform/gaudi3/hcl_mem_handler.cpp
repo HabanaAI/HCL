@@ -12,13 +12,13 @@ HclCollectiveMemHandlerGaudi3::HclCollectiveMemHandlerGaudi3(int                
 {
 }
 
-void HclCollectiveMemHandlerGaudi3::generateBaseAddressOrRRIdx(SliceState&       sliceState,
-                                                               unsigned int&     sliceIter,
-                                                               BoxNumInfo&       boxNumInfo,
-                                                               HCL_CollectiveOp& currentOp,
-                                                               uint64_t&         offset,
-                                                               uint64_t&         baseAddress,
-                                                               uint32_t&         rrIndex)
+void HclCollectiveMemHandlerGaudi3::generateBaseAddressOrSubBuffIdx(SliceState&       sliceState,
+                                                                    unsigned int&     sliceIter,
+                                                                    BoxNumInfo&       boxNumInfo,
+                                                                    HCL_CollectiveOp& currentOp,
+                                                                    uint64_t&         offset,
+                                                                    uint64_t&         baseAddress,
+                                                                    uint32_t&         subBuffIndex)
 {
     baseAddress = m_addressGenerator.generateScaleUpRecvAddress(sliceState, sliceIter, boxNumInfo, currentOp, offset);
     LOG_HCL_TRACE(HCL, "Setting scale-up receive base address to 0x{:x}", baseAddress);

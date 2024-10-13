@@ -7,7 +7,6 @@
 #include "libfabric/hl_ofi.h"
 #include "platform/gen2_arch_common/host_stream.h"         // for HostStream...
 #include "platform/gen2_arch_common/signals/calculator.h"  // for nicsPerCon...
-#include "platform/gen2_arch_common/port_mapping.h"        // for Gen2ArchDevicePortMapping
 
 #include "interfaces/hcl_unique_sorted_vector.h"
 #include "hcl_types.h"            // for HostNicConnectInfo
@@ -19,8 +18,6 @@ class HclDeviceGen2Arch;
 class HostScheduler;
 class HostBufferManager;
 class SignalsManager;
-struct NonCollectiveState;
-struct SliceState;
 class ofi_t;  // for getOfiHandle()
 
 constexpr unsigned MAX_NUM_POOLS = 20;
@@ -61,7 +58,7 @@ public:
 
     virtual void               requestScaleoutResources(SliceState& sliceState, SignalsManager& signalsManager) = 0;
     virtual void               requestScaleoutResources(NonCollectiveState& nonCollectiveState)                 = 0;
-    virtual unsigned           getNumOfNicsPerDevice(unsigned spotlightType = DEFAULT_SPOTLIGHT) const          = 0;
+    virtual unsigned           getNumOfNicsPerDevice(const HCL_Comm comm) const                                 = 0;
     virtual HostBufferManager* getHostBufferManager(unsigned streamIdx);
 
     static ScaleoutProvider* createScaleOutProvider(HclDeviceGen2Arch* device);
@@ -85,7 +82,7 @@ public:
     virtual void closeConnections(HCL_Comm comm) override;
     virtual void destroy() override {};
 
-    virtual unsigned getNumOfNicsPerDevice(unsigned spotlightType) const override;
+    virtual unsigned getNumOfNicsPerDevice(const HCL_Comm comm) const override;
     virtual void     requestScaleoutResources(SliceState& sliceState, SignalsManager& signalsManager) override;
     virtual void     requestScaleoutResources(NonCollectiveState& nonCollectiveState) override;
 
@@ -110,7 +107,7 @@ public:
     virtual void closeConnections(HCL_Comm comm) override;
     virtual void destroy() override;
 
-    virtual unsigned getNumOfNicsPerDevice(unsigned spotlightType) const override { return 1; };
+    virtual unsigned getNumOfNicsPerDevice(const HCL_Comm comm) const override { return 1; };
     virtual void     requestScaleoutResources(SliceState& sliceState, SignalsManager& signalsManager) override;
     virtual void     requestScaleoutResources(NonCollectiveState& nonCollectiveState) override;
     void             notifyHostScheduler(int archStreamIdx);

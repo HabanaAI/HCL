@@ -57,8 +57,19 @@ public:
     EpAv acquire_ep_av(unsigned hostConnIdx, EndpointRole role, uint16_t qpSetIndex);
 
 private:
-    int                      process_completions(void* cq_buf, uint64_t num_cqes) override;
-    static uint64_t          calculate_max_tag(const struct fi_info* const provider);
+    int             process_completions(void* cq_buf, uint64_t num_cqes) override;
+    static uint64_t calculate_max_tag(const struct fi_info* const provider);
+    /**
+     * @brief Check whether the required parameters and existing parameters utilize different QPs.
+     *
+     * @return True if QPs are different and false otherwise.
+     */
+    static bool isDifferentQP(const unsigned int                      requestedHostConnIdx,
+                              const ofi_rdm_component_t::EndpointRole requestedRole,
+                              const uint16_t                          requestedQpSetIndex,
+                              const unsigned int                      existingHostConnIdx,
+                              const ofi_rdm_component_t::EndpointRole existingRole,
+                              const uint16_t                          existingQpSetIndex);
 
 private:
     std::vector<fi_cq_tagged_entry> m_cqe_tagged_buffers;

@@ -60,7 +60,9 @@ void EthStats::getHabanaInterfaces(std::string pciAddr)
     {
         ifName = std::string {oneNetIf->ifa_name};
 
-        if (any_of(m_habanaInterfaces.begin(), m_habanaInterfaces.end(), [&](const InterfaceInfo& info) { return info.ifName == ifName; } ))
+        if (any_of(m_habanaInterfaces.begin(), m_habanaInterfaces.end(), [&](const InterfaceInfo& info) {
+                return info.ifName == ifName;
+            }))
         {
             continue;
         }
@@ -220,8 +222,7 @@ void EthStats::init(const char* pciAddr)
         singleIf.statsNames = getStatsNames(singleIf);
         singleIf.statsVal   = getStats(singleIf);
 
-        if ((singleIf.numStats != singleIf.statsNames.size()) ||
-            (singleIf.numStats != singleIf.statsVal.size()))
+        if ((singleIf.numStats != singleIf.statsNames.size()) || (singleIf.numStats != singleIf.statsVal.size()))
         {
             LOG_ERR(HCL,
                     "numStats {} should be same as statNames {} and statsVal {}",
@@ -243,8 +244,7 @@ void EthStats::dump(hl_logger::LoggerSPtr usrLogger, bool dumpAll)
     {
         std::vector<uint64_t> statsVal = getStats(singleIf);
 
-        if ((singleIf.numStats != singleIf.statsNames.size()) ||
-            (singleIf.numStats != singleIf.statsVal.size()) ||
+        if ((singleIf.numStats != singleIf.statsNames.size()) || (singleIf.numStats != singleIf.statsVal.size()) ||
             (singleIf.numStats != statsVal.size()))
         {
             HLLOG_UNTYPED(usrLogger,

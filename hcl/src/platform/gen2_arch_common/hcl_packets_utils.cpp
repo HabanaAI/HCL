@@ -1,10 +1,12 @@
 #include "hcl_packets_utils.h"
-
-#include "hccl_device.h"
+#include "platform/gen2_arch_common/hccl_device.h"
 #include "hcl_global_conf.h"
 #include "hcl_utils.h"
-#include "platform/gaudi2/hcl_device.h"  // for IHclDevice
+#include "platform/gaudi2/hcl_device.h"       // for IHclDevice
 #include "platform/gen2_arch_common/types.h"  // for reduction_datatype_e
+#include "define_synapse_common.hpp"          // for pdma context id
+#include "synapse_profiler_api.hpp"           // for pdma context id
+#include "internal/hcl_profiler_api.h"
 
 SoIdxBaseIdx getSoIdxBaseIdx(uint32_t soAddress)
 {
@@ -23,7 +25,7 @@ SoIdxBaseIdx getSoIdxBaseIdx(uint32_t soAddress)
     }
 
     LOG_TRACE(HCL,
-              "SO Adress converted to comp_cfg terms (address: 0x{:x} => base index: {}, adress index: 0x{:x})",
+              "SO Address converted to comp_cfg terms (address: 0x{:x} => base index: {}, address index: 0x{:x})",
               soAddress,
               ret.baseIdx,
               ret.soIdx);
@@ -61,4 +63,36 @@ reduction_datatype_e getReductionDataType(bool isCastUp, hcclDataType_t dataType
     }
 
     return res;
+}
+
+uint8_t getEdmaStreamCtxtId(uint8_t apiId, unsigned streamIndex)
+{
+    hcl::StreamContextEncoding streamCtxtID;
+
+    // Ensure apiId and streamIndex are within the valid range
+    streamCtxtID.api_id       = apiId & 0b11111;     // 5 bits
+    streamCtxtID.stream_index = streamIndex & 0b11;  // 2 bits
+
+    return streamCtxtID.raw;
+}
+
+uint8_t getEdmaDebugCtxtId(uint8_t apiId, uint8_t isScaleOut, uint8_t slice)
+{
+    hcl::StreamContextEncoding debugStreamCtxtID;
+
+    debugStreamCtxtID.debug_api_id = apiId & 0b1111;    // 4 bits
+    debugStreamCtxtID.is_scale_out = isScaleOut & 0b1;  // 1 bit
+    debugStreamCtxtID.slice        = slice & 0b11;      // 2 bits
+
+    return debugStreamCtxtID.raw;
+}
+
+uint8_t getPdmaStreamCtxtId(bool isDownload, unsigned streamIndex)
+{
+    PdmaDirCtx         direction  = isDownload ? PdmaDirCtx::DOWN : PdmaDirCtx::UP;
+    internalStreamType streamType = internalStreamType::INTERNAL_STREAM_TYPE_COLLECTIVE_NETWORK;
+
+    return (((((uint8_t)direction) & ContextEncoding::DIR_MASK) << ContextEncoding::DIR_OFFSET) |
+            (((uint8_t)streamType) & ContextEncoding::TYPE_MASK) << ContextEncoding::TYPE_OFFSET) |
+           ((((uint8_t)streamIndex) & ContextEncoding::STREAM_MASK) << ContextEncoding::STREAM_OFFSET);
 }

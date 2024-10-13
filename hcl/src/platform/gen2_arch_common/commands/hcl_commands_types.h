@@ -5,7 +5,7 @@
 #include "platform/gen2_arch_common/types.h"
 #include "hcl_api_types.h"
 
-struct HclDynamicCommunicator;
+class HclDynamicCommunicator;
 struct LBWBurstAddressData
 {
     uint32_t address;
@@ -32,11 +32,11 @@ struct DmaCmdParams
                           uint64_t         sendBaseAddress,
                           hcclDataType_t   dataType,
                           bool             reductionSignalToCg,
-                          bool             isReproReduction,
+                          bool             isReduction,
                           bool             useSibo,
                           uint32_t         numberOfRanks,
-                          uint32_t         numberOfReproBuffers,
-                          uint32_t         indexOfReproBuffer,
+                          uint32_t         numberOfSubBuffers,
+                          uint32_t         indexOfSubBuffer,
                           bool             isForScaleout,
                           bool             useCasting,
                           bool             isGDRMemcpy,
@@ -56,11 +56,11 @@ struct DmaCmdParams
       m_sendBaseAddress(sendBaseAddress),
       m_dataType(dataType),
       m_reductionSignalToCg(reductionSignalToCg),
-      m_isReproReduction(isReproReduction),
+      m_isReduction(isReduction),
       m_useSibo(useSibo),
       m_numberOfRanks(numberOfRanks),
-      m_numberOfReproBuffers(numberOfReproBuffers),
-      m_indexOfReproBuffer(indexOfReproBuffer),
+      m_numberOfSubBuffers(numberOfSubBuffers),
+      m_indexOfSubBuffer(indexOfSubBuffer),
       m_isForScaleout(isForScaleout),
       m_useCasting(useCasting),
       m_isGDRMemcpy(isGDRMemcpy),
@@ -83,11 +83,11 @@ struct DmaCmdParams
     uint64_t         m_sendBaseAddress;
     hcclDataType_t   m_dataType;
     bool             m_reductionSignalToCg;
-    bool             m_isReproReduction;
+    bool             m_isReduction;
     bool             m_useSibo;
     uint32_t         m_numberOfRanks;
-    uint32_t         m_numberOfReproBuffers;
-    uint32_t         m_indexOfReproBuffer;
+    uint32_t         m_numberOfSubBuffers;
+    uint32_t         m_indexOfSubBuffer;
     bool             m_isForScaleout;
     bool             m_useCasting;
     bool             m_isGDRMemcpy;
@@ -117,9 +117,9 @@ struct ScaleUpCollectiveOp
                                  uint64_t                strideCount,
                                  bool                    notifyRndvAck,
                                  bool                    waitForRndvAcks,
-                                 bool                    reproReduction,
+                                 bool                    isReduction,
                                  uint32_t                accuIndex,
-                                 uint32_t                rrIndex,
+                                 uint32_t                subBuffIndex,
                                  HCL_CollectiveOp        complexCollective,
                                  bool                    isRoot)
     : m_deviceToRemoteIndex(deviceToRemoteIndex),
@@ -141,9 +141,9 @@ struct ScaleUpCollectiveOp
       m_strideCount(strideCount),
       m_notifyRndvAck(notifyRndvAck),
       m_waitForRndvAcks(waitForRndvAcks),
-      m_reproReduction(reproReduction),
+      m_isReduction(isReduction),
       m_accuIndex(accuIndex),
-      m_rrIndex(rrIndex),
+      m_subBuffIndex(subBuffIndex),
       m_complexCollective(complexCollective),
       m_isRoot(isRoot)
     {
@@ -173,9 +173,9 @@ struct ScaleUpCollectiveOp
     uint64_t                m_strideCount;
     bool                    m_notifyRndvAck;
     bool                    m_waitForRndvAcks;
-    bool                    m_reproReduction    = false;
+    bool                    m_isReduction       = false;
     uint32_t                m_accuIndex         = 0;
-    uint32_t                m_rrIndex           = 0;
+    uint32_t                m_subBuffIndex      = 0;
     HCL_CollectiveOp        m_complexCollective = eHCLNoCollective;
     bool                    m_isRoot            = false;
 };

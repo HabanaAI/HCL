@@ -10,27 +10,28 @@
 #include <string>     // for string, basic_st...
 #include <set>        // for set
 
-#include "hcl_api_types.h"                           // for HCL_Rank
-#include "hccl_types.h"                              // for hcclInternalError
-#include "hcl_global_conf.h"                         // for GCFG...
-#include "interfaces/hcl_remote_device.h"            // for HclRemoteDevice
-#include "hcl_utils.h"                               // for LOG_HCL_INFO, LOG_H...
-#include "interfaces/hcl_unique_sorted_vector.h"     // for UniqueSortedVector
-#include "hcl_log_manager.h"                         // for LOG*
-#include "platform/gen2_arch_common/types.h"         // for MAX_NICS_GEN2ARCH
-#include "platform/gen2_arch_common/port_mapping.h"  // for Gen2ArchDevicePortMapping
-#include "hccl/hccl_context.h"                       // for hccl_context
-#include "hccl/ofi_communicator.h"                   // for ofi_communicator_handle
-#include "hcl_sockaddr.h"                            // for address_to_string
-#include "interfaces/hcl_hal.h"                      // for HalPtr
+#include "hcl_api_types.h"                        // for HCL_Rank
+#include "hccl_types.h"                           // for hcclInternalError
+#include "hcl_global_conf.h"                      // for GCFG...
+#include "interfaces/hcl_remote_device.h"         // for HclRemoteDevice
+#include "hcl_utils.h"                            // for LOG_HCL_INFO, LOG_H...
+#include "interfaces/hcl_unique_sorted_vector.h"  // for UniqueSortedVector
+#include "hcl_log_manager.h"                      // for LOG*
+#include "platform/gen2_arch_common/types.h"      // for MAX_NICS_GEN2ARCH
+#include "hccl/hccl_context.h"                    // for hccl_context
+#include "hccl/ofi_communicator.h"                // for ofi_communicator_handle
+#include "hcl_sockaddr.h"                         // for address_to_string
+#include "interfaces/hcl_hal.h"                   // for HalPtr
 #include "hcl_math_utils.h"
-#include "hcl_types.h"  // for HCL_HwModuleId
+#include "hcl_types.h"                             // for HCL_HwModuleId
+#include "platform/gen2_arch_common/server_def.h"  // for Gen2ArchServerDef
 
 class IHclDevice;
 
 static constexpr unsigned MAX_SEND_RECV_PEER_COUNTER = 16;
 
-HclDynamicCommunicator::HclDynamicCommunicator(HCL_Comm comm, hcl::HalPtr hal) : m_commId(comm), m_hal(hal)
+HclDynamicCommunicator::HclDynamicCommunicator(const HCL_Comm comm, Gen2ArchServerDef& serverDef, hcl::HalPtr hal)
+: m_commId(comm), m_serverDef(serverDef), m_hal(hal)
 {
     m_streamLatestLongSo.resize(m_hal->getMaxStreams());
     m_streamLatestLongSo.assign(m_hal->getMaxStreams(), 0);
@@ -69,7 +70,7 @@ bool HclDynamicCommunicator::init(const uint32_t hcclCommSize, const HCL_Rank ra
 
     // allocate maps memory
     m_rankToScaleupGroupMap.resize(hcclCommSize, INVALID_SCALEUP_GROUP);
-    m_scaleupGroupToRankMap.resize(hcclCommSize, INVALID_RANK);
+    m_scaleupGroupToRankMap.resize(hcclCommSize, HCL_INVALID_RANK);
     m_remoteDevices.resize(hcclCommSize);
     m_rankInfo.remoteInfo.resize(hcclCommSize);
     m_rankInfo.header.boxSize = box_size;
@@ -82,14 +83,12 @@ bool HclDynamicCommunicator::init(const uint32_t hcclCommSize, const HCL_Rank ra
     m_sendCounter.clear();
     m_recvCounter.clear();
 
-    // Set communicator spotlight type based on GCFG,
-    // in the future this decision will be made by smart heuristics.
-    return setSpotlightType(GCFG_SPOTLIGHT_PORT_SCHEME_GAUDI3.value());
+    return true;
 }
 
 bool HclDynamicCommunicator::isPeer(HCL_Rank rank) const
 {
-    return getRankInScaleupGroup() == mod(rank, m_scaleupGroupSize);
+    return getRankInScaleupGroup() == (HCL_Rank)mod(rank, m_scaleupGroupSize);
 }
 
 bool HclDynamicCommunicator::arePeers(HCL_Rank rank1, HCL_Rank rank2) const
@@ -138,6 +137,11 @@ bool HclDynamicCommunicator::isCommunicatorMultiScaleupGroup() const
     return m_commSize > m_scaleupGroupSize;
 }
 
+bool HclDynamicCommunicator::commScaleupGroupHasMultipleRanks() const
+{
+    return m_scaleupGroupSize > 1;
+}
+
 bool HclDynamicCommunicator::isCommunicatorHierarchical() const
 {
     return !isCommunicatorScaleupGroupPeers() && isCommunicatorMultiScaleupGroup();
@@ -177,7 +181,7 @@ const UniqueSortedVector& HclDynamicCommunicator::getOuterRanksInclusive()
     return m_outerRanksInclusiveCache;
 }
 
-const std::vector<uint16_t>& HclDynamicCommunicator::getRankToScaleupGroupMap()
+const std::vector<uint32_t>& HclDynamicCommunicator::getRankToScaleupGroupMap()
 {
     if (m_rankToScaleupGroupMap[0] == INVALID_SCALEUP_GROUP)
     {
@@ -192,7 +196,7 @@ const std::vector<uint16_t>& HclDynamicCommunicator::getRankToScaleupGroupMap()
 
 const std::vector<HCL_Rank>& HclDynamicCommunicator::getScaleupGroupToRankMap()
 {
-    if (m_scaleupGroupToRankMap[0] == INVALID_RANK)
+    if (m_scaleupGroupToRankMap[0] == HCL_INVALID_RANK)
     {
         int k = 0;
         for (const auto& remoteRank : getOuterRanksInclusive())
@@ -291,7 +295,7 @@ const std::vector<HCL_Rank>& HclDynamicCommunicator::getRemoteRanks() const
     return m_remoteRanks;
 }
 
-int HclDynamicCommunicator::getScaleupGroupSize()
+uint32_t HclDynamicCommunicator::getScaleupGroupSize()
 {
     return m_scaleupGroupSize;
 }
@@ -328,7 +332,7 @@ const uint64_t HclDynamicCommunicator::getRecvCtr(int peer)
     return m_recvCounter.count(peer) > 0 ? m_recvCounter[peer] : 0;
 }
 
-int HclDynamicCommunicator::getCommSize()
+uint32_t HclDynamicCommunicator::getCommSize()
 {
     return getRanks().size();
 }
@@ -365,7 +369,8 @@ hcclResult_t HclDynamicCommunicator::validateRankIds()
 
 hcclResult_t HclDynamicCommunicator::setSliceSize()
 {
-    bool isMultiNode = div((uint32_t)getCommSize(), (uint32_t)getScaleupGroupSize()) > 1;
+    const bool isMultiNode = div((uint32_t)getCommSize(), (uint32_t)getScaleupGroupSize()) > 1;
+    LOG_HCL_DEBUG(HCL, "m_commId={}, isMultiNode={}", m_commId, isMultiNode);
     if (isMultiNode && hccl_device()->getScaleOutProvider()->isGaudiDirect() &&
         !GCFG_HCL_SLICE_SIZE.isSetFromUserConfig())
     {
@@ -393,6 +398,7 @@ hcclResult_t HclDynamicCommunicator::setSliceSize()
 
 hcclResult_t HclDynamicCommunicator::validateComm()
 {
+    LOG_HCL_DEBUG(HCL, "m_commId={}", m_commId);
     hcclResult_t res = hcclInternalError;
 
     if (m_commSize < 1)
@@ -414,7 +420,7 @@ hcclResult_t HclDynamicCommunicator::validateComm()
 hcclResult_t HclDynamicCommunicator::setCommScaleupGroupSize()
 {
     // for performance we want to run this only once
-    if (m_scaleupGroupSize != -1)
+    if (m_scaleupGroupSize != (uint32_t)-1)
     {
         LOG_HCL_ERR(HCL, "ScaleupGroup size for comm ({}) was already set", m_commId);
         return hcclInternalError;
@@ -422,19 +428,19 @@ hcclResult_t HclDynamicCommunicator::setCommScaleupGroupSize()
 
     if (GCFG_HCL_NULL_SUBMIT.value())
     {
-        m_scaleupGroupSize = m_hal->getDefaultBoxSize();
+        m_scaleupGroupSize = m_serverDef.getDefaultBoxSize();
         return hcclSuccess;
     }
 
     // set a default
-    m_scaleupGroupSize = m_hal->getDefaultScaleupGroupSize();
+    m_scaleupGroupSize = m_serverDef.getDefaultScaleupGroupSize();
 
     // get a vector of all the module ids per host
     std::vector<std::string> hostnames;
 
-    std::set<HCL_HwModuleId> hwModulesInBox = {};  // Will include all the hwModules inside our box;
+    DevicesSet hwModulesInBox = {};  // Will include all the hwModules inside our box;
 
-    const std::set<HCL_HwModuleId>& hwModules = m_hal->getHwModules();
+    const DevicesSet& hwModules = m_serverDef.getHwModules();
     LOG_HCL_DEBUG(HCL, "My hwModuleID={}, hwModules=[{}]", m_rankInfo.header.hwModuleID, hwModules);
 
     // Get the remote h/w module ids within same box as my h/w module id, this includes self rank
@@ -450,7 +456,7 @@ hcclResult_t HclDynamicCommunicator::setCommScaleupGroupSize()
         }
     }
 
-    const unsigned boxSize = m_hal->getDefaultBoxSize();
+    const unsigned boxSize = m_serverDef.getDefaultBoxSize();
     // count the number of ranks in my box, adjust by boxSize for cases of server with 2 boxes
     const unsigned ranksInBox =
         hwModulesInBox.size();  // the number of active comm ranks within the my box is the ScaleupGroup size
@@ -459,7 +465,7 @@ hcclResult_t HclDynamicCommunicator::setCommScaleupGroupSize()
     // in loopback mode, its always fixed comm size even only one rank is running
     if (isLoopbackMode())
     {
-        m_scaleupGroupSize = GCFG_LOOPBACK_COMMUNICATOR_SIZE.value();
+        m_scaleupGroupSize = GCFG_LOOPBACK_SCALEUP_GROUP_SIZE.value();
     }
     else
     {
@@ -472,7 +478,7 @@ hcclResult_t HclDynamicCommunicator::setCommScaleupGroupSize()
                              "Using partial Box: Setting Communicator ({}) ScaleupGroup Size from ({}), to "
                              "amount of devices in the same host ({}) - ({})",
                              m_commId,
-                             m_hal->getDefaultScaleupGroupSize(),
+                             m_serverDef.getDefaultScaleupGroupSize(),
                              m_rankInfo.header.hostname,
                              ranksInBox);
             }
@@ -515,6 +521,7 @@ hcclResult_t HclDynamicCommunicator::setCommScaleupGroupSize()
 
 hcclResult_t HclDynamicCommunicator::prepareAndValidateComm(bool isLoopbackModeOrNullSubmission)
 {
+    LOG_HCL_DEBUG(HCL, "m_commId={}, isLoopbackModeOrNullSubmission={}", m_commId, isLoopbackModeOrNullSubmission);
     hcclResult_t res;
     res = setCommScaleupGroupSize();
     if (res != hcclSuccess)
@@ -579,26 +586,7 @@ HCL_Rank HclDynamicCommunicator::getRankInScaleupGroup() const
 
 void HclDynamicCommunicator::setRankInScaleupGroup()
 {
-    m_rankInScaleupGroup = mod(getMyRank(), m_scaleupGroupSize);
-}
-
-bool HclDynamicCommunicator::setSpotlightType(unsigned spotlightType)
-{
-    if (spotlightType > MAX_SPOTLIGHT)
-    {
-        LOG_HCL_ERR(HCL,
-                    "Chosen communicator spotlight type: {} is invalid. Value must be 0-{}",
-                    spotlightType,
-                    MAX_SPOTLIGHT);
-        return false;
-    }
-    m_spotlightType = spotlightType;
-    return true;
-}
-
-const unsigned HclDynamicCommunicator::getSpotlightType() const
-{
-    return m_spotlightType;
+    m_rankInScaleupGroup = (HCL_Rank)mod(getMyRank(), m_scaleupGroupSize);
 }
 
 unsigned HclDynamicCommunicator::getMaxScaleOutQpSetsNum()

@@ -13,6 +13,8 @@
 #include "scal_types.h"                                       // for SmInfo
 #include "scal_wrapper.h"                                     // for Gen2ArchScalWrapper
 #include "platform/gen2_arch_common/device_buffer_manager.h"  // for sibAddressAndSize
+#include "infra/scal/gaudi_common/factory_types.h"            // for CyclicBufferType
+
 class HclCommandsGen2Arch;
 class HclDeviceGen2Arch;
 namespace hcl
@@ -34,18 +36,18 @@ namespace hcl
  * @brief
  *
  * ScalManager is the API entry point to all Scal needs in HCL.
- * Its resposible for all logic needed buy HCL and its the only contact to the scal SW layer.
+ * Its responsible for all logic needed buy HCL and its the only contact to the scal SW layer.
  * It hold all static data: Arch Streams, Internal/External Compilation Groups, Sync Manager Info,
  * Memory pools, MicroArchStreams and its buffers.
- * It also repsonsole for managing cyclic buffers AKA MicroArchStreams
+ * It also responsible for managing cyclic buffers AKA MicroArchStreams
  */
 class Gen2ArchScalManager
 {
 public:
     Gen2ArchScalManager(int fd, HclCommandsGen2Arch& commands);
-    Gen2ArchScalManager(Gen2ArchScalManager&&)      = delete;
-    Gen2ArchScalManager(const Gen2ArchScalManager&) = delete;
-    Gen2ArchScalManager& operator=(Gen2ArchScalManager&&) = delete;
+    Gen2ArchScalManager(Gen2ArchScalManager&&)                 = delete;
+    Gen2ArchScalManager(const Gen2ArchScalManager&)            = delete;
+    Gen2ArchScalManager& operator=(Gen2ArchScalManager&&)      = delete;
     Gen2ArchScalManager& operator=(const Gen2ArchScalManager&) = delete;
     virtual ~Gen2ArchScalManager();
 
@@ -140,12 +142,14 @@ public:
 
     uint64_t getCurrentLongSoValue(unsigned archStream);
 
-    scal_handle_t getScalHandle() {return m_scalWrapper->getScalHandle();}
+    scal_handle_t getScalHandle() { return m_scalWrapper->getScalHandle(); }
 
     bool isACcbHalfFullForDeviceBenchMark(const unsigned archStreamIdx);
 
     void disableCcb(int archStreamIdx, bool disable);
     void dfaLog(int archStreamIdx, hl_logger::LoggerSPtr synDevFailLog);
+
+    virtual uint32_t getCMaxTargetValue() = 0;
 
 private:
     std::string prettyPrint() const;
@@ -164,9 +168,9 @@ private:
 
 protected:
     HclCommandsGen2Arch& m_commands;
-    virtual void         init();
-    void         initScalData();
-    void         waitOnCg(Gen2ArchScalWrapper::CgComplex& cgComplex, const uint64_t target);
+    virtual void         init(CyclicBufferType type);
+    void                 initScalData(CyclicBufferType type);
+    void                 waitOnCg(Gen2ArchScalWrapper::CgComplex& cgComplex, const uint64_t target);
 
     std::unique_ptr<Gen2ArchScalWrapper> m_scalWrapper;
     std::array<std::array<Gen2ArchScalWrapper::CgComplex, (int)SchedulerType::count>,

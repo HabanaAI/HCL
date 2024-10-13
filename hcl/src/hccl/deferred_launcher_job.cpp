@@ -11,9 +11,9 @@
  ******************************************************************************/
 
 #include "deferred_launcher_job.h"
-#include <utility>          // for move
+#include <utility>            // for move
 #include "hcl_log_manager.h"  // for LOG_ERR
-#include "hcl_utils.h"      // for LogMessage, LOG, _TF_LOG_ERROR
+#include "hcl_utils.h"        // for LogMessage, LOG, _TF_LOG_ERROR
 
 deferred_launcher_job::deferred_launcher_job() : quit_requested_ {false}, worker_ {[this] { do_work(); }}
 {

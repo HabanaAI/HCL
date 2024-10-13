@@ -53,7 +53,7 @@ public:
                                  uint64_t ScaleupGroupSize,
                                  uint64_t boxIndex,
                                  uint64_t scaleUpCount,
-                                 uint64_t remainderCount) = 0;
+                                 uint64_t remainderCount)                                             = 0;
     virtual uint64_t getScaleOutCount(uint64_t nonRemainderScaleOutCount,
                                       uint64_t numBoxes,
                                       uint64_t boxCount,
@@ -61,21 +61,18 @@ public:
                                       uint64_t myRankInScaleupGroup,
                                       uint64_t scaleUpCount,
                                       uint64_t remainderCount,
-                                      bool lastRankInScaleupGroup)   = 0;
-    virtual uint64_t getDiv(uint64_t a, uint64_t b) = 0;
+                                      bool     lastRankInScaleupGroup)                                    = 0;
+    virtual uint64_t getDiv(uint64_t a, uint64_t b)                                                   = 0;
     virtual uint64_t getRemainderCount(uint64_t totalCount, uint64_t scaleUpCount, uint64_t commSize) = 0;
     virtual bool     isValidSlicing(uint32_t originalBufferCount,
                                     uint32_t sliceCount,
                                     uint64_t collectiveCount,
                                     uint32_t numSlices,
                                     uint32_t numRanks,
-                                    uint32_t minBufferCount) = 0;
-    virtual bool     isSlicing(uint64_t totalCount,
-                               uint64_t totalCountPerRank,
-                               uint32_t bufferCount,
-                               uint32_t numRanks) = 0;
+                                    uint32_t minBufferCount)                                          = 0;
+    virtual bool
+    isSlicing(uint64_t totalCount, uint64_t totalCountPerRank, uint32_t bufferCount, uint32_t numRanks) = 0;
 };
-
 
 class CommonState : public HclCollectiveParams
 {
@@ -87,11 +84,11 @@ public:
                          unsigned             workDistributionGroupSize,
                          const unsigned       maxNumScaleUpPortsPerConnection,
                          unsigned             numScaleOutPorts,
-                         synDeviceType        deviceType,
+                         SignalsCalculator&   signalsCalculator,
                          RemainderCalculator* remainderCalculator);
 
-    void calcMaxSliceCounts();
-    void calcSliceCounts(unsigned sliceIter);
+    void     calcMaxSliceCounts();
+    void     calcSliceCounts(unsigned sliceIter);
     uint32_t getNumSlices(uint64_t totalRankCount, uint32_t numRanks);
 
     void initCollectiveOp(const bool singlePeerBroadcastAllowed);
@@ -99,7 +96,7 @@ public:
     void checkInPlaceOp();
     void setIsReductionCollective();
     void check16BitReductionOp();
-    void calcReproScaleoutLongterm();
+    void calcScaleoutLongterm();
     void determineSyncUpBufferWithLtu();
 
     void checkHierarchicalOp();
@@ -116,6 +113,7 @@ public:
     bool     isLastBox(BoxNumInfo& boxNumInfo) const;
     bool     isLastSlice(unsigned iterNum) const;
     bool     isHostNic() const;
+    bool     isGDR() const;
 
     virtual void calcSliceQpSet(const unsigned sliceIter);
 
@@ -123,35 +121,36 @@ public:
 
     uint64_t getIntermediateBuffer(e_devicePoolID poolIndex);
 
-    uint64_t m_rankScaleUpCount;
-    uint64_t m_scaleUpStrideCount;
-    uint64_t m_boxCount;
-    uint64_t m_rankScaleOutCount;
-    uint64_t m_boxStrideCount;
-    uint64_t m_sliceOffsetCount;
-    uint64_t m_optimalBufferCount;
-    uint64_t m_remainderCount = 0;
-    uint64_t m_submitCounter  = 0;
-    unsigned m_boxIterations  = 0;
-    unsigned m_rootBox        = 0;
+    const uint64_t m_hnicQpSprayThreshold;
+    uint64_t       m_rankScaleUpCount;
+    uint64_t       m_scaleUpStrideCount;
+    uint64_t       m_boxCount;
+    uint64_t       m_rankScaleOutCount;
+    uint64_t       m_boxStrideCount;
+    uint64_t       m_sliceOffsetCount;
+    uint64_t       m_optimalBufferCount;
+    uint64_t       m_remainderCount = 0;
+    uint64_t       m_submitCounter  = 0;
+    unsigned       m_boxIterations  = 0;
+    unsigned       m_rootBox        = 0;
 
     unsigned m_all2allIterations      = 1;
     uint64_t m_all2allIterStrideCount = 0;
 
-    bool     m_inPlace                     = false;
-    bool     m_16BitReduction              = false;
-    bool     m_isMultiScaleupGroup         = false;
-    bool     m_hasBufferSize               = false;
-    bool     m_isReductionCollective       = false;
-    bool     m_isSlicing                   = false;
-    bool     m_isRoot                      = false;
-    bool     m_isRootPeer                  = false;
-    bool     m_isRootBox                   = false;
-    bool     m_isHostNic                   = false;
-    bool     m_isGdr                       = false;
-    size_t   m_sliceIterations             = 0;
-    unsigned m_reproScaleoutBuffersAmount  = RR_SCALEOUT_FACTOR;
-    unsigned m_reproScaleoutLongtermAmount = RR_SCALEOUT_FACTOR + 1;
+    bool     m_inPlace                = false;
+    bool     m_16BitReduction         = false;
+    bool     m_isMultiScaleupGroup    = false;
+    bool     m_hasBufferSize          = false;
+    bool     m_isReductionCollective  = false;
+    bool     m_isSlicing              = false;
+    bool     m_isRoot                 = false;
+    bool     m_isRootPeer             = false;
+    bool     m_isRootBox              = false;
+    bool     m_isHostNic              = false;
+    bool     m_isGdr                  = false;
+    size_t   m_sliceIterations        = 0;
+    unsigned m_scaleoutBuffersAmount  = DeviceBufferManager::getFactor(SCALEOUT_POOL);
+    unsigned m_scaleoutLongtermAmount = DeviceBufferManager::getFactor(SCALEOUT_POOL) + 1;
 
     unsigned m_boxIter                   = 0;
     unsigned m_all2allIter               = 0;
@@ -159,7 +158,7 @@ public:
     unsigned m_numScaleOutPorts          = 0;
 
     unsigned m_dataTypeSizeInBytes = 0;
-    bool     m_syncUpBufferWithLtu       = false;
+    bool     m_syncUpBufferWithLtu = false;
 
     uint8_t m_qpSet = 0;
 
@@ -256,8 +255,8 @@ public:
     void calcBoxAndScaleOutCounts();
     bool gatherOpsWaitForRS(bool isScaleup);
 
-    bool     m_isSend;
-    unsigned m_sliceIter;
+    bool       m_isSend;
+    unsigned   m_sliceIter;
     BoxNumInfo m_boxNumInfo;
 
     bool m_isHierarchicalFirst = false;
@@ -290,16 +289,16 @@ public:
     uint64_t                    m_hostMappedAddr = 0;  // for hnics scaleout
     uint64_t                    m_hostAddr       = 0;  // for hnics scaleout
 
-    void updateState(const unsigned     remoteBox,
-                     const HCL_Rank     remoteRank,
-                     const hcclDataType_t  dataType,
-                     const uint64_t     deviceAddress,
-                     const uint64_t     count,
-                     const bool         firstRank,
-                     const unsigned int recvFenceValue,
-                     const uint64_t     hostMappedAddr,  // for hnics scaleout
-                     const uint64_t     hostAddr);           // for hnics scaleout
+    void updateState(const unsigned       remoteBox,
+                     const HCL_Rank       remoteRank,
+                     const hcclDataType_t dataType,
+                     const uint64_t       deviceAddress,
+                     const uint64_t       count,
+                     const bool           firstRank,
+                     const unsigned int   recvFenceValue,
+                     const uint64_t       hostMappedAddr,  // for hnics scaleout
+                     const uint64_t       hostAddr);             // for hnics scaleout
 
-    bool isScaleOutRequired() const;
-    virtual void calcSliceQpSet(const unsigned sliceIter) final;
+    bool         isScaleOutRequired() const;
+    virtual void calcSliceQpSet(const unsigned sliceIter) override final;
 };

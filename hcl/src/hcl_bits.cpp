@@ -5,7 +5,7 @@
 std::string bits_t::to_str() const
 {
     std::stringstream ss;
-    unsigned i=0;
+    unsigned          i = 0;
 
     ss << "bits(";
     for (auto bit : (*this))
@@ -16,7 +16,7 @@ std::string bits_t::to_str() const
         }
         else
         {
-            ss << bit <<", ";
+            ss << bit << ", ";
         }
     }
     ss << ")";
