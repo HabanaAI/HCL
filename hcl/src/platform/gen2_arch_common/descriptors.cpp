@@ -9,7 +9,6 @@
 #include "platform/gen2_arch_common/host_stream.h"
 #include "infra/scal/gen2_arch_common/scal_utils.h"
 #include "infra/scal/gen2_arch_common/scal_manager.h"
-#include "platform/gaudi2/hcl_packets.h"
 #include "hcl_utils.h"  // for LOG_HCL_DEBUG, UNUSED
 #include "platform/gen2_arch_common/collective_states.h"
 #include "platform/gen2_arch_common/host_buffer_manager.h"  // for HostBufferManager
@@ -91,7 +90,9 @@ void NativeScaleoutDescriptor::run(SliceState& sliceState)
     const unsigned collectiveContextIndex = m_archStreamIdx * 2 + m_uarchStreamIdx;
 
     // prepare next remoteRank to receive data from
-    HCL_Rank remoteRank = sliceState.m_dynamicComm.getScaleupGroupToRankMap()[sliceState.m_boxNumInfo.m_boxNum];
+    HCL_Rank remoteRank = sliceState.m_remoteRank != HCL_INVALID_RANK
+                              ? sliceState.m_remoteRank
+                              : sliceState.m_dynamicComm.getScaleupGroupToRankMap()[sliceState.m_boxNumInfo.m_boxNum];
     int      remoteRankToRsi =
         m_collectiveRoutines.getRemoteRankToRsi(sliceState, sliceState.m_isSend, remoteRank, m_uarchStreamIdx == 1);
 
@@ -226,7 +227,7 @@ LibfabricScaleoutDescriptor::LibfabricScaleoutDescriptor(HclCollectiveRoutinesGe
     VERIFY(m_scaleoutProvider.isHostNic(), "Cannot use libfabric descriptor on a non-hostnic provider");
 }
 
-void LibfabricScaleoutDescriptor::streamAddWait(spHostStreamFifo hostStream, fence_info fence, const uint64_t srCount)
+void LibfabricScaleoutDescriptor::streamAddWait(spHostStreamFifo hostStream, FenceInfo fence, const uint64_t srCount)
 {
     LOG_HCL_TRACE(HCL,
                   "adding host fence on fenceIndex={} SOBInfo {}",
@@ -248,7 +249,9 @@ void LibfabricScaleoutDescriptor::run(SliceState& sliceState)
                                      ->getCurrentMappedBuffer(sliceState.m_isSend ? HNIC_SEND_POOL : HNIC_RECV_POOL);
     uint64_t hostAddress = provider.getHostBufferManager(m_archStreamIdx)
                                ->getCurrentBuffer(sliceState.m_isSend ? HNIC_SEND_POOL : HNIC_RECV_POOL);
-    HCL_Rank remoteRank         = sliceState.m_dynamicComm.getScaleupGroupToRankMap()[sliceState.m_boxNumInfo.m_boxNum];
+    HCL_Rank remoteRank         = sliceState.m_remoteRank > HCL_INVALID_RANK
+                                      ? sliceState.m_remoteRank
+                                      : sliceState.m_dynamicComm.getScaleupGroupToRankMap()[sliceState.m_boxNumInfo.m_boxNum];
     unsigned hostUarchStreamIdx = getHostUarchStreamIdx();
 
     uint32_t remoteRankIteration = sliceState.m_all2allIter;
@@ -280,7 +283,7 @@ void LibfabricScaleoutDescriptor::run(SliceState& sliceState)
         HostStream* waitForCompHostStream =
             provider.m_hostStreamVec[m_archStreamIdx][hostUarchStreamIdx][HOST_STREAM_WAIT_FOR_SEND_COMP];
 
-        fence_info fence = sliceState.m_execution.m_scaleoutFences[0];
+        FenceInfo fence = sliceState.m_execution.m_scaleoutFences[0];
         LOG_HCL_TRACE(HCL,
                       "scaleout send's pdma will signal to {}; move {} bytes of data from device addr 0x{:x} to 0x{:x} "
                       "(host 0x{:x})",
@@ -305,7 +308,7 @@ void LibfabricScaleoutDescriptor::run(SliceState& sliceState)
                                         fence.lbw.addr);
 
         const uint32_t soAddr = sliceState.m_execution.m_completionSoAddr;
-        const sob_info sob    = m_utils->getSOBInfo(soAddr);
+        const SobInfo  sob    = m_utils->getSOBInfo(soAddr);
 
         sendHostStream->incSrCount();
         OfiCompCallbackParams compParams {
@@ -336,10 +339,10 @@ void LibfabricScaleoutDescriptor::run(SliceState& sliceState)
         HostStream* waitForCompHostStream =
             provider.m_hostStreamVec[m_archStreamIdx][hostUarchStreamIdx][HOST_STREAM_WAIT_FOR_RECV_COMP];
 
-        fence_info fence = sliceState.m_execution.m_scaleoutFences[0];
+        FenceInfo fence = sliceState.m_execution.m_scaleoutFences[0];
         m_commands.serializeLbwWriteCommand(m_currentStream, m_schedIdx, fence.lbw.addr, fence.lbw.data);
 
-        sob_info sob = sliceState.m_execution.m_scaleoutInternalSOBs[0];
+        SobInfo sob = sliceState.m_execution.m_scaleoutInternalSOBs[0];
 
         recvHostStream->incSrCount();
         OfiCompCallbackParams compParams {
@@ -409,8 +412,7 @@ LibfabricNonCollectiveScaleoutDescriptor::LibfabricNonCollectiveScaleoutDescript
     const uint64_t                 targetValue,
     HclCommandsGen2Arch&           commands)
 : Descriptor(collectiveRoutines, scaleoutProvider, currentStream, archStreamIdx, uarchStreamIdx, schedIdx),
-  m_commands(commands),
-  m_targetValue(targetValue)
+  m_commands(commands)
 {
     VERIFY(m_scaleoutProvider.isHostNic(), "Cannot use libfabric descriptor on a non-hostnic provider");
 }
@@ -454,7 +456,7 @@ void LibfabricNonCollectiveScaleoutDescriptor::run(NonCollectiveState& nonCollec
         HostStream* sendHostStream = provider.m_hostStreamVec[m_archStreamIdx][hostUarchStreamIdx][HOST_STREAM_SEND];
         HostStream* waitForCompHostStream =
             provider.m_hostStreamVec[m_archStreamIdx][hostUarchStreamIdx][HOST_STREAM_WAIT_FOR_SEND_COMP];
-        const fence_info fence(nonCollectiveState.m_execution.m_scaleoutFences[0]);
+        const FenceInfo fence(nonCollectiveState.m_execution.m_scaleoutFences[0]);
 
         LOG_HCL_TRACE(HCL,
                       "scaleout send's pdma will signal to {}; move {} bytes of data from device addr 0x{:x} to mapped "
@@ -480,7 +482,7 @@ void LibfabricNonCollectiveScaleoutDescriptor::run(NonCollectiveState& nonCollec
                                         fence.lbw.addr);
 
         const uint32_t soAddr = nonCollectiveState.m_execution.m_completionSoAddr;
-        const sob_info sob(m_collectiveRoutines.getScalUtils()->getSOBInfo(soAddr));
+        const SobInfo  sob(m_collectiveRoutines.getScalUtils()->getSOBInfo(soAddr));
         LOG_HCL_TRACE(HCL,
                       "send, remoteRank={}, soAddr=0x{:x}, sob.sobId={}, fence.index={}",
                       remoteRank,
@@ -522,7 +524,7 @@ void LibfabricNonCollectiveScaleoutDescriptor::run(NonCollectiveState& nonCollec
         if (nonCollectiveState.m_firstRank)
         {
             // Needs to be done once per arbitrator recv stream
-            const fence_info fence = nonCollectiveState.m_execution.m_scaleoutFences[0];
+            const FenceInfo fence = nonCollectiveState.m_execution.m_scaleoutFences[0];
             m_commands.serializeLbwWriteCommand(m_currentStream, m_schedIdx, fence.lbw.addr, fence.lbw.data);
             LOG_HCL_TRACE(HCL,
                           "recv's serializeLbwWriteCommand to {}",
@@ -532,8 +534,8 @@ void LibfabricNonCollectiveScaleoutDescriptor::run(NonCollectiveState& nonCollec
                                                                  recvHostStream->getSrCount());
         }
 
-        const sob_info sob1(nonCollectiveState.m_execution
-                                .m_scaleoutInternalSOBs[0]);  // we use single internal SOB for all stream recv
+        const SobInfo sob1(nonCollectiveState.m_execution
+                               .m_scaleoutInternalSOBs[0]);  // we use single internal SOB for all stream recv
         LOG_HCL_TRACE(HCL, "recv, remoteRank={}, sob1.sobId={}, sob1.dcore={}", remoteRank, sob1.sobId, sob1.dcore);
         recvHostStream->incSrCount();
         OfiCompCallbackParams compParams {
@@ -566,7 +568,7 @@ void LibfabricNonCollectiveScaleoutDescriptor::run(NonCollectiveState& nonCollec
                                                                   {sob1, nonCollectiveState.m_recvFenceValue});
         }
         const uint32_t soAddr = nonCollectiveState.m_execution.m_completionSoAddr;
-        const sob_info sob2(m_collectiveRoutines.getScalUtils()->getSOBInfo(soAddr));
+        const SobInfo  sob2(m_collectiveRoutines.getScalUtils()->getSOBInfo(soAddr));
         LOG_HCL_TRACE(HCL, "recv remoteRank={}, soAddr=0x{:x}, sob2.sobId={}", remoteRank, soAddr, sob2.sobId);
         LOG_HCL_TRACE(HCL,
                       "scaleout recv's pdma will signal to {}; move {} bytes of data from mapped "
@@ -635,8 +637,10 @@ GaudiDirectNonCollectiveScaleoutDescriptor::GaudiDirectNonCollectiveScaleoutDesc
 
 void GaudiDirectScaleoutDescriptor::run(SliceState& sliceState)
 {
-    LibfabricScaleoutProvider& provider = dynamic_cast<LibfabricScaleoutProvider&>(m_scaleoutProvider);
-    HCL_Rank remoteRank = sliceState.m_dynamicComm.getScaleupGroupToRankMap()[sliceState.m_boxNumInfo.m_boxNum];
+    LibfabricScaleoutProvider& provider   = dynamic_cast<LibfabricScaleoutProvider&>(m_scaleoutProvider);
+    HCL_Rank                   remoteRank = sliceState.m_remoteRank > HCL_INVALID_RANK
+                                                ? sliceState.m_remoteRank
+                                                : sliceState.m_dynamicComm.getScaleupGroupToRankMap()[sliceState.m_boxNumInfo.m_boxNum];
 
     uint32_t remoteRankIteration = sliceState.m_all2allIter;
     uint32_t dataSize            = sliceState.m_execution.m_cellCount * sliceState.m_dataTypeSizeInBytes;
@@ -645,7 +649,7 @@ void GaudiDirectScaleoutDescriptor::run(SliceState& sliceState)
     uint32_t offsetForSend       = 0;
 
     const uint32_t soAddr = sliceState.m_execution.m_completionSoAddr;
-    const sob_info sob    = m_utils->getSOBInfo(soAddr);
+    const SobInfo  sob    = m_utils->getSOBInfo(soAddr);
 
     if (sliceState.m_collectiveOp == eHCLAll2All && sliceState.m_all2allIterations > 1)
     {
@@ -681,7 +685,7 @@ void GaudiDirectScaleoutDescriptor::run(SliceState& sliceState)
         }
         else
         {
-            fence_info fence = sliceState.m_execution.m_scaleoutFences[0];
+            FenceInfo fence = sliceState.m_execution.m_scaleoutFences[0];
             // a dummy signal to mimic PDMA operation to use the same HNIC graph
             m_commands.serializeLbwWriteCommand(
                 m_currentStream,
@@ -720,7 +724,7 @@ void GaudiDirectScaleoutDescriptor::run(SliceState& sliceState)
             provider.m_hostStreamVec[m_archStreamIdx][hostUarchStreamIdx][HOST_STREAM_WAIT_FOR_RECV_COMP];
         uint64_t recvAddr = sliceState.m_execution.m_deviceAddress + offsetForRecv;
 
-        fence_info fence = sliceState.m_execution.m_scaleoutFences[0];
+        FenceInfo fence = sliceState.m_execution.m_scaleoutFences[0];
 
         m_commands.serializeLbwWriteCommand(m_currentStream, m_schedIdx, fence.lbw.addr, fence.lbw.data);
 
@@ -780,7 +784,7 @@ void GaudiDirectNonCollectiveScaleoutDescriptor::run(NonCollectiveState& nonColl
     const HCL_Rank             remoteRank         = nonCollectiveState.m_remoteRank;
     unsigned                   hostUarchStreamIdx = getHostUarchStreamIdx();
     const uint32_t             soAddr             = nonCollectiveState.m_execution.m_completionSoAddr;
-    const sob_info             sob(m_collectiveRoutines.getScalUtils()->getSOBInfo(soAddr));
+    const SobInfo              sob(m_collectiveRoutines.getScalUtils()->getSOBInfo(soAddr));
 
     const uint32_t size =
         nonCollectiveState.m_execution.m_deviceCount * dataTypeSizeInBytes(nonCollectiveState.m_dataType);
@@ -797,7 +801,7 @@ void GaudiDirectNonCollectiveScaleoutDescriptor::run(NonCollectiveState& nonColl
         HostStream* sendHostStream = provider.m_hostStreamVec[m_archStreamIdx][hostUarchStreamIdx][HOST_STREAM_SEND];
         HostStream* waitForCompHostStream =
             provider.m_hostStreamVec[m_archStreamIdx][hostUarchStreamIdx][HOST_STREAM_WAIT_FOR_SEND_COMP];
-        const fence_info fence(nonCollectiveState.m_execution.m_scaleoutFences[0]);
+        const FenceInfo fence(nonCollectiveState.m_execution.m_scaleoutFences[0]);
 
         // a dummy signal to ensure that the send (on the host stream) doesn't begin before barrierArm finishes
         m_commands.serializeLbwWriteCommand(m_currentStream,
@@ -845,7 +849,7 @@ void GaudiDirectNonCollectiveScaleoutDescriptor::run(NonCollectiveState& nonColl
         if (nonCollectiveState.m_firstRank)
         {
             // Needs to be done once per arbitrator recv stream
-            const fence_info fence = nonCollectiveState.m_execution.m_scaleoutFences[0];
+            const FenceInfo fence = nonCollectiveState.m_execution.m_scaleoutFences[0];
             m_commands.serializeLbwWriteCommand(m_currentStream, m_schedIdx, fence.lbw.addr, fence.lbw.data);
             LOG_HCL_TRACE(HCL,
                           "scaleout recv from remoteRank={}, will signal to fence.index={}",

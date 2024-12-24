@@ -13,7 +13,7 @@ public:
     HclGraphSyncGaudi3(const HclGraphSyncGaudi3&)            = delete;
     HclGraphSyncGaudi3& operator=(HclGraphSyncGaudi3&&)      = delete;
     HclGraphSyncGaudi3& operator=(const HclGraphSyncGaudi3&) = delete;
-    virtual ~HclGraphSyncGaudi3()                            = default;
+    virtual ~HclGraphSyncGaudi3();
     virtual uint32_t getSoConfigValue(unsigned value, bool isReduction) override;
 
 private:

@@ -52,6 +52,12 @@ public:
         VERIFY(false, "device not initialized");
         return hcclInvalidUsage;
     }
+    virtual uint32_t stream_id(void* streamHandle) override
+    {
+        VERIFY(false, "device not initialized");
+        return 0;
+    }
+
     virtual operator hcl_device_t() override
     {
         VERIFY(false, "device not initialized");
@@ -72,7 +78,7 @@ void hccl_device_t::aggregators_t::init()
 {
     if (hccl_device().initialized && (size() == 0))
     {
-        FOR_I(hccl_device()->getHal()->getMaxStreams())
+        FOR_I(hccl_device()->getHal().getMaxStreams())
         {
             push_back(new ApiAggregatorGen2Arch(hccl_device().collectives[i]));
         }
@@ -156,16 +162,6 @@ hccl_device_t::~hccl_device_t() noexcept(false)
     }
 
     collectives_.clear();
-}
-
-static uint32_t stream_id(const synStreamHandle streamHandle)
-{
-    if (auto handle = synStreamGetHclStreamHandle(streamHandle))
-    {
-        return hcl::getStreamID(handle);
-    }
-
-    return 0;
 }
 
 hcclResult_t hccl_device_t::send_recv_call(int myRank, const SendRecvApiEntry& entry)

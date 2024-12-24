@@ -17,10 +17,6 @@
 class HclCommandsGen2Arch;                                // lines 9-9
 class HclDeviceGen2Arch;                                  // lines 10-10
 
-const hcl::SchedulersIndex initCgSchedList[] = {hcl::SchedulersIndex::sendScaleUp,
-                                                hcl::SchedulersIndex::recvScaleUp,
-                                                hcl::SchedulersIndex::dma};
-
 namespace hcl
 {
 class ScalStreamBase;
@@ -105,67 +101,10 @@ void Gaudi3ScalManager::initSimb(HclDeviceGen2Arch* device, uint8_t apiID)
     Gen2ArchScalManager::waitOnCg(cgComplex, m_configurationCount + 1);
 }
 
-void Gaudi3ScalManager::configScaleupQps(HCL_Comm comm, HclDeviceGaudi3* device, bool isSend)
+uint64_t Gaudi3ScalManager::getInitCgNextSo()
 {
-    LOG_HCL_DEBUG(HCL_SCAL,
-                  "configuring {} Qps, m_configurationCount={}",
-                  isSend ? "send" : "recv",
-                  m_configurationCount);
-
-    HclCommandsGaudi3&   gaudi3Commands = (HclCommandsGaudi3&)(device->getGen2ArchCommands());
-    HclGraphSyncGaudi3   graphSync(0, gaudi3Commands);
-    hcl::SchedulersIndex sched = isSend ? hcl::SchedulersIndex::sendScaleUp : hcl::SchedulersIndex::recvScaleUp;
     Gen2ArchScalWrapper::CgComplex cgComplex = m_scalWrapper->getCgInfo("network_scaleup_init_completion_queue");
-    uint64_t soAddressLSB = cgComplex.cgInfo.cgBaseAddr + (mod(++m_configurationCount, cgComplex.cgInfo.size) * 4);
-
-    constexpr unsigned qpArchStreamIdx = 0;
-    hcl::ScalStream&   stream          = getScalStream(qpArchStreamIdx, (unsigned)sched, 2);
-    stream.setTargetValue(0);
-
-    // Alloc Barrier
-    for (auto scheduler : initCgSchedList)
-    {
-        unsigned&        cgIdx    = cgComplex.cgInfo.cgIdx[(int)scheduler];
-        hcl::ScalStream& abStream = getScalStream(qpArchStreamIdx, (unsigned)scheduler, 2);
-        gaudi3Commands.serializeAllocBarrierCommand(abStream, (int)scheduler, cgIdx, 1);
-    }
-
-    // set the SO to the correct value 0x400-0x1
-    gaudi3Commands.serializeLbwWriteCommand(stream,
-                                            (unsigned)sched,
-                                            soAddressLSB,
-                                            graphSync.getSoConfigValue(COMP_SYNC_GROUP_CMAX_TARGET - 1, true));
-
-    // for null submission, disable Scal write for QP's config since they are 0
-    if (GCFG_HCL_NULL_SUBMIT.value())
-    {
-        LOG_HCL_TRACE(HCL_SCAL, "calling disableCcb(true)");
-        disableCcb(qpArchStreamIdx, true);
-    }
-
-    // add qp configuration commands to the cyclic buffer
-    device->setScaleUpQPConfiguration(stream, comm, isSend);
-
-    if (GCFG_HCL_NULL_SUBMIT.value())
-    {
-        LOG_HCL_TRACE(HCL_SCAL, "calling disableCcb(false)");
-        disableCcb(qpArchStreamIdx, false);
-    }
-
-    // Increment the SO to free the barrier
-    gaudi3Commands.serializeLbwWriteCommand(stream, (unsigned)sched, soAddressLSB, graphSync.getSoConfigValue(1, true));
-
-    // submit to FW
-    stream.submit();
-
-    // Wait for completion
-    Gen2ArchScalManager::waitOnCg(cgComplex, m_configurationCount + 1);
-}
-
-void Gaudi3ScalManager::configQps(HCL_Comm comm, HclDeviceGen2Arch* device)
-{
-    configScaleupQps(comm, (HclDeviceGaudi3*)device, true);
-    configScaleupQps(comm, (HclDeviceGaudi3*)device, false);
+    return (cgComplex.cgInfo.cgBaseAddr + (mod(++m_configurationCount, cgComplex.cgInfo.size) * 4));
 }
 
 // return the gaudi3 value from QMAN FW gaudi3_arc_host_packets.h

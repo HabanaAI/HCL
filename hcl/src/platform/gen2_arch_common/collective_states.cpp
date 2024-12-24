@@ -32,6 +32,8 @@ CommonState::CommonState(HclCollectiveParams& other,
                          RemainderCalculator* remainderCalculator)
 : HclCollectiveParams(other),
   m_hnicQpSprayThreshold(GCFG_HCL_HNIC_QP_SPRAY_THRESHOLD.value()),
+  m_singleQpPerSet(GCFG_HCL_SINGLE_QP_PER_SET.value()),
+  m_qpSetCount(GCFG_HCL_HNIC_SCALE_OUT_QP_SETS.value()),
   m_rootBox(m_root == HCL_INVALID_RANK ? (unsigned)-1 : m_dynamicComm.getRankToScaleupGroupMap()[m_root]),
   m_isMultiScaleupGroup(m_dynamicComm.isCommunicatorMultiScaleupGroup()),
   m_isRoot(m_root == m_dynamicComm.getMyRank()),
@@ -60,39 +62,40 @@ CommonState::CommonState(HclCollectiveParams& other,
     m_signalsCalculator->initialize(*this);
 }
 
+CommonState::CommonState(HclCollectiveParams& other,
+                         DeviceBufferManager& intermediateBufferManager,
+                         unsigned             workDistributionGroupSize,
+                         const unsigned       maxNumScaleUpPortsPerConnection,
+                         unsigned             numScaleOutPorts,
+                         SignalsCalculator&   signalsCalculator,
+                         RemainderCalculator* remainderCalculator)
+: HclCollectiveParams(other),
+  m_hnicQpSprayThreshold(GCFG_HCL_HNIC_QP_SPRAY_THRESHOLD.value()),
+  m_singleQpPerSet(GCFG_HCL_SINGLE_QP_PER_SET.value()),
+  m_qpSetCount(GCFG_HCL_HNIC_SCALE_OUT_QP_SETS.value()),
+  m_rootBox(m_root == HCL_INVALID_RANK ? (unsigned)-1 : m_dynamicComm.getRankToScaleupGroupMap()[m_root]),
+  m_isMultiScaleupGroup(m_dynamicComm.isCommunicatorMultiScaleupGroup()),
+  m_isRoot(m_root == m_dynamicComm.getMyRank()),
+  m_isRootPeer(isRootPeerExclusive(m_dynamicComm.getMyRank())),
+  m_isRootBox(m_dynamicComm.getMyScaleupGroup() == m_rootBox),
+  m_workDistributionGroupSize(workDistributionGroupSize),
+  m_numScaleOutPorts(numScaleOutPorts),
+  m_dataTypeSizeInBytes(dataTypeSizeInBytes(m_dataType)),
+  m_intermediateBufferManager(intermediateBufferManager),
+  m_remainderCalculator(remainderCalculator),
+  m_boxType((HclConfigType)GCFG_BOX_TYPE_ID.value()),
+  m_maxNumScaleUpPortsPerConnection(maxNumScaleUpPortsPerConnection),
+  m_signalsCalculator(&signalsCalculator)
+{
+    setIsReductionCollective();
+    check16BitReductionOp();
+    checkHierarchicalOp();
+
+    m_signalsCalculator->initialize(*this);
+}
+
 uint64_t CommonState::calculateCUID(bool isFirstBox, bool isLastBox)
 {
-    struct cuid_t
-    {
-        union
-        {
-            struct
-            {
-                uint64_t collectiveOp : 4;         // 0..3
-                uint64_t currentOp : 4;            // 4..7
-                uint64_t inPlace : 1;              // 8
-                uint64_t isRoot : 1;               // 9
-                uint64_t isRootPeer : 1;           // 10
-                uint64_t isRootBox : 1;            // 11
-                uint64_t isMultiScaleupGroup : 1;  // 12
-                uint64_t isPeersOnly : 1;          // 13
-                uint64_t isHostNic : 1;            // 14
-                uint64_t isGaudiDirect : 1;        // 15
-                uint64_t isFloat : 1;              // 16
-                uint64_t isBf16 : 1;               // 17
-                uint64_t all2allIter : 4;          // 18..21
-                uint64_t comm : 16;                // 22..37
-                uint64_t boxIterPhase : 3;         // 38..40
-                uint64_t firstBox : 1;             // 41
-                uint64_t lastBox : 1;              // 42
-                uint64_t edgeIteration : 1;        // 43
-                uint64_t firstScaleOut : 1;        // 44
-                uint64_t reserved : 19;            // 45..63
-            };
-            uint64_t raw;
-        };
-    };
-
     VERIFY(DeviceBufferManager::getFactor(SCALEOUT_POOL) <= 8, "Not enough bits to represent boxIterPhase!");
     static_assert(sizeof(cuid_t) == sizeof(uint64_t), "Size of cuid_t structure is not as expected!");
 
@@ -320,11 +323,6 @@ uint64_t CommonState::calcRecvAddrSize() const
 
     VERIFY(false, "unknown collective opcode {}", m_collectiveOp);
     return 0;
-}
-
-void CommonState::initializeSignalsCalculator()
-{
-    m_signalsCalculator->initialize(*this);
 }
 
 unsigned CommonState::countSignalsSingleOp() const
@@ -1082,10 +1080,13 @@ void CommonState::calcSliceQpSet(const unsigned sliceIter)
 {
     /* Params used to calculate m_qpSet, should be symmetric between ranks */
 
-    const auto transactionSize = m_rankScaleOutCount * m_dataTypeSizeInBytes;
-    m_qpSet                    = (m_isHostNic && (transactionSize <= m_hnicQpSprayThreshold))
-                                     ? 0  // Use only the first qpSet below threshold
-                                     : mod(m_dynamicComm.getCollectiveCtr() + sliceIter, m_dynamicComm.getMaxScaleOutQpSetsNum());
+    const auto transactionSize  = m_rankScaleOutCount * m_dataTypeSizeInBytes;
+    const bool isBelowThreshold = m_isHostNic && (transactionSize < m_hnicQpSprayThreshold);
+    // In case qp set are single-qp we use the first qp set
+    // In case qp set is multi qp we use the last qp set which is single-qp
+    m_qpSet = isBelowThreshold
+                  ? (m_singleQpPerSet ? 0 : m_qpSetCount)
+                  : mod(m_dynamicComm.getCollectiveCtr() + sliceIter, m_dynamicComm.getMaxScaleOutQpSetsNum());
 }
 
 unsigned CommonState::getBroadcastScatterOpBoxIterations() const
@@ -1093,25 +1094,43 @@ unsigned CommonState::getBroadcastScatterOpBoxIterations() const
     return std::min(m_boxIterations, 2u);
 }
 
+SliceState::SliceState(const CommonState& commonState,
+                       HCL_CollectiveOp   currentOp,
+                       bool               isSend,
+                       unsigned           sliceIter,
+                       BoxNumInfo         boxNumInfo)
+: CommonState(commonState), m_isSend(isSend), m_sliceIter(sliceIter), m_boxNumInfo(boxNumInfo)
+{
+    m_currentOp = currentOp;
+}
+
 SliceState::SliceState(const CommonState&   commonState,
                        HclAddressGenerator& addressGenerator,
                        HCL_CollectiveOp     currentOp,
                        bool                 isSend,
                        unsigned             sliceIter,
-                       BoxNumInfo           boxNumInfo,
-                       int                  streamId)
+                       BoxNumInfo           boxNumInfo)
 : CommonState(commonState), m_isSend(isSend), m_sliceIter(sliceIter), m_boxNumInfo(boxNumInfo)
 {
     m_currentOp = currentOp;
 
-    calcBoxAndScaleOutCounts();
+    initSlice();
+
+    uint64_t offset = m_dynamicComm.getRankInScaleupGroup() * m_execution.m_strideCount * m_dataTypeSizeInBytes;
+
+    setScaleoutAddresses(addressGenerator, offset);
+}
+
+void SliceState::initSlice(bool calcScaleout)
+{
+    if (calcScaleout) calcBoxAndScaleOutCounts();
 
     LOG_TRACE(HCL_ECR,
               "Counts for collective {}, slice {}, box num {}: box type {}: ScaleUp cell count {}, ScaleUp stride {},"
               "Box count {}, Box stride {}, ScaleOut cell count {}, slice offset count {}, has_buffer {}, "
               "collective count {}, slices {}",
               m_collectiveOp,
-              sliceIter,
+              m_sliceIter,
               m_boxNumInfo.m_boxNum,
               m_boxNumInfo.m_orientation,
               m_rankScaleUpCount,
@@ -1127,9 +1146,6 @@ SliceState::SliceState(const CommonState&   commonState,
     if (!m_isMultiScaleupGroup) return;
 
     m_isHierarchicalFirst = (m_boxNumInfo.m_boxNum == m_dynamicComm.getMyScaleupGroup());
-    m_isHierarchicalLast =
-        ((m_isSend ? getNextBox(m_boxNumInfo.m_boxNum, m_boxIterations)
-                   : getPrevBox(m_boxNumInfo.m_boxNum, m_boxIterations)) == m_dynamicComm.getMyScaleupGroup());
 
     m_execution.m_deviceCount = m_boxStrideCount;
     m_execution.m_cellCount   = m_rankScaleOutCount;
@@ -1161,9 +1177,24 @@ SliceState::SliceState(const CommonState&   commonState,
     {
         m_execution.m_strideCount = m_scaleUpStrideCount;
     }
+}
 
-    uint64_t offset = m_dynamicComm.getRankInScaleupGroup() * m_execution.m_strideCount * m_dataTypeSizeInBytes;
+void SliceState::updateScaleoutCounts(HCL_Rank remoteRank, uint64_t inputCount, uint8_t requiredInternalFences)
+{
+    m_remoteRank                     = remoteRank;
+    const unsigned remote_box        = m_dynamicComm.getRankToScaleupGroupMap()[remoteRank];
+    m_boxNumInfo.m_boxNum            = remote_box;
+    m_setup.m_scaleoutInternalFences = requiredInternalFences;
+    m_execution.m_scaleoutFences.clear();
+    m_execution.m_scaleoutInternalSOBs.clear();
+    initSlice(false);
+    m_rankScaleOutCount       = inputCount;
+    m_execution.m_cellCount   = inputCount;
+    m_execution.m_strideCount = inputCount;
+}
 
+void SliceState::setScaleoutAddresses(HclAddressGenerator& addressGenerator, uint64_t offset)
+{
     if (!m_isHierarchicalFirst)
     {
         if (m_isSend)
@@ -1366,4 +1397,31 @@ void NonCollectiveState::calcSliceQpSet(const unsigned sliceIter)
 {
     /* Params used to calculate m_qpSet, should be symmetric between ranks */
     m_qpSet = mod(sliceIter, m_dynamicComm.getMaxScaleOutQpSetsNum());
+}
+
+std::ostream& operator<<(std::ostream& out, const cuid_t& cuid)
+{
+    out << "CUID(0x" << std::hex << cuid.raw << std::dec << ")\n{"
+        << " collectiveOp: " << cuid.collectiveOp
+        << ", currentOp: " << cuid.currentOp
+        << ", inPlace: " << cuid.inPlace
+        << ", isRoot: " << cuid.isRoot
+        << ", isRootPeer: " << cuid.isRootPeer
+        << ", isRootBox: " << cuid.isRootBox
+        << ", isMultiScaleupGroup: " << cuid.isMultiScaleupGroup
+        << ", isPeersOnly: " << cuid.isPeersOnly
+        << ", isHostNic: " << cuid.isHostNic
+        << ", isGaudiDirect: " << cuid.isGaudiDirect
+        << ", isFloat: " << cuid.isFloat
+        << ", isBf16: " << cuid.isBf16
+        << ", all2allIter: " << cuid.all2allIter
+        << ", comm: " << cuid.comm
+        << ", boxIterPhase: " << cuid.boxIterPhase
+        << ", firstBox: " << cuid.firstBox
+        << ", lastBox: " << cuid.lastBox
+        << ", edgeIteration: " << cuid.edgeIteration
+        << ", firstScaleOut: " << cuid.firstScaleOut
+        << ", reserved: " << cuid.reserved
+        << " }";
+    return out;
 }

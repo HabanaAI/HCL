@@ -9,6 +9,11 @@
 #ifndef likely
 #define likely HLLOG_LIKELY
 #endif
+
+#ifndef HLLOG_DEFINE_OSTREAM_FORMATTER
+#define HLLOG_DEFINE_OSTREAM_FORMATTER(full_type_name)
+#endif
+
 namespace hcl
 {
 class LogManager
@@ -30,6 +35,7 @@ public:
         HCL_TEST,
         FUNC_SCOPE,
         HCL_CG,
+        HCL_FAILOVER,
         LOG_MAX  // Must be last
     };
 #define HLLOG_ENUM_TYPE_NAME hcl::LogManager::LogType

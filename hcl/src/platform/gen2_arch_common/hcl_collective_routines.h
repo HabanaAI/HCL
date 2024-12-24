@@ -23,6 +23,8 @@
 #include "platform/gen2_arch_common/hcl_mem_handler.h"
 #include "platform/gen2_arch_common/server_connectivity.h"  // for Gen2ArchServerConnectivity
 #include "platform/gen2_arch_common/active_stream_manager.h"
+#include "collective_interface/prims/hccl_prim.h"
+#include "collective_interface/hccl_graph.h"
 
 #include "buffer_allocation_manager.h"
 
@@ -38,7 +40,6 @@ class DependencyChecker;
 
 namespace hcl
 {
-class Gen2ArchScalManager;
 class ScalStream;
 class ScalStreamBase;
 }  // namespace hcl
@@ -52,17 +53,25 @@ class ScaleoutProvider;
 class DeviceBufferManager;
 class HclGraphSyncGen2Arch;
 
-class HclCollectiveRoutinesGen2Arch : public IHclCollectiveRoutines
+class HclCollectiveRoutinesGen2Arch : public IHcclGraphEngine
 {
 public:
     HclCollectiveRoutinesGen2Arch(HclDeviceGen2Arch* device, int streamId, WqeTracker* wqeTracker);
-    ~HclCollectiveRoutinesGen2Arch();
+    virtual ~HclCollectiveRoutinesGen2Arch();
+    virtual uint64_t     initGraph(HcclGraph* graph) override;
+    virtual void         finalizeGraph(HcclGraph* graph, uint64_t startTargetVal) override;
+    virtual void         initExec(HcclGraph* graph, int exec) override;
+    virtual void         finalizeExec(HcclGraph* graph, int exec) override;
+    virtual hcclResult_t processAgPrim(HcclGraph* graph, HcclPrimAllGather* agPrim) override;
+    virtual hcclResult_t processBcastPrim(HcclGraph* graph, HcclPrimBroadcast* bcastPrim) override;
+    virtual hcclResult_t processSendPrim(HcclGraph* graph, HcclPrimSend* sendPrim) override;
+    virtual hcclResult_t processRecvPrim(HcclGraph* graph, HcclPrimRecv* recvPrim) override;
 
     void barrierArmSchedulers(unsigned requiredCredits, HCL_CollectiveOp currentOp);
     void configureExternalSoForCompletion(unsigned numSignals);
 
     void                 onCommInit(const HCL_Comm commId);
-    virtual hcclResult_t hclCollectiveCall(HclCollectiveParams& params) override;
+    virtual hcclResult_t hclCollectiveCall(HclCollectiveParams& params);
     virtual void         hclCollectiveCall(CommonState&     commonState,
                                            unsigned         sliceIter,
                                            unsigned         boxIter,
@@ -119,11 +128,6 @@ protected:
                                 unsigned int   sizeInBytes,
                                 unsigned       requiredCredits,
                                 hcclDataType_t dataType);
-
-    uint64_t getBufferClearSize(SliceState&    sendSliceState,
-                                uint64_t       scaleOutRecvCount,
-                                uint64_t       sizeInBytes,
-                                e_devicePoolID bufferId);
 
     void createScaleUpSendProgs(SliceState&      sliceState,
                                 unsigned         sliceIter,
@@ -234,6 +238,8 @@ protected:
                                     hcclDataType_t   dataType,
                                     hcl::ScalStream* garbageStream) = 0;
 
+    void addScaleoutInternalSOB(SliceState& sliceState, WaitMethod method);
+
     HclDeviceGen2Arch*    m_device;
     int                   m_streamId = 0;
     HclGraphSyncGen2Arch& m_graphSync;
@@ -264,4 +270,7 @@ protected:
     uint64_t                          m_groupMaxTargetValue     = 0;
     std::vector<e_devicePoolID>       m_memset_buffers          = {SCALEOUT_POOL, REDUCE_POOL};
     const Gen2ArchServerConnectivity& m_serverConnectivity;
+    bool                              m_nullSubmit;
+
+    bool m_requestStrongOrderIter = false;
 };

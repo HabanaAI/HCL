@@ -80,7 +80,7 @@ public:
      */
     virtual HCL_Rank getCommRank(HCL_Comm comm, HCL_Rank rank);
 
-    hcclResult_t updateRankQps(HCL_Comm comm, HCL_Rank rank);
+    hcclResult_t connectRankQps(HCL_Comm comm, HCL_Rank rank);
 
     HCL_Rank getGlobalRankForComm(HCL_Comm comm, HCL_Rank rankID) const;
 
@@ -132,8 +132,6 @@ public:
 
     virtual hcclResult_t networkFlush(HCL_Request* phRequest, synStreamHandle streamHandle);
 
-    virtual int pcieFlush();
-
     virtual hcclResult_t sync(HCL_Comm comm, uint16_t tag);
 
     virtual void waitForAllEvents(bool isCsDone = true);
@@ -142,12 +140,13 @@ public:
     virtual nics_mask_t getActiveNics(HCL_Rank fromRank, HCL_Rank toRank, int physicalQueueOffset, HCL_Comm comm) = 0;
 
     /**
-     * @brief Get all Nics State
-     * @return
-     *      hcclSuccess if all enabled NICs are up
-     *      hcclInternalError if one of enabled NICs is down
+     * @brief update a specific nic status - UP or DOWN
+     *
+     * @param nic    - nic num
+     * @param up     - is state UP
+     * @param atInit - is this function called at init
      */
-    hcclResult_t updateNicsState();  // move to private
+    void updateNicState(const uint32_t nic, const bool up, const bool atInit);
 
     /**
      * @brief check if a nic is up using hl_thunk
@@ -167,15 +166,15 @@ public:
      */
     virtual bool isScaleOutPort(const uint16_t port, const HCL_Comm comm = DEFAULT_COMM_ID) const = 0;
 
-    HclDeviceConfig&         getDeviceConfig() { return m_deviceConfig; }
-    const HclDeviceConfig&   getDeviceConfig() const { return m_deviceConfig; }
-    int                      getFd() const;
-    inline const hcl::HalPtr getHal() const { return m_hal; }
+    HclDeviceConfig&       getDeviceConfig() { return m_deviceConfig; }
+    const HclDeviceConfig& getDeviceConfig() const { return m_deviceConfig; }
+    int                    getFd() const;
+    inline const hcl::Hal& getHal() const { return *m_hal; }  // Avoid copy ctor of shared ptr
 
     virtual void         openWQs();
-    hcclResult_t         openQps(HCL_Comm comm);
-    virtual hcclResult_t updateQps(HCL_Comm comm);
-    virtual uint8_t      getPeerNic(HCL_Rank rank, HCL_Comm comm, uint8_t port);
+    hcclResult_t         openQpToRemoteRanks(const HCL_Comm comm);
+    virtual hcclResult_t connectCommQps(const HCL_Comm comm);
+    virtual uint8_t      getPeerNic(const HCL_Rank rank, const HCL_Comm comm, const uint8_t port);
 
     virtual bool isDramAddressValid(uint64_t addr) const = 0;
 
@@ -205,10 +204,14 @@ public:
 
     virtual spHclNic allocateNic(uint32_t nic, uint32_t max_qps) { return std::make_shared<IHclNic>(this, nic); }
 
-    virtual uint32_t createQp(uint32_t port, uint8_t qpId) = 0;
-    virtual hcclResult_t
-    setupQps(HCL_Comm comm, HCL_Rank rank, uint32_t stream, uint32_t port, uint32_t qpn, uint8_t qpSet) = 0;
-    virtual void destroyQp(uint32_t port, uint32_t qpn)                                                 = 0;
+    virtual uint32_t     createQpnInLKD(const uint32_t port, const uint8_t qpId) = 0;
+    virtual hcclResult_t establishQpConnectionWithPeerQp(const HCL_Comm comm,
+                                                         const HCL_Rank rank,
+                                                         const uint32_t stream,
+                                                         const uint32_t port,
+                                                         const uint32_t qpn,
+                                                         const uint8_t  qpSet)    = 0;
+    virtual void         destroyQp(uint32_t port, uint32_t qpn)                  = 0;
 
     virtual uint64_t getDRAMSize() { return 0; };
     virtual uint64_t getDRAMBaseAddr() { return 0; };
@@ -223,7 +226,7 @@ public:
     virtual const Gen2ArchServerDef& getServerDefConst() const = 0;
 
 protected:
-    virtual uint32_t allocateConnection(uint32_t port, HCL_Rank rank, HCL_Comm comm, uint8_t qpId, uint8_t qpSet = 0);
+    virtual uint32_t allocateQp(uint32_t port, HCL_Rank rank, HCL_Comm comm, uint8_t qpId, uint8_t qpSet = 0);
     virtual void     setGaudiDirect() {};
 
     void setHal(hcl::HalPtr ptr);
@@ -264,6 +267,7 @@ protected:
     struct
     {
         nics_mask_t mask;
+        nics_mask_t state;
         nics_map    nics;
         macs_map    macs;
 

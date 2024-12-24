@@ -34,18 +34,18 @@ void HclCollectiveMemHandlerGaudi2::generateBaseAddressOrSubBuffIdx(SliceState& 
     }
 }
 
-void HclCollectiveMemHandlerGaudi2::memsetIMBs(hcl::IntermediateBufferContainer* imbContainer,
-                                               SignalsManager*                   signalsManager,
-                                               SliceState&                       sendSliceState,
-                                               SliceState&                       recvSliceState,
-                                               unsigned int                      sizeInBytes,
-                                               hcl::syncInfo                     longSo,
-                                               unsigned                          schedIdx,
-                                               hcl::ScalStream&                  garbageCollectionStream,
-                                               HCL_StreamId                      m_streamId,
-                                               e_devicePoolID                    poolId,
-                                               uint8_t                           streamCtxtID,
-                                               hcclDataType_t                    dataType)
+void HclCollectiveMemHandlerGaudi2::memsetIMBs(IntermediateBufferContainer* imbContainer,
+                                               SignalsManager*              signalsManager,
+                                               SliceState&                  sendSliceState,
+                                               SliceState&                  recvSliceState,
+                                               unsigned int                 sizeInBytes,
+                                               hcl::syncInfo                longSo,
+                                               unsigned                     schedIdx,
+                                               hcl::ScalStream&             garbageCollectionStream,
+                                               HCL_StreamId                 m_streamId,
+                                               e_devicePoolID               poolId,
+                                               uint8_t                      streamCtxtID,
+                                               hcclDataType_t               dataType)
 {
     // get relevant slice
     unsigned indexOfSubBuffer = m_intermediateBufferManager.getSliceId(poolId, m_streamId);

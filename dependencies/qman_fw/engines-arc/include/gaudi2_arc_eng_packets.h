@@ -1775,30 +1775,53 @@ struct nic_wd_ctxts_scaleout_t {
  * \details Update the global ctxt for Scaleup NICs
  */
 struct arc_cmd_update_glbl_ctxt_t {
-	uint32_t update_bitmap:8;
-	/**<
-	 * Number of DWORDS that needs to be udpated in the
-	 * nic_glbl_ctxt_v2_t structure.
-	 */
-	uint32_t reserved:6;
-	/**<
-	 * Reserved
-	 */
-	uint32_t start_nic_idx:5;
-	/**<
-	 * NIC index from which nic_glbl_ctxt_t are provided.
-	 * Updates will be made to glbl ctxt structure starting
-	 * from start_nic_index
-	 */
-	uint32_t num_glbl_ctxt:8;
-	/**<
-	 * Number of uint32_t elements in the glbl_ctxt[] array
-	 * present in this command
-	 */
-	uint32_t nic_opcode:5;
-	/**<
-	 * NIC opcode : NIC_CMD_UPDATE_GLBL_CTXT
-	 */
+	union {
+		struct {
+			uint32_t update_bitmap:8;
+			/**<
+			 * Number of DWORDS that needs to be udpated in the
+			 * nic_glbl_ctxt_v2_t structure.
+			 */
+			uint32_t reserved:5;
+			/**<
+			 * Reserved
+			 */
+			uint32_t update_glbl_ctxt_v2:1;
+			/**<
+			 * If this bit is set, update only nic_glbl_ctxt_v2_t
+			 */
+			uint32_t start_nic_idx:5;
+			/**<
+			 * NIC index from which nic_glbl_ctxt_t are provided.
+			 * Updates will be made to glbl ctxt structure starting
+			 * from start_nic_index
+			 */
+			uint32_t num_glbl_ctxt:8;
+			/**<
+			 * Number of uint32_t elements in the glbl_ctxt[] array
+			 * present in this command
+			 */
+			uint32_t nic_opcode:5;
+			/**<
+			 * NIC opcode : NIC_CMD_UPDATE_GLBL_CTXT
+			 */
+		} __attribute__ ((aligned(4), __packed__));
+		struct {
+			uint32_t :19;
+			/**<
+			 * used for fields in the above struct
+			 */
+			uint32_t num_dwords:8;
+			/**<
+			 * Number of dwords present in this command
+			 */
+			uint32_t :5;
+			/**<
+			 * NIC opcode : NIC_CMD_UPDATE_GLBL_CTXT
+			 */
+		} __attribute__ ((aligned(4), __packed__));
+		uint32_t raw_dword0;
+	};
 } __attribute__ ((aligned(4), __packed__));
 
 #define ARC_CMD_UPDATE_GLBL_CTXT_SIZE (sizeof(struct arc_cmd_update_glbl_ctxt_t))
@@ -2316,137 +2339,15 @@ enum edma_eng_arc_cmd_t {
 	NIC_EDMA_CMD_SIBO_OPS_V3 = 0,
 	NIC_EDMA_CMD_LIN_OPS_V3 = 1,
 	NIC_EDMA_CMD_SIBO_MEMSET_V3 = 2,
-	NIC_EDMA_CMD_LIN_MEMSET_V3 = 3,
-	NIC_EDMA_CMD_RESERVED = 4,
-	NIC_EDMA_CMD_CAST_DOWN_CLEAR = 5,
+	NIC_EDMA_CMD_UNUSED3 = 3,
+	NIC_EDMA_CMD_UNUSED4 = 4,
+	NIC_EDMA_CMD_UNUSED5 = 5,
 	NIC_EDMA_CMD_LIN_MEMSET_V3_2 = 6,
 	NIC_EDMA_CMD_Q_SEL = 7,
 	NIC_EDMA_CMD_UPDATE_GLBL_CTXT_V3 = 8,
-	NIC_EDMA_CMD_MEMCPY_V3 = 9,
-	NIC_EDMA_CMD_CAST_UP_BATCH_V3 = 10,
-	NIC_EDMA_CMD_COUNT = 11,
+	NIC_EDMA_CMD_COUNT = 9,
 	NIC_EDMA_COUNT = NIC_EDMA_CMD_COUNT, /* Depricated, dont use */
 };
-
-/**
- * \struct  arc_cmd_nic_edma_ops_v3_t
- * \brief   Perform various EDMA operations
- * \details Perform various EDMA operations associated with
- *	    EDMAs associated with NICs.
- */
-struct arc_cmd_nic_edma_ops_v3_t {
-	struct {
-		uint32_t opcode:4;
-		/**<
-		 * opcode of the command
-		 */
-		uint32_t sob_address:27;
-		/**<
-		 * SOB address that needs to be used for signaling completion
-		 * address = 0xF8000000 | sob_address;
-		 */
-		uint32_t fp16:1;
-		/**<
-		 * valid only for cast down operation. Ignored otherwise.
-		 * When set to 1, cast to fp16. otherwise cast to bf16.
-		 */
-	} __attribute__ ((aligned(4), __packed__));
-
-	struct {
-		uint32_t shuffle_index:3;
-		/**<
-		 * Shuffle Index
-		 */
-		uint32_t use_sibo_index_as_src:1;
-		/**<
-		 * Use SIB Order buffer indexes instead of addresses
-		 */
-		uint32_t sibo_index:12;
-		/**<
-		 * SIB Order buffer Index to calculate the source buffer address
-		 */
-		uint32_t rank_offset_in_sibo:3;
-		/**<
-		 * Rank offset in SIB order buffer to start with
-		 */
-		uint32_t rank_count:4;
-		/**<
-		 * Number of ranks to be used as input buffer
-		 */
-		uint32_t memset:1;
-		/**<
-		 * memset
-		 */
-		uint32_t pool_id:1;
-		/**<
-		 * pool id to select which intermediate buffer to be used
-		 */
-		uint32_t :7;
-		/**<
-		 * unused
-		 */
-	} __attribute__ ((aligned(4), __packed__));
-
-	uint32_t transfer_size;
-	/**<
-	 * transfer size in bytes
-	 */
-	uint32_t dst_addr_lo;
-	/**<
-	 * Destination address lo
-	 */
-	uint32_t dst_addr_hi;
-	/**<
-	 * Destination address high
-	 */
-	uint32_t src_addr_lo;
-	/**<
-	 * Source address low
-	 * Note: In case of the memset this field contains value
-	 * that needs to be used for memset operation
-	 */
-	union {
-		struct {
-			uint32_t src_addr_hi:24;
-			/**<
-			 * src_addr_hi[31:25] are taken from dst_addr_hi[31:25]
-			 * Note: In case of memset operation this field is ignored
-			 */
-			uint32_t reduction_ind:1;
-			/**<
-			 * Reduction indication
-			 */
-			uint32_t reserved_0:1;
-			/**<
-			 * Reserved
-			 */
-			uint32_t reduction_op:2;
-			/**<
-			 * Reduction operation to be performed
-			 */
-			uint32_t reduction_dtype:4;
-			/**<
-			 * Reduction data type
-			 * 0xC- upscaling FP16
-			 * 0xD- upscaling BF16
-			 */
-		} __attribute__ ((aligned(4), __packed__));
-		struct {
-			uint32_t reserved_1:24;
-			/**<
-			 * reserved
-			 */
-			uint32_t reduction_7_0:8;
-			/**<
-			 * Reduction bits
-			 */
-		} __attribute__ ((aligned(4), __packed__));
-	};
-}  __attribute__ ((aligned(4), __packed__));
-
-#define ARC_CMD_NIC_EDMA_OPS_V3_SIZE (sizeof(struct arc_cmd_nic_edma_ops_v3_t))
-#define ARC_CMD_NIC_EDMA_OPS_V3_SIZE_DWORD (ARC_CMD_NIC_EDMA_OPS_V3_SIZE / 4)
-
 
 /**
  * \enum    nic_edma_datasizes_t
@@ -2573,40 +2474,38 @@ struct arc_cmd_nic_edma_sibo_ops_v3_t {
 	/**<
 	 * Source address low for the local buffer
 	 */
-	union {
-		struct {
-			uint32_t src_addr_hi:24;
-			/**<
-			 * Source address hi for the local buffer
-			 * src_addr_hi[31:25] are taken from dst_addr_hi[31:25]
-			 */
-			uint32_t reduction_ind:1;
-			/**<
-			 * Reduction indication
-			 */
-			uint32_t reduction_in_place:1;
-			/**<
-			 * TODO: This flag is kept for future use.
-			 * We haven't received clear requirements yet, but
-			 * keeping this flag so that we dont forget
-			 */
-			uint32_t wide_accumulation:1;
-			/**<
-			 * When set reduction operation should happen in FP32 data type.
-			 * All the inputs should be up casted to FP32 and copied
-			 * to output after appropriate conversion based on output
-			 * data type
-			 */
-			uint32_t reduction_op:3;
-			/**<
-			 * Reduction operation to be performed
-			 */
-			uint32_t dtype:2;
-			/**<
-			 * Type of data, which includes unsigned, singed, FP, and BF.
-			 */
-		} __attribute__ ((aligned(4), __packed__));
-	};
+	struct {
+		uint32_t src_addr_hi:24;
+		/**<
+		 * Source address hi for the local buffer
+		 * src_addr_hi[31:25] are taken from dst_addr_hi[31:25]
+		 */
+		uint32_t reduction_ind:1;
+		/**<
+		 * Reduction indication
+		 */
+		uint32_t reduction_in_place:1;
+		/**<
+		 * TODO: This flag is kept for future use.
+		 * We haven't received clear requirements yet, but
+		 * keeping this flag so that we dont forget
+		 */
+		uint32_t wide_accumulation:1;
+		/**<
+		 * When set reduction operation should happen in FP32 data type.
+		 * All the inputs should be up casted to FP32 and copied
+		 * to output after appropriate conversion based on output
+		 * data type
+		 */
+		uint32_t reduction_op:3;
+		/**<
+		 * Reduction operation to be performed
+		 */
+		uint32_t dtype:2;
+		/**<
+		 * Type of data, which includes unsigned, singed, FP, and BF.
+		 */
+	} __attribute__ ((aligned(4), __packed__));
 }  __attribute__ ((aligned(4), __packed__));
 
 #define ARC_CMD_NIC_EDMA_SIBO_OPS_V3_SIZE (sizeof(struct arc_cmd_nic_edma_sibo_ops_v3_t))
@@ -2680,34 +2579,32 @@ struct arc_cmd_nic_edma_lin_ops_v3_t {
 	/**<
 	 * Source address low for the local buffer
 	 */
-	union {
-		struct {
-			uint32_t src_addr_hi:24;
-			/**<
-			 * Source address hi for the local buffer
-			 * src_addr_hi[31:25] are taken from dst_addr_hi[31:25]
-			 * TODO: Can we reduce this to 8 Bits ? 96GB of Cache
-			 */
-			uint32_t reduction_ind:1;
-			/**<
-			 * Reduction indication
-			 */
-			uint32_t reduction_in_place:1;
-			/**<
-			 * TODO: This flag is kept for future use.
-			 * We haven't received clear requirements yet, but
-			 * keeping this flag so that we dont forget
-			 */
-			uint32_t reduction_op:2;
-			/**<
-			 * Reduction operation to be performed
-			 */
-			uint32_t :4;
-			/**<
-			 * unused
-			 */
-		} __attribute__ ((aligned(4), __packed__));
-	};
+	struct {
+		uint32_t src_addr_hi:24;
+		/**<
+		 * Source address hi for the local buffer
+		 * src_addr_hi[31:25] are taken from dst_addr_hi[31:25]
+		 * TODO: Can we reduce this to 8 Bits ? 96GB of Cache
+		 */
+		uint32_t reduction_ind:1;
+		/**<
+		 * Reduction indication
+		 */
+		uint32_t reduction_in_place:1;
+		/**<
+		 * TODO: This flag is kept for future use.
+		 * We haven't received clear requirements yet, but
+		 * keeping this flag so that we dont forget
+		 */
+		uint32_t reduction_op:2;
+		/**<
+		 * Reduction operation to be performed
+		 */
+		uint32_t :4;
+		/**<
+		 * unused
+		 */
+	} __attribute__ ((aligned(4), __packed__));
 }  __attribute__ ((aligned(4), __packed__));
 
 #define ARC_CMD_NIC_EDMA_LIN_OPS_V3_SIZE (sizeof(struct arc_cmd_nic_edma_lin_ops_v3_t))
@@ -2778,57 +2675,6 @@ struct arc_cmd_nic_edma_sibo_memset_v3_t {
 #define ARC_CMD_NIC_EDMA_SIBO_MEMSET_V3_SIZE_DWORD (ARC_CMD_NIC_EDMA_SIBO_MEMSET_V3_SIZE / 4)
 
 /**
- * \struct  arc_cmd_nic_edma_lin_memset_v3_t
- * \brief   Perform various EDMA operations
- * \details Perform various EDMA operations
- *	    associated with NICs.
- */
-struct arc_cmd_nic_edma_lin_memset_v3_t {
-	struct {
-		uint32_t opcode:4;
-		/**<
-		 * opcode of the command
-		 */
-		uint32_t sob_address:27;
-		/**<
-		 * SOB address that needs to be used for signaling completion
-		 * address = 0xF8000000 | sob_address;
-		 */
-		uint32_t :1;
-		/**<
-		 * unused
-		 */
-	} __attribute__ ((aligned(4), __packed__));
-
-	struct {
-		uint32_t transfer_size:25;
-		/**<
-		 * transfer size in bytes
-		 */
-		uint32_t context_id:7;
-		/**<
-		 * context id for profiler trace
-		 */
-	} __attribute__ ((aligned(4), __packed__));
-
-	uint32_t dst_addr_lo;
-	/**<
-	 * Destination address lo
-	 */
-	uint32_t dst_addr_hi;
-	/**<
-	 * Destination address high
-	 */
-	uint32_t memset_value;
-	/**<
-	 * Value to be used for memset
-	 */
-}  __attribute__ ((aligned(4), __packed__));
-
-#define ARC_CMD_NIC_EDMA_LIN_MEMSET_V3_SIZE (sizeof(struct arc_cmd_nic_edma_lin_memset_v3_t))
-#define ARC_CMD_NIC_EDMA_LIN_MEMSET_V3_SIZE_DWORD (ARC_CMD_NIC_EDMA_LIN_MEMSET_V3_SIZE / 4)
-
-/**
  * \struct  arc_cmd_nic_edma_lin_memset_v3_2_t
  * \brief   Perform various EDMA operations
  * \details Perform various EDMA operations
@@ -2883,143 +2729,6 @@ struct arc_cmd_nic_edma_lin_memset_v3_2_t {
 
 #define FP32_MAX_POS_VAL	0x7F800000
 #define FP32_MAX_NEG_VAL	0xFF800000
-
-enum cdc_op_type_t {
-	CDC_OP_CLEAR = 0,
-	CDC_OP_SET_MAX_INF = 1, /* 0x7F80_0000 */
-	CDC_OP_UNSUPPORTED = 2,
-	CDC_OP_SET_MIN_INF = 3 /* 0xFF80_0000 */
-};
-
-/**
- * \struct  arc_cmd_nic_edma_ops_cdc_t
- * \brief   Perform Cast Down Clear EDMA operation
- * \details Perform CDC EDMA operation with dual signalling capability
- */
-struct arc_cmd_nic_edma_ops_cdc_t {
-	struct {
-		uint32_t opcode:4;
-		/**<
-		 * opcode of the command
-		 */
-		uint32_t sob_address:27;
-		/**<
-		 * SOB address that needs to be used for signaling 1st completion
-		 * address = 0xF8000000 | sob_address;
-		 *
-		 * If this value is 0, then Cast-down will not be performed and
-		 * only the Mem Clear of SRC buffers will be done
-		 */
-		uint32_t fp16:1;
-		/**<
-		 * valid only for cast down operation. Ignored otherwise.
-		 * When set to 1, cast to fp16. otherwise cast to bf16.
-		 */
-	} __attribute__ ((aligned(4), __packed__));
-
-	uint32_t sob_address2;
-	/**<
-	 * 2nd SOB address that needs to be used for signaling 2nd completion
-	 * address = 0xF8000000 | sob_address;
-	 */
-	struct {
-		uint32_t shuffle_index:3;
-		/**<
-		 * Shuffle Index
-		 */
-		uint32_t use_sibo_index_as_src:1;
-		/**<
-		 * Use SIB Order buffer indexes instead of addresses
-		 */
-		uint32_t sibo_index:6;
-		/**<
-		 * SIB Order buffer Index to calculate the source buffer address
-		 */
-		uint32_t rank_offset_in_sibo:3;
-		/**<
-		 * Rank offset in SIB order buffer to start with
-		 */
-		uint32_t rank_count:4;
-		/**<
-		 * Number of ranks to be used as input buffer
-		 */
-		uint32_t memset_op:2;
-		/**<
-		 * Values are according to enum cdc_op_type
-		 * 0: Clear the SRC Memory
-		 * 1: memset with Positive MAX (0x7F80_0000)
-		 * 2: UNSUPPORTED
-		 * 3: memset with Negative MAX (0xFF80_0000)
-		 */
-		uint32_t pool_id:1;
-		/**<
-		 * pool id to select which intermediate buffer to be used
-		 */
-		uint32_t :12;
-		/**<
-		 * unused
-		 */
-	} __attribute__ ((aligned(4), __packed__));
-
-	uint32_t transfer_size;
-	/**<
-	 * transfer size in bytes
-	 */
-	uint32_t dst_addr_lo;
-	/**<
-	 * Destination address lo
-	 */
-	uint32_t dst_addr_hi;
-	/**<
-	 * Destination address high
-	 */
-	uint32_t src_addr_lo;
-	/**<
-	 * Source address low
-	 * Note: In case of the memset this field contains value
-	 * that needs to be used for memset operation
-	 */
-	union {
-		struct {
-			uint32_t src_addr_hi:24;
-			/**<
-			 * src_addr_hi[31:25] are taken from dst_addr_hi[31:25]
-			 * Note: In case of memset operation this field is ignored
-			 */
-			uint32_t reduction_ind:1;
-			/**<
-			 * Reduction indication
-			 */
-			uint32_t reserved_0:1;
-			/**<
-			 * Reserved
-			 */
-			uint32_t reduction_op:2;
-			/**<
-			 * Reduction operation to be performed
-			 */
-			uint32_t reduction_dtype:4;
-			/**<
-			 * Reduction data type
-			 * 0xC- upscaling FP16
-			 * 0xD- upscaling BF16
-			 */
-		} __attribute__ ((aligned(4), __packed__));
-		struct {
-			uint32_t reserved_1:24;
-			/**<
-			 * reserved
-			 */
-			uint32_t reduction_7_0:8;
-			/**<
-			 * Reduction bits
-			 */
-		} __attribute__ ((aligned(4), __packed__));
-	};
-}  __attribute__ ((aligned(4), __packed__));
-
-#define ARC_CMD_NIC_EDMA_OPS_CDC_SIZE (sizeof(struct arc_cmd_nic_edma_ops_cdc_t))
-#define ARC_CMD_NIC_EDMA_OPS_CDC_SIZE_DWORD (ARC_CMD_NIC_EDMA_OPS_CDC_SIZE / 4)
 
 /**
  * \struct  nic_scaleout_coll_ctxt_t

@@ -323,7 +323,7 @@ bool socket_t::connect(const sockaddr_t& peer, uint32_t /* timeout */ sec, const
     int opt_val = 1;
     RET_ON_ERR(setsockopt(socket_, SOL_SOCKET, SO_KEEPALIVE, &opt_val, sizeof(opt_val)));
 
-    wait_condition((::connect(socket_, peer, peer) != -1), sec);
+    wait_condition((::connect(socket_, peer, peer) != -1), sec, peer.str());
 
     RET_ON_FALSE(get_info());
 

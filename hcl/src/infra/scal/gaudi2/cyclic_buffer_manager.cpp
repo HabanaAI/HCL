@@ -28,9 +28,7 @@ hcl::Gaudi2CyclicBufferManager::Gaudi2CyclicBufferManager(ScalStreamBase*       
 
 uint64_t hcl::Gaudi2CyclicBufferManager::getPi()
 {
-    static const uint64_t shift = std::log2(m_bufferSize);
-    static const uint64_t mask  = ((1 << shift) - 1);
-    return m_pi & mask;
+    return m_pi & m_pi_mask;
 }
 
 void hcl::Gaudi2CyclicBufferManager::incPi(uint32_t size)

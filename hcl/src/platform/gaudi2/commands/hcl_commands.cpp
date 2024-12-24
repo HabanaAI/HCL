@@ -16,7 +16,8 @@
 #include "platform/gen2_arch_common/send_recv_aggregator.h"  // for SendRecvEntry
 #include "platform/gaudi2/nic_passthrough_handler.h"         // for pRecordWithMetadata
 #include "profiler/gaudi2_global_stm_defs.h"
-#include "sched_pkts.h"  // for g2fw
+#include "platform/gaudi2/g2_sched_pkts.h"  // for g2fw
+#include "hcl_types.h"                      // for NUM_SCALEUP_PORTS_PER_CONNECTION
 
 namespace hcl
 {
@@ -24,34 +25,6 @@ class ScalStreamBase;
 }
 
 HclCommandsGaudi2::HclCommandsGaudi2() : HclCommandsGen2Arch() {}
-
-bool HclCommandsGaudi2::isCastDown(uint32_t dmaType)
-{
-    return (g2fw::edma_eng_arc_cmd_t)dmaType == g2fw::NIC_EDMA_CMD_CAST_DOWN_CLEAR;
-}
-
-bool HclCommandsGaudi2::isCastUp(uint32_t dmaType)
-{
-    return (g2fw::edma_eng_arc_cmd_t)dmaType == g2fw::NIC_EDMA_CMD_CAST_UP_BATCH_V3;
-}
-
-bool HclCommandsGaudi2::isMemCpy(uint32_t dmaType)
-{
-    return (g2fw::edma_eng_arc_cmd_t)dmaType == g2fw::NIC_EDMA_CMD_MEMCPY_V3;
-}
-
-unsigned HclCommandsGaudi2::getDmaTypeCastUp()
-{
-    return g2fw::NIC_EDMA_CMD_CAST_UP_BATCH_V3;
-}
-unsigned HclCommandsGaudi2::getDmaTypeCastDown()
-{
-    return g2fw::NIC_EDMA_CMD_CAST_DOWN_CLEAR;
-}
-unsigned HclCommandsGaudi2::getDmaTypeMemCpy()
-{
-    return g2fw::NIC_EDMA_CMD_MEMCPY_V3;
-}
 
 static uint32_t calculateRemoteIndex(std::array<int, HLS2_BOX_SIZE>& deviceToRemoteIndex,
                                      int                             selfModuleId,
@@ -246,11 +219,13 @@ void HclCommandsGaudi2::serializeInitSequenceCommands(hcl::ScalStreamBase&      
     // 3 signals for each memset of buffers (1 for each engine (V3))
     // *global DMA command does not signal to CG if not V3.
     unsigned numberOfSignals =
-        contextManager.getServerConnectivity().getNumScaleUpPorts(/*HCL_Comm comm*/) + sibAddressesAndSizes.size();
+        contextManager.getServerConnectivity().getNumScaleUpPorts(/*HCL_Comm comm*/) * INIT_SEQUENCE_SIGNALS_FACTOR +
+        sibAddressesAndSizes.size();
 
     if (contextManager.getServerConnectivity().isUpdateScaleOutGlobalContextRequired(/*HCL_Comm comm*/))
     {
-        numberOfSignals += contextManager.getServerConnectivity().getMaxNumScaleOutPorts();
+        numberOfSignals +=
+            (contextManager.getServerConnectivity().getMaxNumScaleOutPorts()) * INIT_SEQUENCE_SIGNALS_FACTOR;
     }
 
     SchedArcCommandsGaudi2::serializeAllocBarrierCommand(recvStream,
@@ -479,8 +454,7 @@ void HclCommandsGaudi2::serializeScaleOutCollectiveOp(hcl::ScalStreamBase&    sc
     // get the rsi descriptors
     std::array<uint16_t, 4> qpnDesc = {0};
 
-    nics_mask_t scaleOutPorts =
-        scaleoutCollectiveOp.m_contextManager.getServerConnectivity().getScaleOutPorts(/*HCL_Comm comm*/);
+    nics_mask_t scaleOutPorts = scaleoutCollectiveOp.m_contextManager.getServerConnectivity().getScaleOutPortsGlbl();
 
     qpnDesc[0] = calculateRsi(scaleoutCollectiveOp.m_remoteRankToRsi,
                               scaleoutCollectiveOp.m_collectiveOp,
@@ -497,9 +471,8 @@ void HclCommandsGaudi2::serializeScaleOutCollectiveOp(hcl::ScalStreamBase&    sc
                                                                   scaleoutCollectiveOp.m_qpSet);
     }
 
-    CountDescriptor countDesc(
-        scaleoutCollectiveOp.m_cellCount,
-        scaleoutCollectiveOp.m_contextManager.getServerConnectivity().getNumScaleOutPorts(/*HCL_Comm comm*/));
+    CountDescriptor countDesc(scaleoutCollectiveOp.m_cellCount,
+                              scaleoutCollectiveOp.m_contextManager.getServerConnectivity().getNumScaleOutPortsGlbl());
 
     SchedArcCommandsGaudi2::serializeCollectiveSendScaleOutCommand(scalStream,
                                                                    scaleoutCollectiveOp.m_collectiveContextIndex,
@@ -649,22 +622,23 @@ void HclCommandsGaudi2::serializeAllocBarrierCommand(hcl::ScalStreamBase& scalSt
                                                      unsigned             schedIdx,
                                                      uint32_t             completionGroupIndex,
                                                      uint32_t             requiredSobs,
-                                                     llvm_vecsmall::SmallVector<uint32_t, MAX_STREAM_TO_INC>* fences)
+                                                     llvm_vecsmall::SmallVector<uint32_t, MAX_STREAM_TO_INC>* fences,
+                                                     const LBWBurstData_t* destBurstData)
 {
     SchedArcCommandsGaudi2::serializeAllocBarrierCommand(scalStream,
                                                          schedIdx,
                                                          completionGroupIndex,
                                                          requiredSobs,
-                                                         fences);
+                                                         fences,
+                                                         destBurstData);
 };
 
 void HclCommandsGaudi2::serializeLbwWriteCommand(hcl::ScalStreamBase& scalStream,
                                                  unsigned             schedIdx,
                                                  uint32_t             destination,
-                                                 uint32_t             data,
-                                                 bool                 blockUntilCompletion)
+                                                 uint32_t             data)
 {
-    SchedArcCommandsGaudi2::serializeLbwWriteCommand(scalStream, schedIdx, destination, data, blockUntilCompletion);
+    SchedArcCommandsGaudi2::serializeLbwWriteCommand(scalStream, schedIdx, destination, data);
 };
 
 void HclCommandsGaudi2::serializeLbwWriteWithFenceDecCommand(hcl::ScalStreamBase& scalStream,
@@ -672,16 +646,14 @@ void HclCommandsGaudi2::serializeLbwWriteWithFenceDecCommand(hcl::ScalStreamBase
                                                              uint32_t             destination,
                                                              uint32_t             data,
                                                              uint32_t             fenceIndex,
-                                                             uint32_t             fenceTarget,
-                                                             bool                 blockUntilCompletion)
+                                                             uint32_t             fenceTarget)
 {
     SchedArcCommandsGaudi2::serializeLbwWriteWithFenceDecCommand(scalStream,
                                                                  schedIdx,
                                                                  destination,
                                                                  data,
                                                                  fenceIndex,
-                                                                 fenceTarget,
-                                                                 blockUntilCompletion);
+                                                                 fenceTarget);
 };
 
 void HclCommandsGaudi2::serializeFenceDecCommand(hcl::ScalStreamBase& scalStream,
@@ -692,12 +664,11 @@ void HclCommandsGaudi2::serializeFenceDecCommand(hcl::ScalStreamBase& scalStream
     SchedArcCommandsGaudi2::serializeFenceDecCommand(scalStream, schedIdx, fenceIndex, target);
 };
 
-void HclCommandsGaudi2::serializeLbwBurstWriteCommand(hcl::ScalStreamBase&      scalStream,
-                                                      unsigned                  schedIdx,
-                                                      const LBWBurstDestData_t& destData,
-                                                      bool                      blockUntilCompletion)
+void HclCommandsGaudi2::serializeLbwBurstWriteCommand(hcl::ScalStreamBase&  scalStream,
+                                                      unsigned              schedIdx,
+                                                      const LBWBurstData_t& destData)
 {
-    SchedArcCommandsGaudi2::serializeLbwBurstWriteCommand(scalStream, schedIdx, destData, blockUntilCompletion);
+    SchedArcCommandsGaudi2::serializeLbwBurstWriteCommand(scalStream, schedIdx, destData);
 };
 
 void HclCommandsGaudi2::serializeFenceIncCommand(hcl::ScalStreamBase& scalStream,

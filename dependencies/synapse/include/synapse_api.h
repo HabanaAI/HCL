@@ -252,31 +252,6 @@ synStatus SYN_API_CALL synEventMapTensor(synEventHandle*                eventHan
 //!
 /*!
  ***************************************************************************************************
- * @brief Binds synEventHandle(s) to tensor(s)-id.
- *
- * Mark eventHandle(s) in relation to external tensor(s). EventHandle and launchTensorsInfoExt must be
- * from the same device. This API is used after recipe compilation, before calling synLaunch.
- * synEventMapTensorExt() can be called multiple times on the same event and will overwrite the
- * previously captured state. Before the first call to synEventMapTensorExt(), an event represents an empty set of
- * work, so for example synEventQuery() would return synSuccess.
- * Mapping to the same handle from two different threads is not thread safe.
- *
- * @param eventHandles         [in]      Event(s) to record
- * @param numOfEvents          [in]      Number of events
- * @param launchTensorsInfoExt [in]      List of external tensors to bind
- * @param recipeHandle         [in]      Recipe handle of current tensors
- *
- * @return                     The status of the operation
- ***************************************************************************************************
- */
-synStatus SYN_API_CALL synEventMapTensorExt(synEventHandle*                eventHandles,
-                                            size_t                         numOfEvents,
-                                            const synLaunchTensorInfoExt*  launchTensorsInfoExt,
-                                            const synRecipeHandle          recipeHandle);
-
-//!
-/*!
- ***************************************************************************************************
  * @brief   Extracts execution order of external tensors from a recipe.
  *
  * @param   recipeHandle         [in] The Synapse recipe to extract from
@@ -557,39 +532,6 @@ synStatus SYN_API_CALL synLaunch( const synStreamHandle             streamHandle
                                   uint64_t                          pWorkspace,
                                   const synRecipeHandle             pRecipeHandle,
                                   uint32_t                          flags);
-
-//!
-/*!
- ***************************************************************************************************
- * @brief   *DEPRECATED* Launches a recipe on the specified device stream.
- *
- * This API will invoke the graph represented by the recipe handle,
- * on the stream HW resources. The recipe inputs and outputs are denoted
- * by the synLaunchTensorInfoExt array holding the current invocation tensor
- * details like size and address.
- * The tensor ascription will be done via the tensor name for each tensor
- * in the array.
- *
- * @param   streamHandle                 [in]  Stream to enqueue operation to
- * @param   launchTensorsInfoExt         [in]  A pointer to a list of structs holding the tensor
- *                                             information
- * @param   numberOfTensors              [in]  The number of tensors in launchTensorsInfo
- * @param   pWorkspace                   [in]  A pointer to workspace buffer
- * @param   pRecipeHandle                [in]  The RecipeHandle holding the recipe to execute
- * @param   flags                        [in]  A bit map indicates one or more of the following values:
- *                                             SYN_FLAGS_TENSOR_NAME: identify the tensors by their names,
- *                                             instead of their ids.
- *
- * @return                               Status of the operation
- ***************************************************************************************************
- */
-
-synStatus SYN_API_CALL synLaunchExt(const synStreamHandle             streamHandle,
-                                    const synLaunchTensorInfoExt*     launchTensorsInfoExt,
-                                    const uint32_t                    numberOfTensors,
-                                    uint64_t                          pWorkspace,
-                                    const synRecipeHandle             pRecipeHandle,
-                                    uint32_t                          flags);
 
 //!
 /*!
@@ -1419,39 +1361,6 @@ synStatus SYN_API_CALL synNodeGetRoundingMode(  const synGraphHandle    graphHan
                                                 const synNodeId         nodeId,
                                                 synRoundingMode*        pRoundingMode);
 
-//!
-/*!
- ***************************************************************************************************
- * @brief   Hint to compiler to optimize node latency. (default is false)
- *
- *
- * @param   graphHandle        [in] The Synapse graph in which the node was created
- * @param   nodeId             [in] node unique id, as received from synNodeCreateWithId
- * @param   minimalLatency     [in] value to set; if true compiler should try to execute node
- *                                  to completion as early as possible
- *
- * @return                  Status of the operation
- ***************************************************************************************************
- */
-synStatus SYN_API_CALL synNodeSetMinimalLatency(const synGraphHandle graphHandle,
-                                                const synNodeId      nodeId,
-                                                const bool           minimalLatency);
-
-//!
-/*!
- ***************************************************************************************************
- * @brief   Gets Node latency configuration
- *
- * @param   graphHandle          [in] The Synapse graph in which the node was created
- * @param   nodeId               [in] node unique id, as received from synNodeCreateWithId
- * @param   minimalLatency       [out] pointer to where to fill the data
- *
- * @return                  Status of the operation
- ***************************************************************************************************
- */
-synStatus SYN_API_CALL synNodeGetMinimalLatency(const synGraphHandle graphHandle,
-                                                const synNodeId      nodeId,
-                                                bool*                minimalLatency);
 
 //!
 /*!
@@ -1766,6 +1675,7 @@ synStatus SYN_API_CALL synHostMap( const synDeviceId          deviceId,
  */
 synStatus SYN_API_CALL synHostUnmap( const synDeviceId    deviceId,
                                      const void*          buffer );
+
 
 //!
 /*!
@@ -2362,10 +2272,24 @@ synStatus SYN_API_CALL synTensorSetQuantizationData(synTensor               tens
  *   @return                  The status of the operation
  ***************************************************************************************************
  */
-
-
 synStatus SYN_API_CALL synTensorSetExternal(synTensor               tensor,
                                             bool                    isExternal);
+
+//!
+/*!
+ ***************************************************************************************************
+ *   @brief Marks tensor latency requirement
+ *
+ *   This API sets hint to GC to produce tensor as early as possible
+ *
+ *   @param tensor            [in] A previously-created tensor handle
+ *   @param minimalLatency    [in] A flag to mark tensor latency requirement
+ *
+ *   @return                  The status of the operation
+ ***************************************************************************************************
+ */
+synStatus SYN_API_CALL synTensorSetMinimalLatency(synTensor tensor,
+                                                  bool minimalLatency);
 
 //!
 /*!
@@ -2635,6 +2559,26 @@ synStatus SYN_API_CALL synTensorGetGeometry(const synTensor         tensor,
 
 synStatus SYN_API_CALL synTensorGetExternal(const synTensor         tensor,
                                             bool*                   isExternal);
+
+
+//!
+/*!
+ ***************************************************************************************************
+ *   @brief Query if tensor latency requirement
+ *
+ *   Is minimalLatency will be returned in user-allocated boolean
+ *
+ *   @param tensor            [in] A previously-created tensor handle
+ *   @param isMinimalLatency  [out] A pointer to boolean
+ *
+ *   @return                  The status of the operation
+ ***************************************************************************************************
+ */
+
+
+synStatus SYN_API_CALL synTensorGetMinimalLatency(const synTensor        tensor,
+                                                  bool*                  isMinimalLatency);
+
 
 //!
 /*!
@@ -2918,6 +2862,20 @@ synStatus SYN_API_CALL synStatusGetBriefDescription(synStatus status, char* stat
  ***************************************************************************************************
  */
 synStatus SYN_API_CALL synDumpStateAndTerminate(const char* msg, uint64_t flags);
+
+//!
+/*!
+ ***************************************************************************************************
+ *   @brief Un-map a host memory allocation
+ *
+ *   @param used_mem        [in]  device used memory in bytes
+ *   @param timestamp_sec   [in]  time stamp in seconds
+ *
+ *   @return                The status of the operation.
+ ***************************************************************************************************
+ */
+synStatus SYN_API_CALL synUpdateMemoryConsumption(uint64_t usedMem, uint64_t timestampSec);
+
 
 #ifdef __cplusplus
 }

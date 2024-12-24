@@ -12,12 +12,19 @@
 
 class HclGraphSyncGen2Arch;
 class DeviceBufferManager;
+class IntermediateBufferContainer;
 
 namespace hcl
 {
 class ScalStream;
-class IntermediateBufferContainer;
 }  // namespace hcl
+
+enum DmaType
+{
+    DMA_TYPE_CAST_UP   = 0,
+    DMA_TYPE_CAST_DOWN = 1,
+    DMA_TYPE_MEMCPY    = 2
+};
 
 class HclCollectiveMemHandlerGen2Arch
 {
@@ -63,18 +70,18 @@ public:
 
     void signalToSoViaEmptyDmaCommand(uint32_t soAddress, hcl::ScalStream& scalStream, CommonState& commonState);
 
-    virtual void memsetIMBs(hcl::IntermediateBufferContainer* imbContainer,
-                            SignalsManager*                   signalsManager,
-                            SliceState&                       sendSliceState,
-                            SliceState&                       recvSliceState,
-                            unsigned int                      sizeInBytes,
-                            hcl::syncInfo                     longSo,
-                            unsigned                          schedIdx,
-                            hcl::ScalStream&                  garbageCollectionStream,
-                            HCL_StreamId                      m_streamId,
-                            e_devicePoolID                    poolId,
-                            uint8_t                           streamCtxtID,
-                            hcclDataType_t                    dataType) {};
+    virtual void memsetIMBs(IntermediateBufferContainer* imbContainer,
+                            SignalsManager*              signalsManager,
+                            SliceState&                  sendSliceState,
+                            SliceState&                  recvSliceState,
+                            unsigned int                 sizeInBytes,
+                            hcl::syncInfo                longSo,
+                            unsigned                     schedIdx,
+                            hcl::ScalStream&             garbageCollectionStream,
+                            HCL_StreamId                 m_streamId,
+                            e_devicePoolID               poolId,
+                            uint8_t                      streamCtxtID,
+                            hcclDataType_t               dataType) {};
 
     virtual void generateBaseAddressOrSubBuffIdx(SliceState&       sliceState,
                                                  unsigned int&     sliceIter,
@@ -90,4 +97,5 @@ protected:
     DeviceBufferManager&  m_intermediateBufferManager;
     HclCommandsGen2Arch&  m_commands;
     HclGraphSyncGen2Arch& m_graphSync;
+    bool                  m_profilerDebugMode;
 };

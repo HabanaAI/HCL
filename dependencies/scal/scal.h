@@ -174,6 +174,31 @@ typedef struct _scal_completion_group_infoV2_t
     bool               isDirectMode;
 } scal_completion_group_infoV2_t;
 
+typedef struct _scal_completion_group_infoV3_t
+{
+    scal_core_handle_t scheduler_handle;
+    unsigned           index_in_scheduler;
+    unsigned           sm;
+    uint64_t           sm_base_addr;
+    unsigned           sos_base;
+    unsigned           sos_num;
+    unsigned           long_so_sm;
+    uint64_t           long_so_sm_base_addr;
+    unsigned           long_so_index;
+    uint64_t           current_value;
+    uint64_t           tdr_value;
+    bool               tdr_enabled;
+    unsigned           tdr_sos;
+    uint64_t           timeoutUs;
+    bool               timeoutDisabled;
+    bool               force_order;
+    unsigned           force_order_inc_value;
+    unsigned           num_slave_schedulers;
+    scal_core_handle_t slave_schedulers[MAX_SLAVES_PER_CQ];
+    unsigned           index_in_slave_schedulers[MAX_SLAVES_PER_CQ];
+    bool               isDirectMode;
+} scal_completion_group_infoV3_t;
+
 typedef struct _scal_buffer_info_t
 {
     scal_pool_handle_t pool;
@@ -331,6 +356,7 @@ int scal_completion_group_wait_always_interupt(const scal_comp_group_handle_t co
 int scal_completion_group_register_timestamp(const scal_comp_group_handle_t comp_grp, const uint64_t target, uint64_t timestamps_handle, uint32_t timestamps_offset);
 int scal_completion_group_get_info(const scal_comp_group_handle_t comp_grp, scal_completion_group_info_t *info);
 int scal_completion_group_get_infoV2(const scal_comp_group_handle_t comp_grp, scal_completion_group_infoV2_t *info);
+int scal_completion_group_get_infoV3(const scal_comp_group_handle_t comp_grp, scal_completion_group_infoV3_t *info);
 int scal_completion_group_set_expected_ctr(scal_comp_group_handle_t comp_grp, uint64_t val);
 
 

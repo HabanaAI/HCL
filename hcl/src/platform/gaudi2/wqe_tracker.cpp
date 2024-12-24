@@ -4,8 +4,6 @@
 #include "hcl_dynamic_communicator.h"  // for HclDynamicCommunicator
 #include "hcl_utils.h"                 // for VERIFY
 
-const unsigned DEFAULT_BOX_NUM = 8;
-
 WqeTrackerGaudi2::WqeTrackerGaudi2()
 {
     // allocate initial data for communicators

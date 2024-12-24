@@ -13,7 +13,7 @@
 #include "infra/scal/gen2_arch_common/scal_stream.h"  // for ScalStreamBase
 #include "hcl_log_manager.h"                          // for LOG_*
 #include "platform/gaudi2/nic_passthrough_handler.h"  // for RecordWithMetadata
-#include "sched_pkts.h"                               // for g2fw
+#include "g2_sched_pkts.h"                            // for g2fw
 #include "platform/gen2_arch_common/types.h"          // for REDUCTION_OP_AD...
 #include "scal.h"                                     // for SCAL_NIC_RECEIV...
 #include "hccl_types.h"                               // for hcclRedOp_t
@@ -42,11 +42,17 @@ void SchedArcCommandsGaudi2::serializeAllocBarrierCommand(
     unsigned                                                 schedIdx,
     uint32_t                                                 completionGroupIndex,
     uint32_t                                                 requiredSobs,
-    llvm_vecsmall::SmallVector<uint32_t, MAX_STREAM_TO_INC>* fences)
+    llvm_vecsmall::SmallVector<uint32_t, MAX_STREAM_TO_INC>* fences,
+    const LBWBurstData_t*                                    destBurstData)
 {
-    uint32_t fenceCnt = fences == nullptr ? 0 : fences->size();
-    uint32_t cmdSize =
-        sizeof(g2fw::sched_arc_cmd_alloc_nic_barrier_t) + (sizeof(uint32_t) * ((fenceCnt > 0) + (fenceCnt > 4)));
+    uint32_t fenceCnt    = fences == nullptr ? 0 : fences->size();
+    uint32_t lbwBurstCnt = destBurstData == nullptr ? 0 : destBurstData->size();
+    uint32_t fenceDwords = (fenceCnt > 0) + (fenceCnt > 4);
+
+    uint32_t cmdSize = sizeof(g2fw::sched_arc_cmd_alloc_nic_barrier_t) +
+                       (sizeof(g2fw::sched_arc_fence_id_arr_t) * fenceDwords) +
+                       (sizeof(g2fw::sched_arc_lbw_write_t) * lbwBurstCnt);
+
     g2fw::sched_arc_cmd_alloc_nic_barrier_t* command =
         reinterpret_cast<g2fw::sched_arc_cmd_alloc_nic_barrier_t*>(scalStream.getNextPtr(cmdSize));
     memset(command, 0, cmdSize);
@@ -69,17 +75,37 @@ void SchedArcCommandsGaudi2::serializeAllocBarrierCommand(
         SET_FIELD(((uint8_t*)command->fence_arr)[i], (*fences)[i]);
     }
 
-    PRINT_PACKET_TRACE_WITH_COUNTS(scalStream,
-                                   fenceCnt,
-                                   "schedIdx:{}, opcode:{}, comp_group_index:{}, required_sobs:{}",
-                                   schedIdx,
-                                   command->opcode,
-                                   (uint32_t)command->comp_group_index,
-                                   (uint32_t)command->required_sobs);
+    SET_FIELD(command->num_lbw_write, lbwBurstCnt);
+    g2fw::sched_arc_lbw_write_t* lbw_addr_data = (g2fw::sched_arc_lbw_write_t*)(command->fence_arr + fenceDwords);
+    for (unsigned i = 0; i < lbwBurstCnt; i++)
+    {
+        SET_FIELD(lbw_addr_data[i].addr, (*destBurstData)[i].addr);
+        SET_FIELD(lbw_addr_data[i].data, (*destBurstData)[i].data);
+    }
+
+    PRINT_PACKET_TRACE_WITH_2_COUNTS(scalStream,
+                                     fenceCnt,
+                                     lbwBurstCnt,
+                                     "schedIdx:{}, opcode:{}, comp_group_index:{}, required_sobs:{}",
+                                     schedIdx,
+                                     command->opcode,
+                                     (uint32_t)command->comp_group_index,
+                                     (uint32_t)command->required_sobs);
 
     for (unsigned i = 0; i < fenceCnt; i++)
     {
         LOG_TRACE(HCL_SUBMIT, "Packets | fenceId{}={}", i, (*fences)[i]);
+    }
+    for (unsigned i = 0; i < lbwBurstCnt; i++)
+    {
+        LOG_TRACE(HCL_SUBMIT,
+                  "Packets | BurstElement burst_size:{}, "
+                  "burst_index:{}, "
+                  "dst_addr:0x{:x}, src_data:0x{:x}",
+                  (uint32_t)command->num_lbw_write,
+                  (uint32_t)i,
+                  (uint64_t)lbw_addr_data[i].addr,
+                  (uint64_t)lbw_addr_data[i].data);
     }
 }
 
@@ -137,8 +163,7 @@ void SchedArcCommandsGaudi2::serializeFenceIncCommand(hcl::ScalStreamBase& scalS
 void SchedArcCommandsGaudi2::serializeLbwWriteCommand(hcl::ScalStreamBase& scalStream,
                                                       unsigned             schedIdx,
                                                       uint32_t             destination,
-                                                      uint32_t             data,
-                                                      bool                 blockUntilCompletion)
+                                                      uint32_t             data)
 {
     g2fw::sched_arc_cmd_lbw_write_t* command = reinterpret_cast<g2fw::sched_arc_cmd_lbw_write_t*>(
         scalStream.getNextPtr(sizeof(g2fw::sched_arc_cmd_lbw_write_t)));
@@ -150,20 +175,17 @@ void SchedArcCommandsGaudi2::serializeLbwWriteCommand(hcl::ScalStreamBase& scalS
         g2fw::SCHED_SCALEUP_RECV_ARC_CMD_LBW_WRITE,
         g2fw::SCHED_SCALEOUT_SEND_ARC_CMD_LBW_WRITE,
         g2fw::SCHED_SCALEOUT_RECV_ARC_CMD_LBW_WRITE};
-    command->opcode     = opcodes[schedIdx];
-    command->block_next = blockUntilCompletion;
-    command->dst_addr   = destination;
-    command->src_data   = data;
+    command->opcode   = opcodes[schedIdx];
+    command->dst_addr = destination;
+    command->src_data = data;
 
     PRINT_PACKET_TRACE(scalStream,
-                       "schedIdx:{}, opcode:{} , block_next:{}, dst_addr:0x{:x}, "
-                       "src_data:0x{:x}, wait_for_completion:{}",
+                       "schedIdx:{}, opcode:{} , dst_addr:0x{:x}, "
+                       "src_data:0x{:x}",
                        schedIdx,
                        command->opcode,
-                       (uint32_t)command->block_next,
                        (uint64_t)command->dst_addr,
-                       (uint64_t)command->src_data,
-                       (uint32_t)command->wait_for_completion);
+                       (uint64_t)command->src_data);
 }
 
 void SchedArcCommandsGaudi2::serializeLbwWriteWithFenceDecCommand(hcl::ScalStreamBase& scalStream,
@@ -171,8 +193,7 @@ void SchedArcCommandsGaudi2::serializeLbwWriteWithFenceDecCommand(hcl::ScalStrea
                                                                   uint32_t             destination,
                                                                   uint32_t             data,
                                                                   uint32_t             fenceIndex,
-                                                                  uint32_t             fenceTarget,
-                                                                  bool                 blockUntilCompletion)
+                                                                  uint32_t             fenceTarget)
 {
     g2fw::sched_arc_cmd_lbw_write_t* command = reinterpret_cast<g2fw::sched_arc_cmd_lbw_write_t*>(
         scalStream.getNextPtr(sizeof(g2fw::sched_arc_cmd_lbw_write_t)));
@@ -185,7 +206,6 @@ void SchedArcCommandsGaudi2::serializeLbwWriteWithFenceDecCommand(hcl::ScalStrea
         g2fw::SCHED_SCALEOUT_SEND_ARC_CMD_LBW_WRITE,
         g2fw::SCHED_SCALEOUT_RECV_ARC_CMD_LBW_WRITE};
     SET_FIELD(command->opcode, opcodes[schedIdx]);
-    SET_FIELD(command->block_next, blockUntilCompletion);
     SET_FIELD(command->dst_addr, destination);
     SET_FIELD(command->src_data, data);
     SET_FIELD(command->fence, 1);
@@ -193,25 +213,22 @@ void SchedArcCommandsGaudi2::serializeLbwWriteWithFenceDecCommand(hcl::ScalStrea
     SET_FIELD(command->target, fenceTarget);
 
     PRINT_PACKET_TRACE(scalStream,
-                       "schedIdx:{}, opcode:{} , block_next:{}, dst_addr:0x{:x}, "
-                       "src_data:0x{:x}, wait_for_completion:{} fence decrement id:{} to target:{}",
+                       "schedIdx:{}, opcode:{} , dst_addr:0x{:x}, "
+                       "src_data:0x{:x}, fence decrement id:{} to target:{}",
                        schedIdx,
                        command->opcode,
-                       (uint32_t)command->block_next,
                        (uint64_t)command->dst_addr,
                        (uint64_t)command->src_data,
-                       (uint32_t)command->wait_for_completion,
                        (uint32_t)command->fence_id,
                        (uint32_t)command->target);
 }
 
-void SchedArcCommandsGaudi2::serializeLbwBurstWriteCommand(hcl::ScalStreamBase&      scalStream,
-                                                           unsigned                  schedIdx,
-                                                           const LBWBurstDestData_t& destData,
-                                                           bool                      blockUntilCompletion)
+void SchedArcCommandsGaudi2::serializeLbwBurstWriteCommand(hcl::ScalStreamBase&  scalStream,
+                                                           unsigned              schedIdx,
+                                                           const LBWBurstData_t& destData)
 {
     VERIFY((destData.size() != 0), "vector size [{}] for {}", destData.size(), __func__);
-    size_t size = sizeof(g2fw::sched_arc_cmd_lbw_burst_write_t) + (sizeof(LBWBurstAddressData) * destData.size());
+    size_t size = sizeof(g2fw::sched_arc_cmd_lbw_burst_write_t) + (sizeof(LbwData) * destData.size());
     g2fw::sched_arc_cmd_lbw_burst_write_t* command =
         reinterpret_cast<g2fw::sched_arc_cmd_lbw_burst_write_t*>(scalStream.getNextPtr(size));
     memset(command, 0, size);
@@ -223,27 +240,24 @@ void SchedArcCommandsGaudi2::serializeLbwBurstWriteCommand(hcl::ScalStreamBase& 
         g2fw::SCHED_SCALEOUT_SEND_ARC_CMD_LBW_BURST_WRITE,
         g2fw::SCHED_SCALEOUT_RECV_ARC_CMD_LBW_BURST_WRITE};
     SET_FIELD(command->opcode, opcodes[schedIdx]);
-    SET_FIELD(command->block_next, blockUntilCompletion);
     SET_FIELD(command->num_lbw_write, destData.size());
 
     PRINT_PACKET_TRACE_WITH_COUNTS(scalStream, destData.size(), "");
 
     for (unsigned i = 0; i < destData.size(); i++)
     {
-        SET_FIELD(command->addr_data[i].addr, destData[i].address);
+        SET_FIELD(command->addr_data[i].addr, destData[i].addr);
         SET_FIELD(command->addr_data[i].data, destData[i].data);
         LOG_TRACE(HCL_SUBMIT,
-                  "Packets | BurstElement schedIdx:{}, opcode:{} , block_next:{}, burst_size:{}, "
+                  "Packets | BurstElement schedIdx:{}, opcode:{} , burst_size:{}, "
                   "burst_index:{}, "
-                  "dst_addr:0x{:x}, src_data:0x{:x}, wait_for_completion:{}",
+                  "dst_addr:0x{:x}, src_data:0x{:x}",
                   schedIdx,
                   command->opcode,
-                  (uint32_t)command->block_next,
                   (uint32_t)command->num_lbw_write,
                   (uint32_t)i,
                   (uint64_t)command->addr_data[i].addr,
-                  (uint64_t)command->addr_data[i].data,
-                  (uint32_t)command->wait_for_completion);
+                  (uint64_t)command->addr_data[i].data);
     }
 }
 
@@ -523,7 +537,7 @@ void SchedArcCommandsGaudi2::serializeDmaCommand(hcl::ScalStreamBase& scalStream
         LOG_TRACE(HCL, "SchedArcCommandsGaudi2::serializeDmaCommandV3 First address(0x{:x})", soAddressLSB);
         auto                                             firstSoIdxBaseIdx = getSoIdxBaseIdx(soAddressLSB);
         struct g2fw::arc_cmd_nic_edma_lin_memset_v3_2_t* edma_ops =
-            (struct g2fw::arc_cmd_nic_edma_lin_memset_v3_2_t*)&command->edma_lin_memset;
+            (struct g2fw::arc_cmd_nic_edma_lin_memset_v3_2_t*)&command->edma_linear_memset;
         auto comp_cfg = getCompCfg();
 
         SET_FIELD(edma_ops->sob_base, (firstSoIdxBaseIdx.baseIdx & 0x7));
@@ -715,33 +729,36 @@ void SchedArcCommandsGaudi2::serializeGlobalDmaCommand(hcl::ScalStreamBase&     
         ((struct g2fw::edma_nic_glbl_ctxt_v3_t*)(command->edma_ctxt_v3->data))->comp_cfg[7]);
 }
 
+void SchedArcCommandsGaudi2::serializeUpdateGlobalContextCommandHeader(
+    g2fw::sched_arc_cmd_update_nic_glbl_ctxt_t& command,
+    uint32_t                                    soAddressLSB,
+    uint32_t                                    numDwords)
+{
+    uint32_t size = sizeof(g2fw::sched_arc_cmd_update_nic_glbl_ctxt_t) + numDwords * sizeof(uint32_t);
+    SET_FIELD(command.opcode, g2fw::SCHED_SCALEUP_RECV_ARC_CMD_UPDATE_NIC_GLBL_CTXT);
+    SET_FIELD(command.engine_group_type, SCAL_NIC_RECEIVE_SCALE_UP_GROUP);
+    SET_FIELD(command.cmd_size, size);
+    SET_FIELD(command.cmd_update_glbl_ctxt.nic_opcode, g2fw::NIC_CMD_UPDATE_GLBL_CTXT);
+    SET_FIELD(command.cmd_update_glbl_ctxt.num_dwords, numDwords);
+    SET_FIELD(command.so_lbw_address, soAddressLSB);
+}
+
 void SchedArcCommandsGaudi2::serializeUpdateGlobalContextCommand(hcl::ScalStreamBase&                scalStream,
                                                                  uint32_t                            soAddressLSB,
-                                                                 std::vector<g2fw::nic_glbl_ctxt_t>& contexts,
-                                                                 uint64_t sib_order_base_addr,
-                                                                 uint64_t sib_acc_base_addr,
-                                                                 uint32_t sibo_rank_stride,
-                                                                 uint32_t siba_stride)
+                                                                 std::vector<g2fw::nic_glbl_ctxt_t>& contexts)
 {
-    size_t                           dwords = 3 + contexts.size();
-    size_t                           size   = dwords * sizeof(uint32_t);
-    struct g2fw::nic_glbl_ctxt_t*    glbl_ctxt;
-    struct g2fw::nic_glbl_ctxt_v2_t* glbl_ctxt_v2;
-
-    size += sizeof(g2fw::nic_glbl_ctxt_v2_t);
+    size_t                        header_size = sizeof(g2fw::sched_arc_cmd_update_nic_glbl_ctxt_t) / sizeof(uint32_t);
+    size_t                        dwords      = header_size + contexts.size();
+    size_t                        size        = dwords * sizeof(uint32_t);
+    struct g2fw::nic_glbl_ctxt_t* glbl_ctxt;
 
     g2fw::sched_arc_cmd_update_nic_glbl_ctxt_t* command =
         reinterpret_cast<g2fw::sched_arc_cmd_update_nic_glbl_ctxt_t*>(scalStream.getNextPtr(size));
     memset(command, 0, size);
 
-    SET_FIELD(command->opcode, g2fw::SCHED_SCALEUP_RECV_ARC_CMD_UPDATE_NIC_GLBL_CTXT);
-    SET_FIELD(command->engine_group_type, SCAL_NIC_RECEIVE_SCALE_UP_GROUP);
-    SET_FIELD(command->cmd_size, size);
-    SET_FIELD(command->cmd_update_glbl_ctxt.nic_opcode, g2fw::NIC_CMD_UPDATE_GLBL_CTXT);
-    SET_FIELD(command->cmd_update_glbl_ctxt.num_glbl_ctxt, contexts.size());
+    serializeUpdateGlobalContextCommandHeader(*command, soAddressLSB, contexts.size());
 
-    SET_FIELD(command->cmd_update_glbl_ctxt.update_bitmap, 0x3F);  // all 6 dwords involved
-    SET_FIELD(command->so_lbw_address, soAddressLSB);
+    SET_FIELD(command->cmd_update_glbl_ctxt.update_glbl_ctxt_v2, 0);
 
     glbl_ctxt = (struct g2fw::nic_glbl_ctxt_t*)&command->glbl_ctxt;
 
@@ -751,7 +768,37 @@ void SchedArcCommandsGaudi2::serializeUpdateGlobalContextCommand(hcl::ScalStream
         glbl_ctxt++;
     }
 
-    glbl_ctxt_v2 = (struct g2fw::nic_glbl_ctxt_v2_t*)(glbl_ctxt);  // starting from the point that glbl_ctxt finished
+    PRINT_PACKET_TRACE(scalStream,
+                       "sched_arc_cmd_update_nic_glbl_ctxt_t  |  "
+                       "command->opcode:{}, "
+                       " command->engine_group_type:{}, command->cmd_size:{}, command->so_lbw_address:0x{:x}, ",
+                       command->opcode,
+                       command->engine_group_type,
+                       command->cmd_size,
+                       (uint64_t)command->so_lbw_address);
+}
+
+void SchedArcCommandsGaudi2::serializeUpdateGlobalContextInfo(hcl::ScalStreamBase& scalStream,
+                                                              uint32_t             soAddressLSB,
+                                                              uint64_t             sib_order_base_addr,
+                                                              uint64_t             sib_acc_base_addr,
+                                                              uint32_t             sibo_rank_stride,
+                                                              uint32_t             siba_stride)
+{
+    struct g2fw::nic_glbl_ctxt_v2_t* glbl_ctxt_v2;
+    size_t header_size  = sizeof(g2fw::sched_arc_cmd_update_nic_glbl_ctxt_t) / sizeof(uint32_t);
+    size_t num_dwords   = sizeof(g2fw::nic_glbl_ctxt_v2_t) / sizeof(uint32_t);
+    size_t command_size = (header_size + num_dwords) * sizeof(uint32_t);
+
+    g2fw::sched_arc_cmd_update_nic_glbl_ctxt_t* command =
+        reinterpret_cast<g2fw::sched_arc_cmd_update_nic_glbl_ctxt_t*>(scalStream.getNextPtr(command_size));
+    memset(command, 0, command_size);
+
+    serializeUpdateGlobalContextCommandHeader(*command, soAddressLSB, num_dwords);
+
+    SET_FIELD(command->cmd_update_glbl_ctxt.update_glbl_ctxt_v2, 1);
+
+    glbl_ctxt_v2 = (struct g2fw::nic_glbl_ctxt_v2_t*)&command->glbl_ctxt_v2;
 
     SET_FIELD(glbl_ctxt_v2->sib_order_base_addr, sib_order_base_addr);
     SET_FIELD(glbl_ctxt_v2->sib_acc_base_addr, sib_acc_base_addr);
@@ -763,13 +810,11 @@ void SchedArcCommandsGaudi2::serializeUpdateGlobalContextCommand(hcl::ScalStream
         "sched_arc_cmd_update_nic_glbl_ctxt_t  |  "
         "command->opcode:{}, "
         " command->engine_group_type:{}, command->cmd_size:{}, command->so_lbw_address:0x{:x}, "
-        "update_bitmap:0x{:x} "
         "nic_glbl_ctxt_v2_t | sib_order_base_addr:0x{:x}, sib_acc_base_addr:0x{:x}, sibo_rank_stride:{}, "
         "siba_stride:{}",
         command->opcode,
         command->engine_group_type,
         command->cmd_size,
-        (uint64_t)command->cmd_update_glbl_ctxt.update_bitmap,
         (uint64_t)command->so_lbw_address,
         glbl_ctxt_v2->sib_order_base_addr,
         glbl_ctxt_v2->sib_acc_base_addr,
@@ -948,7 +993,6 @@ void SchedArcCommandsGaudi2::serializeCollectiveSendShortCommand(hcl::ScalStream
     SET_FIELD(cmd_coll_ops_short->cache_line_remainder, cacheLineRemainder);
     SET_FIELD(cmd_coll_ops_short->element_remainder, elementRemainder);
     SET_FIELD(cmd_coll_ops_short->force_remote_rank_offset, force_remote_rank_offset);
-    SET_FIELD(cmd_coll_ops_short->sob_index, syncObjectAddressIndex);
     SET_FIELD(cmd_coll_ops_short->has_size, hasBufferSize);
     SET_FIELD(cmd_coll_ops_short->notify_rndv_ack, notifyRndvAck);
     SET_FIELD(cmd_coll_ops_short->wait_for_rndv_acks, waitForRndvAcks);
@@ -962,28 +1006,26 @@ void SchedArcCommandsGaudi2::serializeCollectiveSendShortCommand(hcl::ScalStream
         std::memcpy(&cmd_coll_ops_short->buffer_size, &bufferSize, sizeof(uint32_t));
     }
 
-    PRINT_PACKET_TRACE(
-        scalStream,
-        "sched_arc_cmd_nic_coll_ops_t  |  command->opcode:{}, "
-        " command->engine_group_type:{}, command->cmd_size:{}, "
-        " cache_line_count:{}, cache_line_remainder:{}, element_remainder:{}, "
-        " sob_index:{}, has_size:{}, notify_rndv_ack:{}, wait_for_rndv_acks:{} coll_ctxt_id:{} nic_opcode:{}, "
-        " comm_desc_index:{}, buffer_addr_lsb:0x{:x}, buffer_size:{}",
-        command->opcode,
-        command->engine_group_type,
-        command->cmd_size,
-        cmd_coll_ops_short->cache_line_count,
-        cmd_coll_ops_short->cache_line_remainder,
-        cmd_coll_ops_short->element_remainder,
-        cmd_coll_ops_short->sob_index,
-        cmd_coll_ops_short->has_size,
-        cmd_coll_ops_short->notify_rndv_ack,
-        cmd_coll_ops_short->wait_for_rndv_acks,
-        cmd_coll_ops_short->coll_ctxt_id,
-        cmd_coll_ops_short->nic_opcode,
-        cmd_coll_ops_short->comm_desc_index,
-        cmd_coll_ops_short->buffer_addr_lsb,
-        bufferSize);
+    PRINT_PACKET_TRACE(scalStream,
+                       "sched_arc_cmd_nic_coll_ops_t  |  command->opcode:{}, "
+                       " command->engine_group_type:{}, command->cmd_size:{}, "
+                       " cache_line_count:{}, cache_line_remainder:{}, element_remainder:{}, "
+                       " has_size:{}, notify_rndv_ack:{}, wait_for_rndv_acks:{} coll_ctxt_id:{} nic_opcode:{}, "
+                       " comm_desc_index:{}, buffer_addr_lsb:0x{:x}, buffer_size:{}",
+                       command->opcode,
+                       command->engine_group_type,
+                       command->cmd_size,
+                       cmd_coll_ops_short->cache_line_count,
+                       cmd_coll_ops_short->cache_line_remainder,
+                       cmd_coll_ops_short->element_remainder,
+                       cmd_coll_ops_short->has_size,
+                       cmd_coll_ops_short->notify_rndv_ack,
+                       cmd_coll_ops_short->wait_for_rndv_acks,
+                       cmd_coll_ops_short->coll_ctxt_id,
+                       cmd_coll_ops_short->nic_opcode,
+                       cmd_coll_ops_short->comm_desc_index,
+                       cmd_coll_ops_short->buffer_addr_lsb,
+                       bufferSize);
 }
 
 void SchedArcCommandsGaudi2::serializeCollectiveRecvShortInOrderCommand(hcl::ScalStreamBase& scalStream,
@@ -1016,7 +1058,6 @@ void SchedArcCommandsGaudi2::serializeCollectiveRecvShortInOrderCommand(hcl::Sca
         (struct g2fw::arc_cmd_coll_ops_recv_short_inorder_v2_t*)&command->cmd_coll_ops_short_inorder_v2;
 
     SET_FIELD(cmd_coll_ops_short->cache_line_count, cacheLineCount);
-    SET_FIELD(cmd_coll_ops_short->sob_index, syncObjectAddressIndex);
     SET_FIELD(cmd_coll_ops_short->local_rank_index, currentRank);
     SET_FIELD(cmd_coll_ops_short->comm_desc_index, commDescIndex);
     SET_FIELD(cmd_coll_ops_short->nic_opcode, 5);  // NIC_CMD_COLL_OPS_RECV_INORDER_V2
@@ -1043,7 +1084,7 @@ void SchedArcCommandsGaudi2::serializeCollectiveRecvShortInOrderCommand(hcl::Sca
     PRINT_PACKET_TRACE(scalStream,
                        "sched_arc_cmd_nic_coll_ops_t  |  command->opcode:{}, "
                        " command->engine_group_type:{}, command->cmd_size:{} "
-                       "arc_cmd_coll_ops_recv_short_inorder_v2_t | cache_line_count:{}, sob_index:{}, "
+                       "arc_cmd_coll_ops_recv_short_inorder_v2_t | cache_line_count:{}, "
                        "local_rank_index:{}, comm_desc_index:{}, nic_opcode:{}, pool_id:{}, "
                        "coll_ctxt_id:{}, siba_index:{}, sibo_index:{}, num_ranks:{}, reduction_opcode:{}, "
                        "notify_rndv_ack:{}, wait_for_rndv_acks:{}",
@@ -1051,7 +1092,6 @@ void SchedArcCommandsGaudi2::serializeCollectiveRecvShortInOrderCommand(hcl::Sca
                        command->engine_group_type,
                        command->cmd_size,
                        cmd_coll_ops_short->cache_line_count,
-                       cmd_coll_ops_short->sob_index,
                        cmd_coll_ops_short->local_rank_index,
                        cmd_coll_ops_short->comm_desc_index,
                        cmd_coll_ops_short->nic_opcode,
@@ -1103,7 +1143,6 @@ void SchedArcCommandsGaudi2::serializeCollectiveSendLongCommand(hcl::ScalStreamB
     SET_FIELD(cmd_coll_ops_long->cache_line_remainder, cacheLineRemainder);
     SET_FIELD(cmd_coll_ops_long->force_remote_rank_offset, force_remote_rank_offset);
     SET_FIELD(cmd_coll_ops_long->element_remainder, elementRemainder);
-    SET_FIELD(cmd_coll_ops_long->sob_index, syncObjectAddressIndex);
     SET_FIELD(cmd_coll_ops_long->has_size, hasBufferSize);
     SET_FIELD(cmd_coll_ops_long->notify_rndv_ack, notifyRndvAck);
     SET_FIELD(cmd_coll_ops_long->wait_for_rndv_acks, waitForRndvAcks);
@@ -1118,29 +1157,27 @@ void SchedArcCommandsGaudi2::serializeCollectiveSendLongCommand(hcl::ScalStreamB
         std::memcpy(&cmd_coll_ops_long->buffer_size, &bufferSize, sizeof(uint32_t));
     }
 
-    PRINT_PACKET_TRACE(
-        scalStream,
-        "sched_arc_cmd_nic_coll_ops_t  |  command->opcode:{}, "
-        " command->engine_group_type:{}, command->cmd_size:{}, "
-        " cache_line_count:{}, cache_line_remainder:{}, element_remainder:{}, "
-        " sob_index:{}, has_size:{}, notify_rndv_ack:{}, wait_for_rndv_acks:{} coll_ctxt_id:{} nic_opcode:{}, "
-        " comm_desc_index:{}, buffer_addr_lsb:0x{:x}, addr_msb:0x{:x} buffer_size:{}",
-        command->opcode,
-        command->engine_group_type,
-        command->cmd_size,
-        cmd_coll_ops_long->cache_line_count,
-        cmd_coll_ops_long->cache_line_remainder,
-        cmd_coll_ops_long->element_remainder,
-        cmd_coll_ops_long->sob_index,
-        cmd_coll_ops_long->has_size,
-        cmd_coll_ops_long->notify_rndv_ack,
-        cmd_coll_ops_long->wait_for_rndv_acks,
-        cmd_coll_ops_long->coll_ctxt_id,
-        cmd_coll_ops_long->nic_opcode,
-        cmd_coll_ops_long->comm_desc_index,
-        cmd_coll_ops_long->buffer_addr_lsb,
-        cmd_coll_ops_long->addr_msb,
-        bufferSize);
+    PRINT_PACKET_TRACE(scalStream,
+                       "sched_arc_cmd_nic_coll_ops_t  |  command->opcode:{}, "
+                       " command->engine_group_type:{}, command->cmd_size:{}, "
+                       " cache_line_count:{}, cache_line_remainder:{}, element_remainder:{}, "
+                       " has_size:{}, notify_rndv_ack:{}, wait_for_rndv_acks:{} coll_ctxt_id:{} nic_opcode:{}, "
+                       " comm_desc_index:{}, buffer_addr_lsb:0x{:x}, addr_msb:0x{:x} buffer_size:{}",
+                       command->opcode,
+                       command->engine_group_type,
+                       command->cmd_size,
+                       cmd_coll_ops_long->cache_line_count,
+                       cmd_coll_ops_long->cache_line_remainder,
+                       cmd_coll_ops_long->element_remainder,
+                       cmd_coll_ops_long->has_size,
+                       cmd_coll_ops_long->notify_rndv_ack,
+                       cmd_coll_ops_long->wait_for_rndv_acks,
+                       cmd_coll_ops_long->coll_ctxt_id,
+                       cmd_coll_ops_long->nic_opcode,
+                       cmd_coll_ops_long->comm_desc_index,
+                       cmd_coll_ops_long->buffer_addr_lsb,
+                       cmd_coll_ops_long->addr_msb,
+                       bufferSize);
 }
 
 void SchedArcCommandsGaudi2::serializeCollectiveSendScaleOutCommand(hcl::ScalStreamBase& scalStream,
@@ -1308,7 +1345,6 @@ void SchedArcCommandsGaudi2::serializeUserSendCommand(std::vector<uint32_t>& out
 
     SET_FIELD(command.nic_opcode, 0x01);  // NIC_CMD_SEND_RECV
     SET_FIELD(command.coll_ctxt_id, collectiveContextIndex);
-    SET_FIELD(command.sob_index, syncObjectAddressIndex);
     SET_FIELD(command.sob_increment, (isLastInGroup ? 1 : 0));
     SET_FIELD(command.addr_lsb, (address & 0xffffffff));
     SET_FIELD(command.addr_msb, ((address >> 32) & 0xffffff));
@@ -1321,13 +1357,12 @@ void SchedArcCommandsGaudi2::serializeUserSendCommand(std::vector<uint32_t>& out
 
     LOG_TRACE(HCL_SUBMIT,
               "Packets | serializeUserSendCommand arc_cmd_send_recv_short_t  |  nic_opcode:{}, "
-              "coll_ctxt_id = {}, sob_index = {}, sob_increment = {}, addr_msb = 0x{:x}"
+              "coll_ctxt_id = {}, sob_increment = {}, addr_msb = 0x{:x}"
               "addr_lsb = 0x{:x}, commDescIndex = {}"
               "cache_line_count = 0x{:x} cache_line_remainder:0x{:x}, element_remainder :{}"
               "notifyRndvAck = {}, waitForRndvAcks = {}",
               command.nic_opcode,
               command.coll_ctxt_id,
-              command.sob_index,
               command.sob_increment,
               command.addr_msb,
               command.addr_lsb,

@@ -6,23 +6,8 @@
 #include <functional>
 #include <iosfwd>
 #include <chrono>
-
-#define FMT_HEADER_ONLY
-
-#define HLLOG_API __attribute__((visibility("default")))
-
-#define HLLOG_COMBINE_(a, b) a##b
-#define HLLOG_COMBINE(a, b)  HLLOG_COMBINE_(a, b)
-
-#define HLLOG_INLINE_API_NAMESPACE_ v1_9_inline
-#ifndef HLLOG_DISABLE_FMT_COMPILE
-#define HLLOG_INLINE_API_NAMESPACE HLLOG_COMBINE(HLLOG_INLINE_API_NAMESPACE_, _fmt_compile)
-#else
-#define HLLOG_INLINE_API_NAMESPACE HLLOG_INLINE_API_NAMESPACE_
-#endif
-
-#define HLLOG_BEGIN_NAMESPACE namespace hl_logger{ inline namespace HLLOG_INLINE_API_NAMESPACE{
-#define HLLOG_END_NAMESPACE }}
+#include "impl/hllog_config.hpp"
+#include "impl/string_wrapper.hpp"
 
 #define HLLOG_LEVEL_TRACE    0
 #define HLLOG_LEVEL_DEBUG    1
@@ -43,7 +28,11 @@ using LoggerSPtr = std::shared_ptr<Logger>;
 class Sinks;
 using SinksSPtr = std::shared_ptr<Sinks>;
 
+#ifndef HLLOG_USE_ABI0
 inline namespace v1_4{
+#else
+inline namespace HLLOG_INLINE_API_NAMESPACE{
+#endif
 struct LoggerCreateParams
 {
     std::string logFileName;                      // main log file. rotates and preserves previous log messages
@@ -91,8 +80,122 @@ struct LoggerCreateParams
     };
     ConsoleStream consoleStream = ConsoleStream::std_out;  // type of console stream if ENABLE_CONSOLE envvar is on
 };
-
+#ifndef HLLOG_USE_ABI0
 HLLOG_API LoggerSPtr createLogger(std::string_view loggerName, LoggerCreateParams const& params);
+#else
+}
+inline namespace v1_4{
+#endif
+
+// some libraries (e.g. pytorch) require old ABI (preC++11 ABI). std::string has ABI break in C++11.
+// Workaround: provide the same functionality with std::string_view (AN - ABI-neutral)
+struct LoggerCreateParamsAN
+{
+    using string_view = std::string_view;
+    string_view logFileName;                      // main log file. rotates and preserves previous log messages
+    unsigned    logFileSize         = 0;          // max log file
+    unsigned    logFileAmount       = 1;          // number of files for rotation
+    bool        rotateLogfileOnOpen = false;      // rotate logFile on logger creation
+    uint64_t    logFileBufferSize   = 0;          // default value (~5MB). if LOG_FILE_SIZE envvar is set - use its value
+    string_view separateLogFile;                  // a separate log file (if needed). it's recreated on each createLogger call
+    uint64_t    separateLogFileBufferSize = 0;
+    bool        registerLogger      = false;      // register logger in the global registry (enable access by name from different modules)
+    bool        sepLogPerThread     = false;      // separate log file per thread
+    bool        printSpecialContext = false;      // print special context [C:] for each log message
+    bool        printThreadID       = true;       // print tid [tid:<TID>] for each log message
+    bool        printProcessID      = false;      // print pid [pid:<PID>] for each log message
+    bool        forcePrintFileLine  = false;      // if false - print if PRINT_FILE_AND_LINE envvar is true
+    bool        printTime           = true;       // print time field: [<TIME>] (date is configured with PRINT_DATE/PRINT_TIME
+    bool        printLoggerName     = true;       // print logger name: [<LOGGER_NAME>]
+    bool        printRank           = false;      // print device rank (HLS_ID, ID): [hls:<HLS_ID>][rank:<ID>]
+    using LogLevelStyle = LoggerCreateParams::LogLevelStyle;
+    LogLevelStyle logLevelStyle    = LogLevelStyle::full_name;
+    string_view   spdlogPattern;                       // default(empty): [time][loggerName][Level] msg
+    unsigned      loggerNameLength = 0;                // default(0): max length of all the logger names
+    int           loggerFlushLevel = HLLOG_LEVEL_WARN; // only messages with at least loggerFlushLevel are flushed immediately
+    // only messages with at least loggingLevel are printed
+    // logLevel is :
+    // 1. LOG_LEVEL_<LOGGER_NAME> envvar (if it's set). if it's not set see 2.
+    // 2. LOG_LEVEL_ALL_<LOGGER_PREFIX> envvar (if it's set). if it's not set - defaultLogLevel
+    int         defaultLoggingLevel          = HLLOG_LEVEL_CRITICAL;
+    bool        forceDefaultLoggingLevel     = false;    // ignore envvars and set logLevel to defaultLogLevel
+    int         defaultLazyLoggingLevel      = HLLOG_LEVEL_OFF;
+    bool        forceDefaultLazyLoggingLevel = false;    // ignore envvars and set logLevel to defaultLogLevel
+    uint32_t    defaultLazyQueueSize         = HLLOG_DEFAULT_LAZY_QUEUE_SIZE; // default size of lazy log messages queue
+    int         defaultConsoleLoggingLevel   = HLLOG_LEVEL_OFF;
+    bool        forceDefaultConsoleLoggingLevel = false;    // ignore envvars and set logLevel to defaultLogLevel
+    using ConsoleStream = LoggerCreateParams::ConsoleStream;
+    ConsoleStream consoleStream = ConsoleStream::std_out;  // type of console stream if ENABLE_CONSOLE envvar is on
+};
+HLLOG_API LoggerSPtr createLogger(std::string_view loggerName, LoggerCreateParamsAN const& params);
+}
+
+// LoggerCreateParams <-> LoggerCreateParamsAN conversions are inside inline_api namespace to avoid ABI0/ABI1 collisions
+inline namespace HLLOG_INLINE_API_NAMESPACE {
+inline LoggerCreateParamsAN convertLoggerCreateParamsToAN(LoggerCreateParams const & other){
+    LoggerCreateParamsAN params;
+    params.logFileName = other.logFileName;
+    params.logFileSize = other. logFileSize;
+    params.logFileAmount = other.logFileAmount;
+    params.rotateLogfileOnOpen = other.rotateLogfileOnOpen;
+    params.logFileBufferSize = other.logFileBufferSize;
+    params.separateLogFile = other.separateLogFile;
+    params.separateLogFileBufferSize = other.separateLogFileBufferSize;
+    params.registerLogger = other.registerLogger;
+    params.sepLogPerThread = other.sepLogPerThread;
+    params.printSpecialContext = other.printSpecialContext;
+    params.printThreadID = other.printThreadID;
+    params.printProcessID = other.printProcessID;
+    params.forcePrintFileLine = other.forcePrintFileLine;
+    params.printTime = other.printTime;
+    params.printLoggerName = other.printLoggerName;
+    params.printRank = other.printRank;
+    params.logLevelStyle = other.logLevelStyle;
+    params.spdlogPattern = other.spdlogPattern;
+    params.loggerNameLength = other.loggerNameLength;
+    params.loggerFlushLevel = other.loggerFlushLevel;
+    params.defaultLoggingLevel = other.defaultLoggingLevel;
+    params.forceDefaultLoggingLevel = other.forceDefaultLoggingLevel;
+    params.defaultLazyLoggingLevel = other.defaultLazyLoggingLevel;
+    params.forceDefaultLazyLoggingLevel = other.forceDefaultLazyLoggingLevel;
+    params.defaultLazyQueueSize = other.defaultLazyQueueSize;
+    params.defaultConsoleLoggingLevel = other.defaultConsoleLoggingLevel;
+    params.forceDefaultConsoleLoggingLevel = other.forceDefaultConsoleLoggingLevel;
+    params.consoleStream = other.consoleStream;
+    return params;
+}
+inline LoggerCreateParams convertToLoggerCreateParamsFromAN(LoggerCreateParamsAN const & other){
+    LoggerCreateParams params;
+    params.logFileName = other.logFileName;
+    params.logFileSize = other.logFileSize;
+    params.logFileAmount = other.logFileAmount;
+    params.rotateLogfileOnOpen = other.rotateLogfileOnOpen;
+    params.logFileBufferSize = other.logFileBufferSize;
+    params.separateLogFile = other.separateLogFile;
+    params.separateLogFileBufferSize = other.separateLogFileBufferSize;
+    params.registerLogger = other.registerLogger;
+    params.sepLogPerThread = other.sepLogPerThread;
+    params.printSpecialContext = other.printSpecialContext;
+    params.printThreadID = other.printThreadID;
+    params.printProcessID = other.printProcessID;
+    params.forcePrintFileLine = other.forcePrintFileLine;
+    params.printTime = other.printTime;
+    params.printLoggerName = other.printLoggerName;
+    params.printRank = other.printRank;
+    params.logLevelStyle = other.logLevelStyle;
+    params.spdlogPattern = other.spdlogPattern;
+    params.loggerNameLength = other.loggerNameLength;
+    params.loggerFlushLevel = other.loggerFlushLevel;
+    params.defaultLoggingLevel = other.defaultLoggingLevel;
+    params.forceDefaultLoggingLevel = other.forceDefaultLoggingLevel;
+    params.defaultLazyLoggingLevel = other.defaultLazyLoggingLevel;
+    params.forceDefaultLazyLoggingLevel = other.forceDefaultLazyLoggingLevel;
+    params.defaultLazyQueueSize = other.defaultLazyQueueSize;
+    params.defaultConsoleLoggingLevel = other.defaultConsoleLoggingLevel;
+    params.forceDefaultConsoleLoggingLevel = other.forceDefaultConsoleLoggingLevel;
+    params.consoleStream = other.consoleStream;
+    return params;
+}
 }
 
 inline namespace v1_0{
@@ -264,6 +367,7 @@ HLLOG_API void addFileSink(LoggerSPtr const& logger,
  */
 HLLOG_API SinksSPtr getSinks(LoggerSPtr const& logger);
 
+#ifndef HLLOG_USE_ABI0
 /**
  * @brief getSinksFilenames
  *        NOT THREAD SAFE
@@ -271,7 +375,7 @@ HLLOG_API SinksSPtr getSinks(LoggerSPtr const& logger);
  * @return filenames of file_sinks that are connected to the logger
  */
 HLLOG_API std::vector<std::string> getSinksFilenames(LoggerSPtr const& logger);
-
+#endif
 /**
  * @brief setSinks set new logger sinks and return old ones
  *        NOT THREAD SAFE
@@ -376,19 +480,22 @@ HLLOG_API uint32_t getLazyQueueSize(std::string_view loggerName, uint32_t defaul
  * @return current logs folder
  */
 HLLOG_API std::string getLogsFolderPath();
+// ABI-neutral version
+HLLOG_API string_wrapper getLogsFolderPathAN();
 
 /**
  * @brief getLogsFolderPath
  * @return logs folder according to env vars
  */
 HLLOG_API std::string getLogsFolderPathFromEnv();
-
+// ABI-neutral version
+HLLOG_API string_wrapper getLogsFolderPathFromEnvAN();
 /**
  * @brief Changes logs directory for all existing loggers which have been already
  *        initialized.
  * @param logsDir new logs directory
  */
-HLLOG_API void setLogsFolderPath(const std::string& logsDir);
+HLLOG_API void setLogsFolderPath(std::string_view logsDir);
 
 /**
  * @brief Changes logs directory to path determined based on env variables
@@ -429,10 +536,11 @@ HLLOG_API void removeCurThreadSpecialContext();
  */
  // TODO: rethink the naming. it should be message log level ?
 HLLOG_API void enableTraceMode(bool enableTraceMode);
-
+}
+inline namespace v1_1{
 struct VersionInfo
 {
-    std::string commitSHA1;
+    string_wrapper commitSHA1;
 };
 
 /**
@@ -440,7 +548,8 @@ struct VersionInfo
  * @return VersionInfo
  */
 HLLOG_API VersionInfo getVersion();
-
+}
+inline namespace v1_0{
 using SignalHandlerV2 = std::function<void(int signal, const char* signalStr, bool isSevere)>;
 HLLOG_API ResourceGuard registerSignalHandler(SignalHandlerV2 signalHandler, std::string_view moduleName);
 

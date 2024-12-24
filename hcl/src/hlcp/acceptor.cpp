@@ -18,6 +18,10 @@ int acceptor_t::io_event(uint32_t io_events)
         {
             return IO_REARM;
         }
+        else
+        {
+            return IO_NONE;
+        }
     }
 
     HLCP_LOG("UNHANDLED !!! RE-ARM {} events: {}", socket_, io_events);
@@ -39,6 +43,7 @@ bool acceptor_t::accept()
         }
         else if (peer != -1)
         {
+            arm_monitor();
             op_notify_->on_accept(*this, peer);
         }
         else  // error ?

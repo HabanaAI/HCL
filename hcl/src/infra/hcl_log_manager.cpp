@@ -55,6 +55,10 @@ static void createModuleLoggersOnDemand(LogManager::LogType)
         hclParams.logFileBufferSize   = 1024 * 1024;
         hclParams.printSpecialContext = true;
         hl_logger::createLoggerOnDemand(LogManager::LogType::HCL_COORD, hclParams);
+
+        hclParams.defaultLoggingLevel      = HLLOG_LEVEL_TRACE;
+        hclParams.forceDefaultLoggingLevel = true;
+        hl_logger::createLoggerOnDemand(LogManager::LogType::HCL_FAILOVER, hclParams);
     }
 
     // hcl test
@@ -165,7 +169,6 @@ FuncScopeLog::~FuncScopeLog()
 
 }  // namespace hcl
 
-// all logger names should be limited to HCL_ + max 6 chars
 HLLOG_DEFINE_MODULE_LOGGER(HCL_API,
                            HCL,
                            HCL_OFI,
@@ -180,6 +183,7 @@ HLLOG_DEFINE_MODULE_LOGGER(HCL_API,
                            HCL_TEST,
                            FUNC_SCOPE,
                            HCL_CG,
+                           HCL_FAILOVER,
                            LOG_MAX)
 
 namespace hcl
@@ -204,8 +208,10 @@ void LogManager::create_logger(const LogManager::LogType& logType,
     params.separateLogFile  = separateLogFile ? separateLogFile : "";
     params.sepLogPerThread  = sepLogPerThread;
     params.loggerFlushLevel = HLLOG_LEVEL_WARN;
-    params.defaultLoggingLevel =
-        hl_logger::getLoggingLevel(logType) != HLLOG_LEVEL_OFF ? hl_logger::defaultLoggingLevel : HLLOG_LEVEL_ERROR;
+    if (hl_logger::getLoggingLevel(logType) == HLLOG_LEVEL_OFF)
+    {
+        params.defaultLoggingLevel = HLLOG_LEVEL_ERROR;
+    }
 
     auto loggerName = hl_logger::getLoggerEnumItemName(logType);
 

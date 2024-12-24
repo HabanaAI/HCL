@@ -4,6 +4,7 @@
 #include "platform/gen2_arch_common/hcl_device.h"             // for HclDevi...
 #include "platform/gen2_arch_common/hcl_packets_utils.h"      // for SoBaseAndSize, getCompCfg
 #include "infra/scal/gen2_arch_common/scal_names.h"
+#include "infra/scal/gen2_arch_common/scal_utils.h"
 
 HclDeviceControllerGen2Arch::HclDeviceControllerGen2Arch(const unsigned numOfStreams) : m_numOfStreams(numOfStreams)
 {
@@ -360,7 +361,7 @@ void HclDeviceControllerGen2Arch::streamAddWait(hcl::ScalStream&            scal
         m_streamSyncParams[archStreamIdx].m_smInfo.soSmIndex,
         descriptor.value,
         descriptor.sob.sobId,
-        getFenceIdx(archStreamIdx, scalStream.getStreamIndex(), FENCE_MONITOR_IDX),
+        getFenceIdx(archStreamIdx, scalStream.getUarchStreamIndex(), FENCE_MONITOR_IDX),
         useEqual);
 }
 
@@ -369,7 +370,8 @@ void HclDeviceControllerGen2Arch::addBarrierArm(
     bool                                                           external,
     unsigned                                                       creditsNr,
     const llvm_vecsmall::SmallVector<unsigned, MAX_STREAM_TO_INC>& streamsToInc,
-    bool                                                           shouldAddWait)
+    bool                                                           shouldAddWait,
+    LBWBurstData_t*                                                lbwBurstData)
 
 {
     unsigned                                                archStreamIdx = scalStream.getArchStreamIndex();
@@ -378,7 +380,7 @@ void HclDeviceControllerGen2Arch::addBarrierArm(
 
     if (shouldAddWait)
     {
-        addWait(scalStream, ARB_STREAM_IDX);
+        addStreamWaitOnLongSo(scalStream, ARB_STREAM_IDX);
     }
 
     if (creditsNr)
@@ -388,7 +390,13 @@ void HclDeviceControllerGen2Arch::addBarrierArm(
         {
             fences.push_back(getFenceIdx(archStreamIdx, streamsToInc[i], FENCE_BARRIER_IDX));
         }
-        m_commands->serializeAllocBarrierCommand(scalStream, schedIdx, cgInfo.cgIdx[schedIdx], creditsNr, &fences);
+
+        m_commands->serializeAllocBarrierCommand(scalStream,
+                                                 schedIdx,
+                                                 cgInfo.cgIdx[schedIdx],
+                                                 creditsNr,
+                                                 &fences,
+                                                 lbwBurstData);
     }
     else
     {
@@ -406,46 +414,42 @@ void HclDeviceControllerGen2Arch::waitForBarrierArm(hcl::ScalStream& scalStream)
     m_commands->serializeFenceDecCommand(
         scalStream,
         scalStream.getSchedIdx(),
-        getFenceIdx(scalStream.getArchStreamIndex(), scalStream.getStreamIndex(), FENCE_BARRIER_IDX));
+        getFenceIdx(scalStream.getArchStreamIndex(), scalStream.getUarchStreamIndex(), FENCE_BARRIER_IDX));
 }
 
-void HclDeviceControllerGen2Arch::addWait(hcl::ScalStream& scalStream, unsigned uarchStreamId)
+void HclDeviceControllerGen2Arch::addStreamWaitOnLongSo(hcl::ScalStream& scalStream, unsigned uarchStreamId)
 {
     unsigned archStreamIdx = scalStream.getArchStreamIndex();
     unsigned schedIdx      = scalStream.getSchedIdx();
     // Apply the pending waits that were requested in previous eventWait calls.
-    m_graphSync[archStreamIdx]->addWait(scalStream,
-                                        archStreamIdx,
-                                        m_streamSyncParams[archStreamIdx].m_smInfo.longMonitorSmIndex,
-                                        getLongMonitorIdx(archStreamIdx, schedIdx, uarchStreamId),
-                                        m_streamSyncParams[archStreamIdx].m_schedulers[schedIdx].streams[uarchStreamId],
-                                        getFenceIdx(archStreamIdx, uarchStreamId, FENCE_MONITOR_IDX));
+    m_graphSync[archStreamIdx]->addStreamWaitOnLongSo(
+        scalStream,
+        archStreamIdx,
+        m_streamSyncParams[archStreamIdx].m_smInfo.longMonitorSmIndex,
+        getLongMonitorIdx(archStreamIdx, schedIdx, uarchStreamId),
+        m_streamSyncParams[archStreamIdx].m_schedulers[schedIdx].streams[uarchStreamId],
+        getFenceIdx(archStreamIdx, uarchStreamId, FENCE_MONITOR_IDX));
 }
 
-void HclDeviceControllerGen2Arch::addInternalWait(hcl::ScalStream& scalStream, uint64_t soValue, unsigned soIdx)
+void HclDeviceControllerGen2Arch::addStreamWaitOnLongSo(hcl::ScalStream& scalStream, uint64_t soValue, unsigned soIdx)
 {
     unsigned archStreamIdx = scalStream.getArchStreamIndex();
     unsigned schedIdx      = scalStream.getSchedIdx();
-    unsigned uarchStreamId = scalStream.getStreamIndex();
+    unsigned uarchStreamId = scalStream.getUarchStreamIndex();
 
-    LOG_HCL_TRACE(HCL,
-                  "Adding an internal wait on schedIdx={}, uarchStreamId={} for targetValue={}",
-                  schedIdx,
-                  uarchStreamId,
-                  soValue);
-    m_graphSync[archStreamIdx]->addInternalWait(scalStream,
-                                                m_streamSyncParams[archStreamIdx].m_smInfo.longMonitorSmIndex,
-                                                getLongMonitorIdx(archStreamIdx, schedIdx, uarchStreamId),
-                                                soValue,
-                                                soIdx,
-                                                getFenceIdx(archStreamIdx, uarchStreamId, FENCE_MONITOR_IDX));
+    m_graphSync[archStreamIdx]->addStreamWaitOnLongSo(scalStream,
+                                                      m_streamSyncParams[archStreamIdx].m_smInfo.longMonitorSmIndex,
+                                                      getLongMonitorIdx(archStreamIdx, schedIdx, uarchStreamId),
+                                                      soValue,
+                                                      soIdx,
+                                                      getFenceIdx(archStreamIdx, uarchStreamId, FENCE_MONITOR_IDX));
 }
 
 void HclDeviceControllerGen2Arch::setHostFences(int     archStreamId,
                                                 int     uarchStreamId,
                                                 bool    isSend,
                                                 uint8_t scaleoutInternalFences,
-                                                llvm_vecsmall::SmallVector<fence_info, HOST_FENCES_NR>& scaleoutFences)
+                                                llvm_vecsmall::SmallVector<FenceInfo, HOST_FENCES_NR>& scaleoutFences)
 {
     /*
         ----------------------------------------------
@@ -545,7 +549,7 @@ void HclDeviceControllerGen2Arch::setTraceMarker(int archStreamId, uint32_t val)
     unsigned         uArchStream = static_cast<unsigned int>(hcl::NetworkStreams::arbitrator);
     hcl::ScalStream& currentStream =
         m_scalManager->getScalStream(archStreamId, (unsigned)hcl::SchedulersIndex::sendScaleUp, uArchStream);
-    addWait(currentStream, uArchStream);
+    addStreamWaitOnLongSo(currentStream, uArchStream);
 
     m_commands->serializeSetTraceMarker(currentStream, currentStream.getSchedIdx(), val);
     submitWork(archStreamId);

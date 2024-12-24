@@ -1,6 +1,5 @@
 #include "hcl_utils.h"
 #include "hcl_ibverbs.h"
-#include "hlthunk.h"
 #include "hcl_types.h"                                    // for portMaskConfig
 #include "platform/gen2_arch_common/types.h"              // for MAX_NICS_GEN2ARCH
 #include "platform/gen2_arch_common/hcl_device_config.h"  // for HclDeviceConfig
@@ -18,6 +17,7 @@ std::ostream& operator<<(std::ostream& os, const ibv_gid& gid)
     return os << "GID(0x" << std::hex << gid.global.interface_id << ", 0x" << gid.global.subnet_prefix << std::dec
               << ")";
 }
+HLLOG_DEFINE_OSTREAM_FORMATTER(ibv_gid);
 
 hcclResult_t hcl_ibverbs_t::init(const HclDeviceConfig& deviceConfig)
 {
@@ -204,7 +204,7 @@ void hcl_ibverbs_t::create_cq(uint32_t nic, int num_cqes)
     /* on success, create CQ API returns a handle, it needs to be stored for future reference during QP creation */
     auto ibvcq = ibv_.hbldv_create_cq(ibctx_, num_cqes, NULL, 0, &cq_attr);
 
-    VERIFY(ibvcq, "hbldv_create_cq(num_cqes: {}) failed. nic: {}", nic, num_cqes);
+    VERIFY(ibvcq, "hbldv_create_cq(num_cqes: {}) failed. nic: {}", num_cqes, nic);
 
     cqs_[nic] = ibvcq;
 }
@@ -305,13 +305,18 @@ uint32_t hcl_ibverbs_t::create_qp(bool sender, uint32_t nic, uint32_t qpHint)
     return dv_qp_attr.qp_num;
 }
 
-uint32_t hcl_ibverbs_t::create_collective_qp(bool is_scale_out)
+uint32_t hcl_ibverbs_t::reserve_collective_qp(bool is_scale_out)
 {
     hbldv_coll_qp_attr coll_qp_attr = {.is_scale_out = is_scale_out};
     hbldv_coll_qp      coll_qp      = {};
 
     int rc = ibv_.hbldv_reserve_coll_qps(ibpd_, &coll_qp_attr, &coll_qp);
-    VERIFY(rc == 0, "hbldv_reserve_coll_qps() failed: {}", rc);
+    VERIFY(rc == 0,
+           "hbldv_reserve_coll_qps() failed: {} is_scale_out {} errno {} {}",
+           rc,
+           is_scale_out,
+           errno,
+           errno ? strerror(errno) : "");
     LOG_IBV("--> {} {}", coll_qp.qp_num, is_scale_out ? "(scale-out)" : "");
     return coll_qp.qp_num;
 }

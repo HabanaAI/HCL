@@ -1,4 +1,5 @@
 #pragma once
+#include "hcl_log_manager.h"
 #include <cstdint>
 #include <cstddef>
 #include <array>
@@ -52,7 +53,9 @@ struct hlcp_packet_t
 class hlcp_command_t
 {
 public:
-    virtual cmdid_t id() const = 0;
+    virtual cmdid_t id() const { return 0; };
+
+    virtual const char* name() const { return "empty"; };
 
     virtual void*  param() const { return nullptr; }
     virtual size_t param_size() const { return 0; }
@@ -60,7 +63,6 @@ public:
     virtual size_t payload_size() const { return 0; }
     virtual ~hlcp_command_t() = default;
 
-    hlcp_command_t& operator=(const hlcp_packet_t& packet);
     hlcp_command_t& operator=(const hlcp_message_t& msg);
 };
 
@@ -68,6 +70,10 @@ constexpr cmdid_t HLCP_BASE_CMD_ID = 100;
 
 #include <ostream>
 std::ostream& operator<<(std::ostream& out, const hlcp_header_t& hdr);
+HLLOG_DEFINE_OSTREAM_FORMATTER(hlcp_header_t);
 std::ostream& operator<<(std::ostream& out, const hlcp_message_t& msg);
+HLLOG_DEFINE_OSTREAM_FORMATTER(hlcp_message_t);
 std::ostream& operator<<(std::ostream& out, const hlcp_packet_t& p);
+HLLOG_DEFINE_OSTREAM_FORMATTER(hlcp_packet_t);
 std::ostream& operator<<(std::ostream& out, const hlcp_command_t& c);
+HLLOG_DEFINE_OSTREAM_FORMATTER(hlcp_command_t);

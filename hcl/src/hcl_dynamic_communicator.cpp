@@ -31,7 +31,7 @@ class IHclDevice;
 static constexpr unsigned MAX_SEND_RECV_PEER_COUNTER = 16;
 
 HclDynamicCommunicator::HclDynamicCommunicator(const HCL_Comm comm, Gen2ArchServerDef& serverDef, hcl::HalPtr hal)
-: m_commId(comm), m_serverDef(serverDef), m_hal(hal)
+: m_commId(comm), m_commConnectivity(comm, serverDef.getServerConnectivity()), m_serverDef(serverDef), m_hal(hal)
 {
     m_streamLatestLongSo.resize(m_hal->getMaxStreams());
     m_streamLatestLongSo.assign(m_hal->getMaxStreams(), 0);
@@ -82,6 +82,19 @@ bool HclDynamicCommunicator::init(const uint32_t hcclCommSize, const HCL_Rank ra
 
     m_sendCounter.clear();
     m_recvCounter.clear();
+
+    if (GCFG_HCCL_OVER_OFI.value())
+    {
+        m_maxScaleOutQpSetsNum = (unsigned)m_commSize < GCFG_HCL_HNIC_QP_SETS_COMM_SIZE_THRESHOLD.value()
+                                     ? GCFG_HCL_HNIC_SCALE_OUT_QP_SETS.value()
+                                     : 1;
+    }
+    else
+    {
+        m_maxScaleOutQpSetsNum = (unsigned)m_commSize < GCFG_HCL_GNIC_QP_SETS_COMM_SIZE_THRESHOLD.value()
+                                     ? GCFG_HCL_GNIC_SCALE_OUT_QP_SETS.value()
+                                     : 1;
+    }
 
     return true;
 }
@@ -295,7 +308,7 @@ const std::vector<HCL_Rank>& HclDynamicCommunicator::getRemoteRanks() const
     return m_remoteRanks;
 }
 
-uint32_t HclDynamicCommunicator::getScaleupGroupSize()
+uint32_t HclDynamicCommunicator::getScaleupGroupSize() const
 {
     return m_scaleupGroupSize;
 }
@@ -375,7 +388,7 @@ hcclResult_t HclDynamicCommunicator::setSliceSize()
         !GCFG_HCL_SLICE_SIZE.isSetFromUserConfig())
     {
         LOG_HCL_DEBUG(HCL,
-                      "Using increased slice size of {}MB since Gaudi-direct is enabled",
+                      "Using slice size of {}MB since Gaudi-direct is enabled",
                       B2MB(GCFG_HCL_GDR_SLICE_SIZE.value()));
         m_sliceSize = GCFG_HCL_GDR_SLICE_SIZE.value();
     }
@@ -591,16 +604,96 @@ void HclDynamicCommunicator::setRankInScaleupGroup()
 
 unsigned HclDynamicCommunicator::getMaxScaleOutQpSetsNum()
 {
-    if (GCFG_HCCL_OVER_OFI.value())
+    return m_maxScaleOutQpSetsNum;
+}
+
+CommConnectivity::CommConnectivity(const HCL_Comm hclComm, const Gen2ArchServerConnectivity& serverConnectivity)
+: m_comm(hclComm)
+{
+    updateScaleOutPortsMask(serverConnectivity, nics_mask_t(NBITS(64)));
+}
+
+void CommConnectivity::updateScaleOutPortsMask(const Gen2ArchServerConnectivity& serverConnectivity,
+                                               const nics_mask_t                 operationalScaleOutPortsMask)
+{
+    setPortsMasks(serverConnectivity, operationalScaleOutPortsMask);
+    setNumScaleOutPorts(serverConnectivity);
+}
+
+void CommConnectivity::setPortsMasks(const Gen2ArchServerConnectivity& m_serverConnectivity,
+                                     const nics_mask_t                 operationalScaleOutPortsMask)
+{
+    RuntimePortsMasksUtils::SetPortsMaskInput input {.comm                         = m_comm,
+                                                     .serverConnectivity           = m_serverConnectivity,
+                                                     .operationalScaleOutPortsMask = operationalScaleOutPortsMask};
+
+    RuntimePortsMasksUtils::SetPortsMaskOutput output = RuntimePortsMasksUtils::setPortsMasksCommon(input);
+
+    m_enabledExternalPortsMask = output.enabledExternalPortsMask;
+}
+
+void CommConnectivity::setNumScaleOutPorts(const Gen2ArchServerConnectivity& serverConnectivity)
+{
+    uint16_t sub_port_index_min = 0;
+    uint16_t sub_port_index_max = serverConnectivity.getMaxNumScaleOutPorts() - 1;  // Includes LKD mask
+    m_enabledScaleoutSubPorts.clear();
+    m_enabledScaleoutPorts = 0;
+    // collect all ports that are pre-defined as scaleout ports and enabled in hl-thunk port mask
+    for (uint16_t port_index = 0; port_index < MAX_NICS_GEN2ARCH; port_index++)
     {
-        return (unsigned)m_commSize < GCFG_HCL_HNIC_QP_SETS_COMM_SIZE_THRESHOLD.value()
-                   ? GCFG_HCL_HNIC_SCALE_OUT_QP_SETS.value()
-                   : 1;
+        if (serverConnectivity.isScaleoutPort(port_index))
+        {
+            // Accordingly to FW implementation, the port with the lowest sub port index
+            // will be used for scaleout if some of the ports were disabled.
+            // Example:
+            // |         sub port indices      |    number of used ports   |         active ports        |
+            // +-------------------------------+---------------------------+-----------------------------+
+            // |        8->2, 22->0, 23->1     |             2             |             22,23           |
+            // +-------------------------------+---------------------------+-----------------------------+
+            // |        8->2, 22->0, 23->1     |             1             |               22            |
+            // +-------------------------------+---------------------------+-----------------------------+
+            if (m_enabledExternalPortsMask[port_index])
+            {
+                m_enabledScaleoutPorts[port_index] = true;
+                m_enabledScaleoutSubPorts.insert(std::make_pair(port_index, sub_port_index_min));
+                sub_port_index_min++;
+            }
+            else
+            {
+                m_enabledScaleoutSubPorts.insert(std::make_pair(port_index, sub_port_index_max));
+                sub_port_index_max--;
+            }
+        }
     }
-    else
+    LOG_HCL_INFO(HCL,
+                 "Enabled number of scaleout ports for comm {} by LKD/user mask is: {} out of {} possible.",
+                 m_comm,
+                 m_enabledScaleoutPorts.to_str(),
+                 serverConnectivity.getAllScaleoutPorts().to_str());
+    for (const auto kv : m_enabledScaleoutSubPorts)
     {
-        return (unsigned)m_commSize < GCFG_HCL_GNIC_QP_SETS_COMM_SIZE_THRESHOLD.value()
-                   ? GCFG_HCL_GNIC_SCALE_OUT_QP_SETS.value()
-                   : 1;
+        LOG_HCL_DEBUG(HCL, "m_enabled_scaleout_sub_ports for comm {}: [{}, {}]", m_comm, kv.first, kv.second);
     }
+}
+
+void HclDynamicCommunicator::getAsyncError(hcclResult_t* asyncError)
+{
+    // we need to pass to HclDevice all the module IDs in this comm
+    // we get all the inner ranks' module IDs, and check if we have outer ranks.
+    // if yes, we add SCALEOUT_DEVICE_ID to the list of module IDs
+    std::vector<HCL_HwModuleId> remoteModuleIDs;
+    for (auto& remoteRank : getInnerRanksExclusive())
+    {
+        const HCL_HwModuleId moduleID = m_remoteDevices[remoteRank]->header.hwModuleID;
+        remoteModuleIDs.push_back(moduleID);
+        LOG_HCL_DEBUG(HCL, "adding module ID {} for remote rank {}", moduleID, remoteRank);
+    }
+
+    if (isCommunicatorMultiScaleupGroup())
+    {
+        LOG_HCL_DEBUG(HCL, "adding scaleout device ID");
+        remoteModuleIDs.push_back(SCALEOUT_DEVICE_ID);
+    }
+
+    hccl_device()->getAsyncError(remoteModuleIDs, m_commId, asyncError);
 }

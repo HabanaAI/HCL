@@ -17,6 +17,15 @@
               ##__VA_ARGS__,                                                                                           \
               *(scalStream.getStreamName()));
 
+#define PRINT_PACKET_TRACE_WITH_2_COUNTS(scalStream, cnt1, cnt2, msg, ...)                                             \
+    LOG_TRACE(HCL_SUBMIT,                                                                                              \
+              "Packets | {}({})({}) " msg ", on stream:{}",                                                            \
+              __func__,                                                                                                \
+              cnt1,                                                                                                    \
+              cnt2,                                                                                                    \
+              ##__VA_ARGS__,                                                                                           \
+              *(scalStream.getStreamName()));
+
 struct SoIdxBaseIdx
 {
     uint32_t baseIdx = UINT32_MAX;

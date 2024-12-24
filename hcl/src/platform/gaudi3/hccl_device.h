@@ -9,4 +9,8 @@ class hccl_gaudi3_t : public hccl_device_t
 public:
     hccl_gaudi3_t(class HclDeviceGaudi3* _device) : hccl_device_t((HclDeviceGen2Arch*)_device, synDeviceGaudi3) {}
     virtual hcclResult_t init_device(uint8_t apiId) override;
+
+protected:
+    virtual uint32_t stream_id(void* streamHandle) override;
+
 };

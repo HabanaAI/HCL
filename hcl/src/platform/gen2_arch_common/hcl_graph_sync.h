@@ -6,6 +6,7 @@
 #include <vector>                                    // for map
 #include "infra/scal/gen2_arch_common/scal_types.h"  // for CgInfo
 #include "platform/gen2_arch_common/signals/types.h"
+#include "infra/scal/gen2_arch_common/scal_utils.h"
 
 class HclLbwWriteAggregator;
 class HclCommandsGen2Arch;
@@ -20,6 +21,8 @@ static const unsigned FENCE_MONITOR_IDX        = 0;
 static const unsigned FENCE_BARRIER_IDX        = 1;
 static const unsigned FENCES_PER_STREAM        = 2;
 static const unsigned MONITORS_PER_FENCE       = 4;
+static const unsigned SO_QUARTERS              = 4;
+static const unsigned SO_TOTAL_COUNT           = 8192;
 static const unsigned MONITORS_PER_STREAM      = FENCES_PER_STREAM * MONITORS_PER_FENCE;
 static const unsigned LONG_MONITORS_PER_STREAM = 1;
 static const unsigned LONG_MONITOR_LENGTH      = 4;
@@ -97,32 +100,32 @@ public:
     void incLongtermSoIndex(unsigned credits);
     int  getLongtermAmount();
 
-    void addWait(hcl::ScalStream&              scalStream,
-                 int                           streamId,
-                 unsigned                      dcoreIdx,
-                 uint32_t                      monIdx,
-                 std::map<uint32_t, uint64_t>& waitedValues,
-                 unsigned                      fenceIdx);
+    void addStreamWaitOnLongSo(hcl::ScalStream&              scalStream,
+                               int                           streamId,
+                               unsigned                      smIdx,
+                               uint32_t                      monIdx,
+                               std::map<uint32_t, uint64_t>& waitedValues,
+                               unsigned                      fenceIdx);
 
-    void addInternalWait(hcl::ScalStream& scalStream,
-                         unsigned         dcoreIdx,
-                         uint32_t         monIdx,
-                         uint64_t         soValue,
-                         unsigned         soIdx,
-                         unsigned         fenceIdx);
+    void addStreamWaitOnLongSo(hcl::ScalStream& scalStream,
+                               unsigned         smIdx,
+                               uint32_t         monIdx,
+                               uint64_t         soValue,
+                               unsigned         soIdx,
+                               unsigned         fenceIdx);
 
     void setSyncData(uint32_t m_syncObjectBase, unsigned m_soSize);
 
     void createSyncStreamsMessages(hcl::ScalStream& scalStream,
                                    unsigned         monBase,
-                                   unsigned         syncDcoreIdx,
+                                   unsigned         smIdx,
                                    unsigned         soVal,
                                    unsigned         soIdx,
                                    unsigned         fenceIdx,
                                    bool             useEqual);
 
     void createResetSoMessages(HclLbwWriteAggregator&                                         aggregator,
-                               uint32_t                                                       dcoreIdx,
+                               uint32_t                                                       smIdx,
                                const std::array<bool, (unsigned)WaitMethod::WAIT_METHOD_MAX>& methodsToClean);
 
     bool isForceOrder(bool external);
@@ -158,6 +161,7 @@ protected:
                                                 bool             isLong);
     uint16_t             getFifteenBits(uint64_t val, unsigned index);
     HclCommandsGen2Arch& m_commands;
+    Gen2ArchScalUtils*   m_utils = NULL;
 
 private:
     void createArmMonMessages(hcl::ScalStream& scalStream,

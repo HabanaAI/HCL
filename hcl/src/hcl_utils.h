@@ -1,29 +1,31 @@
 #pragma once
 
-#include <arpa/inet.h>        // for inet_ntoa, inet_pton
-#include <netinet/ether.h>    // for ether_aton
-#include <cerrno>             // for errno
-#include <fcntl.h>            // for open, O_RDWR
-#include <linux/if_ether.h>   // for ETH_ALEN
-#include <netdb.h>            // for gethostbyname, hostent
-#include <cstdio>             // for printf, sprintf, sscanf
-#include <cstring>            // for strrchr, memcpy
-#include <sys/mman.h>         // for PROT_READ, PROT_WRITE, mmap
-#include <sys/socket.h>       // for AF_INET
-#include <unistd.h>           // for close, usleep, gethostname
-#include <algorithm>          // for min
-#include <chrono>             // for nanoseconds, steady_clock
-#include <cstdint>            // for uint8_t, uint32_t, uint64_t
-#include <cstdlib>            // for getenv, size_t, strtoul, NULL
-#include <exception>          // for terminate
-#include <iomanip>            // for operator<<, setprecision, setw
-#include <iostream>           // for operator<<, basic_ostream
-#include <fstream>            // for fstream
-#include <string>             // for allocator, operator+, string
-#include <unordered_set>      // for unordered_set, unordered_set...
-#include <vector>             // for vector
-#include <future>             // for future
-#include "infra/futex.h"      // for Futex
+#include <arpa/inet.h>       // for inet_ntoa, inet_pton
+#include <netinet/ether.h>   // for ether_aton
+#include <cerrno>            // for errno
+#include <fcntl.h>           // for open, O_RDWR
+#include <linux/if_ether.h>  // for ETH_ALEN
+#include <netdb.h>           // for gethostbyname, hostent
+#include <cstdio>            // for printf, sprintf, sscanf
+#include <cstring>           // for strrchr, memcpy
+#include <sys/mman.h>        // for PROT_READ, PROT_WRITE, mmap
+#include <sys/socket.h>      // for AF_INET
+#include <unistd.h>          // for close, usleep, gethostname
+#include <algorithm>         // for min
+#include <chrono>            // for nanoseconds, steady_clock
+#include <cstdint>           // for uint8_t, uint32_t, uint64_t
+#include <cstdlib>           // for getenv, size_t, strtoul, NULL
+#include <exception>         // for terminate
+#include <iomanip>           // for operator<<, setprecision, setw
+#include <iostream>          // for operator<<, basic_ostream
+#include <fstream>           // for fstream
+#include <string>            // for allocator, operator+, string
+#include <unordered_set>     // for unordered_set, unordered_set...
+#include <vector>            // for vector
+#include <future>            // for future
+#include "infra/futex.h"     // for Futex
+#include <mutex>             // for mutex
+
 #include "hccl_types.h"       // for hcclResult_t
 #include "hcl_api_types.h"    // for HCL_CollectiveOp
 #include "hccl_types.h"       // for hcclInternalError
@@ -68,8 +70,6 @@
  * }
  */
 extern volatile hcclResult_t g_status;
-extern DfaPhase              g_dfaPhase;
-extern std::mutex            g_dfaMutex;
 
 #define LOG_HCL_COMMON                                                                                                 \
     static std::string __class__;                                                                                      \
@@ -124,14 +124,14 @@ class LogContext
 public:
     LogContext(HLLOG_ENUM_TYPE_NAME logType) : m_logTypeIndex((unsigned)logType)
     {
-        if (likely(GCFG_HCL_LOG_CONTEXT.value()))
+        if (likely(LogContext::s_logCtxtCfg))
         {
             g_logContext[m_logTypeIndex] += 4;
         }
     }
     ~LogContext()
     {
-        if (likely(GCFG_HCL_LOG_CONTEXT.value()))
+        if (likely(LogContext::s_logCtxtCfg))
         {
             g_logContext[m_logTypeIndex] -= 4;
         }
@@ -143,7 +143,8 @@ public:
     LogContext& operator=(LogContext&&) = delete;
 
 private:
-    int m_logTypeIndex;
+    int         m_logTypeIndex;
+    static bool s_logCtxtCfg;
 };
 
 // One level of macro indirection is required in order to resolve __COUNTER__,
@@ -457,70 +458,6 @@ private:
              VERIFY_2(dfa, dfaMsg, __VA_ARGS__),                                                                       \
              VERIFY_1(dfa, dfaMsg, __VA_ARGS__), )
 
-#define HCL_API_LOG_ENTRY(msg, ...) LOG_INFO(HCL_API, "{}: " msg, __func__, ##__VA_ARGS__);
-
-#define HCL_API_NOT_SUPPORTED(condition)                                                                               \
-    if ((condition)) return hcclUnsupported;
-
-#define TRANSLATE_ENUM_TO_STRING(x)                                                                                    \
-    case x:                                                                                                            \
-        return #x;
-
-#define HCL_API_RETURN_IF_NULL(condition)                                                                              \
-    if ((condition) == nullptr)                                                                                        \
-    {                                                                                                                  \
-        LOG_ERR(HCL, "{}: The condition [ {} ] is NULL.", __func__, #condition);                                       \
-        return hcclInvalidArgument;                                                                                    \
-    }
-
-#define HCL_API_RETURN_IF_FAIL(res, msg, ...)                                                                          \
-    if ((res) == hcclSuccess)                                                                                          \
-    {                                                                                                                  \
-        LOG_HCL_INFO(HCL, msg " Done", ##__VA_ARGS__);                                                                 \
-    }                                                                                                                  \
-    else                                                                                                               \
-    {                                                                                                                  \
-        LOG_HCL_ERR(HCL, msg " Failed ({})", ##__VA_ARGS__, res);                                                      \
-        return res;                                                                                                    \
-    }
-
-#define HCL_API_RETURN_HAPPY_IF_NULL(condition)                                                                        \
-    if ((condition) == nullptr)                                                                                        \
-    {                                                                                                                  \
-        LOG_DEBUG(HCL, "{}: The condition [ {} ] is NULL.", __func__, #condition);                                     \
-        return hcclSuccess;                                                                                            \
-    }
-
-#define HCL_API_RETURN_IF_ZERO(condition)                                                                              \
-    if ((condition) == 0)                                                                                              \
-    {                                                                                                                  \
-        LOG_ERR(HCL, "{}: The condition [ {} ] is ZERO.", __func__, #condition);                                       \
-        return hcclInvalidArgument;                                                                                    \
-    }
-
-#define HCL_API_RETURN_IF_ADDR_INVALID(addr)                                                                           \
-    {                                                                                                                  \
-        bool valid = hccl_device()->isDramAddressValid(addr);                                                          \
-        if (!valid)                                                                                                    \
-        {                                                                                                              \
-            LOG_ERR(HCL, "{}: The ADDR [ {} ] is INVALID.", __func__, #addr);                                          \
-            return hcclInvalidArgument;                                                                                \
-        }                                                                                                              \
-    }
-
-#define HCL_API_STORE_HANDLE(handle)                                                                                   \
-    if (phRequest) *phRequest = handle;
-
-#define RUN_ONCE(X)                                                                                                    \
-    {                                                                                                                  \
-        static bool runOnce = true;                                                                                    \
-        if (runOnce)                                                                                                   \
-        {                                                                                                              \
-            runOnce = false;                                                                                           \
-            X;                                                                                                         \
-        }                                                                                                              \
-    }
-
 inline bool checkReductionOp(hcclRedOp_t reduceOp)
 {
     /* No default in switch case to enforce adding new enums */
@@ -567,60 +504,6 @@ inline unsigned dataTypeSizeInBytes(hcclDataType_t type, bool packed = false)
             return 0;
     }
 }
-
-#define HCL_API_RETURN_IF_COMM_DOES_NOT_EXIST(device, comm)                                                            \
-    {                                                                                                                  \
-        if (device->isCommExist(comm) == false)                                                                        \
-        {                                                                                                              \
-            LOG_ERR(HCL, "{}: HCL_Comm({}) doesn't exist", __func__, comm);                                            \
-            return hcclInvalidArgument;                                                                                \
-        }                                                                                                              \
-    }
-
-#define HCCL_TRY                                                                                                       \
-    if (g_dfaPhase == DfaPhase::STARTED)                                                                               \
-    {                                                                                                                  \
-        std::unique_lock<std::mutex> lck(g_dfaMutex); /* hold api until dfa finished collecting info */                \
-    }                                                                                                                  \
-    if (g_status != hcclSuccess)                                                                                       \
-    {                                                                                                                  \
-        return g_status;                                                                                               \
-    }                                                                                                                  \
-    try                                                                                                                \
-    {
-#define HCL_API_EXIT(status)                                                                                           \
-    if (g_dfaPhase == DfaPhase::STARTED)                                                                               \
-    {                                                                                                                  \
-        std::unique_lock<std::mutex> lck(g_dfaMutex); /* hold api until dfa finished collecting info */                \
-    }                                                                                                                  \
-    return status;                                                                                                     \
-    }                                                                                                                  \
-    catch (hcl::VerifyException & e)                                                                                   \
-    {                                                                                                                  \
-        if (g_dfaPhase == DfaPhase::STARTED)                                                                           \
-        {                                                                                                              \
-            std::unique_lock<std::mutex> lck(g_dfaMutex); /* hold api until dfa finished collecting info */            \
-        }                                                                                                              \
-        LOG_CRITICAL(HCL, "{} returned {} with exception: {}", __FUNCTION__, g_status, e.what());                      \
-        return g_status;                                                                                               \
-    };
-
-#define HCCL_API_EXIT(status)                                                                                          \
-    if (g_dfaPhase == DfaPhase::STARTED)                                                                               \
-    {                                                                                                                  \
-        std::unique_lock<std::mutex> lck(g_dfaMutex); /* hold api until dfa finished collecting info */                \
-    }                                                                                                                  \
-    return status;                                                                                                     \
-    }                                                                                                                  \
-    catch (hcl::VerifyException & e)                                                                                   \
-    {                                                                                                                  \
-        if (g_dfaPhase == DfaPhase::STARTED)                                                                           \
-        {                                                                                                              \
-            std::unique_lock<std::mutex> lck(g_dfaMutex); /* hold api until dfa finished collecting info */            \
-        }                                                                                                              \
-        LOG_CRITICAL(HCL, "{} returned {} with exception: {}", __FUNCTION__, g_status, e.what());                      \
-        return g_status;                                                                                               \
-    };
 
 /**
  * @brief Converts a number of bytes to megabytes, rounding the result to 3 decimal places.

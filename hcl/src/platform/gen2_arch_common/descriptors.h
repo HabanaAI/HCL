@@ -115,7 +115,7 @@ public:
     virtual void run(NonCollectiveState& nonCollectiveState) override { VERIFY(false, "Illegal call"); }
 
 protected:
-    void     streamAddWait(spHostStreamFifo hostStream, fence_info fence, const uint64_t srCount);
+    void     streamAddWait(spHostStreamFifo hostStream, FenceInfo fence, const uint64_t srCount);
     unsigned getHostUarchStreamIdx();
 
     HclCommandsGen2Arch& m_commands;
@@ -143,9 +143,6 @@ protected:
     unsigned getHostUarchStreamIdx();
 
     HclCommandsGen2Arch& m_commands;
-
-private:
-    const uint64_t m_targetValue;
 };
 
 class GaudiDirectScaleoutDescriptor : public LibfabricScaleoutDescriptor

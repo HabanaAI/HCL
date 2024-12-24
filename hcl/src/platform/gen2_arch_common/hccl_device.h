@@ -71,6 +71,8 @@ protected:
     {
     }
     virtual hcclResult_t init_device(uint8_t apiId) = 0;
+    virtual uint32_t stream_id(void* streamHandle) = 0;
+
 
     hcl_device_t device_ = nullptr;
 

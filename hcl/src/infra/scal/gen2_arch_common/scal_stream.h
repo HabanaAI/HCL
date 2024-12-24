@@ -25,7 +25,7 @@ namespace hcl
 /**
  * @brief
  *
- * ScalStreamBase is responsible for encapsulating a buffer. It's used by hcl_packets.h mainly because the
+ * ScalStreamBase is responsible for encapsulating a buffer. It's used by hcl_packets.h mainly because
  * some clients need the actual buffer (ContextManager, NicPassthroughHandler, unit tests).
  */
 class ScalStreamBase
@@ -74,7 +74,7 @@ public:
     void        disableCcb(bool disable);
     void        dfaLog(hl_logger::LoggerSPtr synDevFailLog);
 
-    inline unsigned        getStreamIndex() { return m_internalStreamIdx; };
+    inline unsigned        getUarchStreamIndex() { return m_internalStreamIdx; };
     inline unsigned        getSchedIdx() { return m_schedIdx; };
     inline unsigned        getArchStreamIndex() { return m_archStreamIndex; }
     static inline unsigned getCcbSize() { return m_hostCyclicBufferSize; }
@@ -82,7 +82,6 @@ public:
     virtual std::string*   getSchedAndStreamName() { return &m_schedAndStreamName; }
 
 private:
-    const ScalJsonNames&  m_scalNames;
     static const uint64_t m_core_counter_max_value = 1 << 16;
     static const uint64_t piQuant                  = 4;
 

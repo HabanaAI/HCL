@@ -36,7 +36,7 @@ namespace hcl
  * @brief
  *
  * ScalManager is the API entry point to all Scal needs in HCL.
- * Its responsible for all logic needed buy HCL and its the only contact to the scal SW layer.
+ * Its responsible for all logic needed by HCL and its the only contact to the scal SW layer.
  * It hold all static data: Arch Streams, Internal/External Compilation Groups, Sync Manager Info,
  * Memory pools, MicroArchStreams and its buffers.
  * It also responsible for managing cyclic buffers AKA MicroArchStreams
@@ -80,6 +80,8 @@ public:
      */
     scal_comp_group_handle_t getCgHandle(unsigned archStreamIdx, bool external);
 
+    Gen2ArchScalWrapper::CgComplex getCgInfo(const std::string& cgName) const;
+
     size_t getMicroArchStreams(unsigned schedIdx);
 
     /**
@@ -94,7 +96,6 @@ public:
     uint64_t getMonitorPayloadAddr(SchedulersIndex schedIdx, unsigned fenceIdx);
 
     virtual void initGlobalContext(HclDeviceGen2Arch* device, uint8_t apiId);
-    virtual void configQps(HCL_Comm comm, HclDeviceGen2Arch* device);
     virtual void initSimb(HclDeviceGen2Arch* device, uint8_t apiID);
 
     /**
@@ -143,11 +144,13 @@ public:
     uint64_t getCurrentLongSoValue(unsigned archStream);
 
     scal_handle_t getScalHandle() { return m_scalWrapper->getScalHandle(); }
+    Gen2ArchScalWrapper& getScalWrapper() { return *m_scalWrapper; }
 
     bool isACcbHalfFullForDeviceBenchMark(const unsigned archStreamIdx);
 
     void disableCcb(int archStreamIdx, bool disable);
     void dfaLog(int archStreamIdx, hl_logger::LoggerSPtr synDevFailLog);
+    void waitOnCg(Gen2ArchScalWrapper::CgComplex& cgComplex, const uint64_t target);
 
     virtual uint32_t getCMaxTargetValue() = 0;
 
@@ -164,13 +167,10 @@ private:
         {{{{{0}}}}},
     };
 
-    uint64_t m_baseHBMAddr = -1;
-
 protected:
     HclCommandsGen2Arch& m_commands;
     virtual void         init(CyclicBufferType type);
     void                 initScalData(CyclicBufferType type);
-    void                 waitOnCg(Gen2ArchScalWrapper::CgComplex& cgComplex, const uint64_t target);
 
     std::unique_ptr<Gen2ArchScalWrapper> m_scalWrapper;
     std::array<std::array<Gen2ArchScalWrapper::CgComplex, (int)SchedulerType::count>,

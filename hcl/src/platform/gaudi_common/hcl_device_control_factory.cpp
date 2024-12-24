@@ -2,32 +2,29 @@
 
 #include <memory>  // for unique_ptr
 
-#include "synapse_common_types.h"                             // for synDeviceType
-#include "platform/gaudi_common/hcl_device_config.h"          // for HclDeviceConfigGaudiCommon
-#include "platform/gen2_arch_common/hcl_device_controller.h"  // for HclDeviceControllerGen2Arch
-#include "platform/gaudi2/hcl_device_controller.h"            // for HclDeviceControllerGaudi2
-#include "platform/gaudi3/hcl_device_controller.h"            // for HclDeviceControllerGaudi3
-#include "interfaces/hcl_idevice.h"                           // for IHclDevice
-#include "platform/gen2_arch_common/hcl_device.h"             // for HclDeviceGen2Arch
-#include "platform/gaudi2/hccl_device.h"                      // for hccl_gaudi2_t
-#include "platform/gaudi3/hccl_device.h"                      // for hccl_gaudi3_t
-#include "platform/gaudi2/hcl_device.h"                       // for HclDeviceGaudi2
-#include "platform/gaudi3/hcl_device.h"                       // for HclDeviceGaudi3
-#include "platform/gaudi2/hal.h"                              // for Gaudi2Hal
-#include "platform/gaudi3/hal.h"                              // for Gaudi3Hal
-#include "platform/gaudi3/hal_hls3pcie.h"                     // for Gaudi3Hls3PCieHal
-#include "hcl_global_conf.h"                                  // for GCFG_BOX_TYPE_ID
-#include "hcl_types.h"                                        // for HclConfigType
-#include "interfaces/hcl_hal.h"                               // for HalPtr
-#include "platform/gen2_arch_common/server_def.h"             // for Gen2ArchServerDef
-#include "platform/gen2_arch_common/server_connectivity.h"    // for Gen2ArchServerConnectivity
-#include "platform/gen2_arch_common/runtime_connectivity.h"   // for Gen2ArchRuntimeConnectivity
-#include "platform/gaudi3/hls3_server_def.h"                  // for HLS3ServerDef
-#include "platform/gaudi3/hls3pcie_server_def.h"              // for HLS3PCIEServerDef
-#include "platform/gaudi2/hls2_server_def.h"                  // for HLS2ServerDef
+#include "synapse_common_types.h"                                // for synDeviceType
+#include "platform/gaudi_common/hcl_device_config.h"             // for HclDeviceConfigGaudiCommon
+#include "platform/gen2_arch_common/hcl_device_controller.h"     // for HclDeviceControllerGen2Arch
+#include "interfaces/hcl_idevice.h"                              // for IHclDevice
+#include "platform/gen2_arch_common/hcl_device.h"                // for HclDeviceGen2Arch
+#include "platform/gaudi2/hccl_device.h"                         // for hccl_gaudi2_t
+#include "platform/gaudi3/hccl_device.h"                         // for hccl_gaudi3_t
+#include "platform/gaudi2/hcl_device.h"                          // for HclDeviceGaudi2
+#include "platform/gaudi3/hcl_device.h"                          // for HclDeviceGaudi3
+#include "hcl_global_conf.h"                                     // for GCFG_BOX_TYPE_ID
+#include "hcl_types.h"                                           // for HclConfigType
+#include "platform/gen2_arch_common/server_def.h"                // for Gen2ArchServerDef
+#include "platform/gen2_arch_common/server_connectivity.h"       // for Gen2ArchServerConnectivity
+#include "platform/gen2_arch_common/runtime_connectivity.h"      // for Gen2ArchRuntimeConnectivity
+#include "platform/gaudi3/hls3_server_def.h"                     // for HLS3ServerDef
+#include "platform/gaudi3/hls3pcie_server_def.h"                 // for HLS3PCIEServerDef
+#include "platform/gaudi2/hls2_server_def.h"                     // for HLS2ServerDef
+#include "platform/gen2_arch_common/fault_injection_device.h"    // for FaultInjectionDevice
+#include "platform/gen2_arch_common/nics_events_handler_impl.h"  // for NicsEventHandler
+#include "platform/gaudi3/nics_events_handler_impl.h"            // for NicsEventsHandlerGaudi3
 
-hcl::HalPtr                        HclControlDeviceFactory::s_halShared = nullptr;
-std::unique_ptr<Gen2ArchServerDef> HclControlDeviceFactory::s_serverDef = nullptr;
+std::unique_ptr<Gen2ArchServerDef>    HclControlDeviceFactory::s_serverDef             = nullptr;
+std::unique_ptr<FaultInjectionDevice> HclControlDeviceFactory::s_faultsInjectionServer = nullptr;
 
 hccl_device_t* HclControlDeviceFactory::initDevice(HclDeviceConfig& deviceConf)
 {
@@ -44,15 +41,12 @@ hccl_device_t* HclControlDeviceFactory::initDevice(HclDeviceConfig& deviceConf)
     switch (configType)
     {
         case HLS2:
-            s_halShared = std::make_shared<hcl::Gaudi2Hal>();
             s_serverDef = std::make_unique<HLS2ServerDef>(fd, deviceConfig.getHwModuleId(), deviceConfig, false);
             break;
         case HLS3:
-            s_halShared = std::make_shared<hcl::Gaudi3Hal>();
             s_serverDef = std::make_unique<HLS3ServerDef>(fd, deviceConfig.getHwModuleId(), deviceConfig, false);
             break;
         case HL338:
-            s_halShared = std::make_shared<hcl::Gaudi3Hls3PCieHal>(deviceConfig.getHwModuleId());
             s_serverDef = std::make_unique<HLS3PCIEServerDef>(fd, deviceConfig.getHwModuleId(), deviceConfig, false);
             break;
         // support special modes and unit tests
@@ -62,12 +56,10 @@ hccl_device_t* HclControlDeviceFactory::initDevice(HclDeviceConfig& deviceConf)
         case UNKNOWN:
             if (deviceType == synDeviceGaudi2)
             {
-                s_halShared = std::make_shared<hcl::Gaudi2Hal>();
                 s_serverDef = std::make_unique<HLS2ServerDef>(fd, deviceConfig.getHwModuleId(), deviceConfig, false);
             }
             else if (deviceType == synDeviceGaudi3)
             {
-                s_halShared = std::make_shared<hcl::Gaudi3Hal>();
                 s_serverDef = std::make_unique<HLS3ServerDef>(fd, deviceConfig.getHwModuleId(), deviceConfig, false);
             }
             else
@@ -100,6 +92,18 @@ hccl_device_t* HclControlDeviceFactory::initDevice(HclDeviceConfig& deviceConf)
     }
 
     s_serverDef->getDeviceController().setDevice((HclDeviceGen2Arch*)(&(s_serverDef->getDevice())));
+
+    // Hook NicsEventHandler into IBV
+
+    if (GCFG_HCL_FAULT_INJECT_LISTENER_PORT.value() > 0)
+    {
+        s_faultsInjectionServer =
+            std::make_unique<FaultInjectionDevice>(s_serverDef->getServerConnectivityConst(),
+                                                   (uint32_t)GCFG_HCL_FAULT_INJECT_LISTENER_PORT.value(),
+                                                   s_serverDef->getDevice().getNicsFaultHandler());
+        s_faultsInjectionServer->start();
+    }
+
     return hcclDevice;
 }
 
@@ -113,6 +117,7 @@ void HclControlDeviceFactory::destroyDevice(hccl_device_t* hcclDevice)
 
     s_serverDef->destroy();
     s_serverDef.reset(nullptr);
+    s_faultsInjectionServer.reset(nullptr);  // stop the server
 
     g_ibv.close();
 }

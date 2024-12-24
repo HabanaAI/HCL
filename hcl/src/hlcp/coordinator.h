@@ -7,22 +7,22 @@ class coordinator_t
 , public hlcp_notify_t
 {
 protected:
-    class xsocket_t : public socket_t
+    class xsocket_t : public socket_io_t
     {
     private:
         hlcp_t* owner_ = nullptr;
 
     public:
-        bool marked = false; // marked for disconnect
+        bool marked = false;  // marked for disconnect
 
-        xsocket_t(socketfd_t s, socket_op_notify_t& n, asio_t* a) : socket_t(s, n, a) { set_non_blocking(); }
+        xsocket_t(socketfd_t s, socket_op_notify_t& n, asio_t* a) : socket_io_t(s, n, a) { set_non_blocking(); }
         auto& operator=(hlcp_t& p)
         {
             owner_ = &p;
             return (*this);
         }
         hlcp_t* operator->() const { return owner_; }
-        operator hlcp_t&() {return *owner_; }
+        operator hlcp_t&() { return *owner_; }
     };
 
 protected:
@@ -35,10 +35,17 @@ protected:  // socket_op_notify_t
     virtual void on_disconnect(socket_base_t& s) override;
 
 protected:
-    virtual hlcp_t& create_connection(socket_t& s) { return *(new hlcp_t(s, *this)); }
+    virtual hlcp_t& create_connection(xsocket_t& s) { return *(new hlcp_t(s, *this)); }
     virtual void    destroy_connection(hlcp_t& c) { delete &c; }
     virtual void    close_connection(hlcp_t& c);  // gracefully
     virtual void    drop_connection(hlcp_t& c);
+
+public:  // hlcp_notify_t
+    virtual void on_connect(hlcp_t& connection) override { connection.receive(); }
+    virtual void on_error(hlcp_command_t*      cmd,
+                          const hlcp_packet_t& packet,
+                          hlcp_t&              connection,
+                          const std::string&   reason = "") override;
 
 public:
     coordinator_t() : srv_(*this) {};

@@ -8,7 +8,6 @@
 #include "hcl_log_manager.h"  // for LOG_*
 #include "hcl_math_utils.h"
 #include "infra/scal/gen2_arch_common/scal_manager.h"  // for getHBMBaseVAAddress
-#include "libfabric/mr_mapping.h"                      // for MRMapping
 #include "platform/gen2_arch_common/buffer_manager_base.h"
 #include "platform/gen2_arch_common/intermediate_buffer_container.h"  // for IntermediateBufferContainer
 
@@ -47,11 +46,13 @@ const unsigned DeviceBufferManager::getFactor(const e_devicePoolID poolIdx)
     }
     else if (poolIdx == SCALEOUT_POOL)
     {
-        factor = GCFG_HCL_SCALEOUT_BUFFER_FACTOR.value();
+        factor = DeviceBufferManager::s_gcfgFactor;
     }
 
     return factor;
 }
+
+unsigned DeviceBufferManager::s_gcfgFactor = GCFG_HCL_SCALEOUT_BUFFER_FACTOR.value();
 
 uint32_t DeviceBufferManager::getSliceId(e_devicePoolID poolIdx, uint32_t streamId)
 {

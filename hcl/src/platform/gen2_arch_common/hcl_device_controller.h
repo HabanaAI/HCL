@@ -90,11 +90,20 @@ public:
     /**
      * @brief
      * 1. Arms a monitor to look at the SO in the descriptor
-     * 2. blocks the microArch stream by decrementing its fence counter.
+     * 2. Blocks the microArch stream by decrementing its fence counter.
      * once the SO reaches its value, the monitor will increment the fence and free the stream.
      */
     void streamAddWait(hcl::ScalStream& scalStream, const SyncObjectDescriptor& descriptor, bool useEqual = false);
-    void addInternalWait(hcl::ScalStream& scalStream, uint64_t soValue, unsigned soIdx);
+
+    /**
+     * @brief
+     * !!!Currently only used for debug
+     * 1. Arms a long monitor to look at the LSO index from the sync manager
+     * 2. Blocks the microArch stream by decrementing its fence counter.
+     * once the LSO reaches its value, the monitor will increment the fence and free the stream.
+     * 3. In the past this was used wait for scale out phase to finish before performing dma of the entire result
+     */
+    void addStreamWaitOnLongSo(hcl::ScalStream& scalStream, uint64_t soValue, unsigned soIdx);
 
     void advanceProg(int archStreamId, bool nopOp);
     void addNop(int archStreamId);
@@ -103,15 +112,17 @@ public:
      * @brief In most cases scalStream=arbitrator, and we use it to free streamsToInc when we have enough credits
      * usually this method is used with waitForBarrierArm which blocks the stream
      * this function does 3 things on the scalStream
-     * 1. if an external wait is needed it arms a monitor and decrements the fence on the arb stream
-     * 2. takes creditsNr from the completion group
-     * 3. increments the fences on all the streams in streamsToInc
+     * 1. if an external wait is needed it arms a monitor and decrements the fence on the arb stream.
+     * 2. wait for creditsNr to be available on the completion group, and acquire them.
+     * 3. increments the fences on all the streams in streamsToInc after receiving the credits.
+     * 4. performs the LBWs in lbwBurstData after receiving the credits.
      **/
     void addBarrierArm(hcl::ScalStream&                                               scalStream,
                        bool                                                           external,
                        unsigned                                                       creditsNr,
                        const llvm_vecsmall::SmallVector<unsigned, MAX_STREAM_TO_INC>& streamsToInc,
-                       bool                                                           shouldAddWait = true);
+                       bool                                                           shouldAddWait = true,
+                       LBWBurstData_t* lbwBurstData = nullptr);  // external so address and cmax - completionSignals
     /**
      * @brief Each stream has two fences
      * the scheduler will mask the stream if one of its fence counters < 0
@@ -122,11 +133,11 @@ public:
 
     unsigned int handleExtraCredits(int archStreamId, unsigned extraCreditsNeeded);
 
-    void setHostFences(int                                                     archStreamId,
-                       int                                                     stream_idx,
-                       bool                                                    isSend,
-                       uint8_t                                                 scaleoutInternalFences,
-                       llvm_vecsmall::SmallVector<fence_info, HOST_FENCES_NR>& scaleoutFences);
+    void setHostFences(int                                                    archStreamId,
+                       int                                                    stream_idx,
+                       bool                                                   isSend,
+                       uint8_t                                                scaleoutInternalFences,
+                       llvm_vecsmall::SmallVector<FenceInfo, HOST_FENCES_NR>& scaleoutFences);
 
     inline void incInternalCgTargetValue(int archStreamId)
     {
@@ -210,8 +221,10 @@ protected:
      * @brief Apply the pending waits that were requested in previous streamWaitEvent calls.
      * we apply a wait by arming a monitor and decrementing the fence on uarchStreamId
      * The monitor waits for the LSO to reach the value supplied by streamWaitEvent
+     * 1. Arms a long monitor to look at the LSO index from m_pendingWaits
+     * 2. Blocks the microArch stream by decrementing its fence counter.
      **/
-    void addWait(hcl::ScalStream& scalStream, unsigned uarchStreamId);
+    void addStreamWaitOnLongSo(hcl::ScalStream& scalStream, unsigned uarchStreamId);
 };
 
 class ScopedNullSubmit

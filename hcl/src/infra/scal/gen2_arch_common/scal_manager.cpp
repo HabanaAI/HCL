@@ -130,9 +130,9 @@ void Gen2ArchScalManager::initGlobalContext(HclDeviceGen2Arch* device, uint8_t a
     LOG_HCL_ERR(HCL_SCAL, "initGlobalContext has not been implemented on this device");
 }
 
-void Gen2ArchScalManager::configQps(HCL_Comm comm, HclDeviceGen2Arch* device)
+Gen2ArchScalWrapper::CgComplex Gen2ArchScalManager::getCgInfo(const std::string& cgName) const
 {
-    LOG_HCL_ERR(HCL_SCAL, "configQps has not been implemented on this device");
+    return m_scalWrapper->getCgInfo(cgName);
 }
 
 void Gen2ArchScalManager::initSimb(HclDeviceGen2Arch* device, uint8_t apiID)

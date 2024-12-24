@@ -15,15 +15,14 @@
 #include "platform/gen2_arch_common/intermediate_buffer_container.h"  // for IntermediateBufferContainer
 #include "platform/gen2_arch_common/scaleout_provider.h"              // for ScaleoutProvider
 #include "platform/gen2_arch_common/commands/hcl_commands.h"
-#include "hccl_coordinator_client.h"
 #include "infra/scal/gen2_arch_common/scal_manager.h"  // for Gen2ArchScalManager
 #include "platform/gen2_arch_common/commands/hcl_commands.h"
 #include "ibverbs/hcl_ibverbs.h"
 #include "hcl_math_utils.h"
-#include "libfabric/mr_mapping.h"  // for MRMapping
 #include "platform/gen2_arch_common/hcl_device_controller.h"
 #include "platform/gen2_arch_common/server_def.h"                 // for Gen2ArchServerDef
 #include "platform/gen2_arch_common/server_connectivity_types.h"  // for SCALEOUT_DEVICE_ID
+#include "coordinator_defs.h"
 
 class HclCommandsGen2Arch;
 class DeviceBufferManager;
@@ -75,7 +74,7 @@ HclDeviceGen2Arch::HclDeviceGen2Arch(HclDeviceControllerGen2Arch& controller,
     m_ethStats.init(m_deviceConfig.getDevicePciBusId());
 }
 
-uint32_t HclDeviceGen2Arch::createQp(uint32_t port, uint8_t qpId)
+uint32_t HclDeviceGen2Arch::createQpnInLKD(const uint32_t port, const uint8_t qpId)
 {
     return g_ibv.create_qp(isSender(qpId), port);
 }
@@ -121,7 +120,6 @@ uint64_t HclDeviceGen2Arch::getSIBBufferSize() const
 HclDeviceGen2Arch::~HclDeviceGen2Arch() noexcept(false)
 {
     delete m_eqHandler;
-    delete m_sibContainer;
     delete m_scaleoutProvider;
 }
 
@@ -164,7 +162,7 @@ nics_mask_t HclDeviceGen2Arch::getActiveNics(HCL_Rank fromRank, HCL_Rank toRank,
                              ? getComm(comm).m_remoteDevices[toRank]->header.hwModuleID
                              : SCALEOUT_DEVICE_ID;
 
-    const nics_mask_t result = getAllPorts(deviceId, comm);
+    const nics_mask_t result = getAllPorts(deviceId, getComm(comm).getCommConnectivity().getExternalPortsMask());
 
     VERIFY(result.count() <= ((SCALEOUT_DEVICE_ID == (unsigned)deviceId)
                                   ? getServerConnectivity().getMaxNumScaleOutPorts(/* ? HCL_Comm comm*/)
@@ -193,9 +191,9 @@ nics_mask_t HclDeviceGen2Arch::getActiveNics(HCL_Rank fromRank, HCL_Rank toRank,
     return m_activeNicsSingleRankCache[comm][ranksPair];
 }
 
-nics_mask_t HclDeviceGen2Arch::getAllPorts(const int deviceId, const HCL_Comm comm) const
+nics_mask_t HclDeviceGen2Arch::getAllPorts(const int deviceId, const nics_mask_t enabledExternalPortsMask) const
 {
-    return getServerConnectivity().getAllPorts(deviceId, comm);
+    return getServerConnectivity().getAllPorts(deviceId, enabledExternalPortsMask);
 };
 
 bool HclDeviceGen2Arch::isScaleOutPort(const uint16_t port, const HCL_Comm comm) const
@@ -236,7 +234,7 @@ void HclDeviceGen2Arch::deleteCommConnections(HCL_Comm comm)
     for (unsigned nic = 0; nic < MAX_NICS_GEN2ARCH; nic++)
     {
         hints.m_nic = nic;
-        m_qpManagers.at(nic)->closeQPs(hints);
+        m_qpManagers.at(nic)->ReleaseQPsResource(hints);
     }
 
     LOG_INFO(HCL, "Close scale-out connections");
@@ -357,12 +355,18 @@ hcclResult_t HclDeviceGen2Arch::destroy(bool force)
 
     checkSignals();
 
+    m_sibContainer->destroy();
+
     getScaleOutProvider()->destroy();
     return hcclSuccess;
 }
 
-hcclResult_t
-HclDeviceGen2Arch::setupQps(HCL_Comm comm, HCL_Rank rank, uint32_t stream, uint32_t port, uint32_t qpn, uint8_t qpSet)
+hcclResult_t HclDeviceGen2Arch::establishQpConnectionWithPeerQp(const HCL_Comm comm,
+                                                                const HCL_Rank rank,
+                                                                const uint32_t stream,
+                                                                const uint32_t port,
+                                                                const uint32_t qpn,
+                                                                const uint8_t  qpSet)
 {
     const uint16_t   peerNic          = getPeerNic(rank, comm, port);
     GaudiNicAddress& remoteNicAddress = getComm(comm).m_remoteDevices[rank]->device.gaudiNicAddresses.nics[peerNic];
@@ -505,11 +509,11 @@ void HclDeviceGen2Arch::openAllRequiredNonPeerQPs(const HCL_Comm comm, const std
         sendBuffers.push_back(sendBuffer);
     }
 
-    g_hcclCordClient[comm]->sendRecvFromRanks(nonPeerRemoteRanks, recvBuffers, sendBuffers, sendRecvBufSize, comm);
+    g_hcclCordClient[comm]->sendRecvFromRanks(nonPeerRemoteRanks, recvBuffers, sendBuffers, sendRecvBufSize);
 
     LOG_HCL_TRACE(HCL, "Updating connections info with remote ranks");
     m_scaleoutProvider->updateConnectionsNonPeer(comm, nonPeerRemoteRanks, hnicsConnectionInfoBuffers);
-    g_hcclCordClient[comm]->synchronizeRemoteRanks(comm, nonPeerRemoteRanks);
+    VERIFY(g_hcclCordClient[comm]->rendezvous(nonPeerRemoteRanks), "Failed to synchronize remote ranks");
 }
 
 unsigned HclDeviceGen2Arch::getEdmaEngineWorkDistributionSize()
@@ -525,38 +529,6 @@ void HclDeviceGen2Arch::destroyQp(uint32_t port, uint32_t qpn)
 void HclDeviceGen2Arch::dfa(hl_logger::LoggerSPtr logger)
 {
     m_ethStats.dump(logger, false);
-}
-
-void HclDeviceGen2Arch::exportHBMMR()
-{
-    if (!getScaleOutProvider()->isHostNic())
-    {
-        return;
-    }
-
-    ofi_component_t* ofiComponent = getOfiComponent();
-    VERIFY(ofiComponent != nullptr, "ofiComponent was not initialized");
-    if (!ofi_t::isGaudiDirect())
-    {
-        return;
-    }
-
-    uint64_t scalBase, hbmPoolStart, allocatedSize;
-    getScalManager().getHBMInfoForExport(scalBase, hbmPoolStart, allocatedSize);
-    uint64_t offset = hbmPoolStart - scalBase;
-    LOG_HCL_DEBUG(HCL,
-                  "Mapping device memory: base addr 0x{:x} offset 0x{:x} size {:g}MB",
-                  scalBase,
-                  offset,
-                  B2MB(allocatedSize));
-    VERIFY(MRMapping::get_instance().mapDevMem(scalBase, allocatedSize, offset, (O_RDWR | O_CLOEXEC), ofiComponent) ==
-               hcclSuccess,
-           "device buffer mapping for OFI gaudi-direct failed.");
-    if (ofi_t::isFabricFlush())
-    {
-        VERIFY(MRMapping::get_instance().mapFlushBufMem(ofiComponent) == hcclSuccess,
-               "Flush buffer mapping for gaudi-direct failed");
-    }
 }
 
 uint64_t HclDeviceGen2Arch::getDRAMSize()
@@ -579,7 +551,9 @@ void HclDeviceGen2Arch::setGaudiDirect()
     {
         return;
     }
-    GCFG_HCCL_GAUDI_DIRECT.setValue(true);
+    // Using hl_gcfg::setGcfgItemValue instead of setValue() to enable reading the value later with
+    // synConfigurationGet()
+    hl_gcfg::setGcfgItemValue("HCCL_GAUDI_DIRECT", "true");
     LOG_HCL_INFO(HCL, "Attempting to use gaudi direct");
 }
 
@@ -598,12 +572,12 @@ bool HclDeviceGen2Arch::isACcbHalfFullForDeviceBenchMark(const unsigned archStre
  *        workaround for loopback mode, where getActiveNics is not used
  *        and RemoteInfo.indexToNic is not initialized, just so it will be initialized
  */
-void HclDeviceGen2Arch::initRemoteNicsLoopback(HCL_Comm comm)
+void HclDeviceGen2Arch::initRemoteNicsLoopback(const HCL_Comm comm)
 {
     LOG_HCL_DEBUG(HCL, "Init loopback remote nics comm({})", getCommSize(comm));
 
     nics_mask_t scaleupNics  = getServerConnectivity().getScaleUpPorts(comm);
-    nics_mask_t scaleoutNics = getServerConnectivity().getScaleOutPorts(comm);
+    nics_mask_t scaleoutNics = getServerConnectivity().getScaleOutPortsGlbl(comm);
 
     int scaleupNicIndex = 0, nic = 0;
     for (HCL_Rank rank = 0; rank < getCommSize(comm); rank++)
@@ -642,7 +616,7 @@ uint32_t HclDeviceGen2Arch::getDestQpi(const unsigned qpi, const unsigned nic) c
     return m_qpManagers.at(nic)->getDestQPi(qpi);
 }
 
-void HclDeviceGen2Arch::allocateQPDBStorage(HCL_Comm comm)
+void HclDeviceGen2Arch::allocateQPDBStorage(const HCL_Comm comm)
 {
     // this is used for null-submit mode only, we allocate QP storage without the actual QPs
     for (unsigned nic = 0; nic < MAX_NICS_GEN2ARCH; nic++)
@@ -655,4 +629,26 @@ void HclDeviceGen2Arch::setTraceMarker(const synStreamHandle stream_handle, uint
 {
     int archStreamIdx = synStreamGetPhysicalQueueOffset(stream_handle);
     m_deviceController.setTraceMarker(archStreamIdx, val);
+}
+
+void HclDeviceGen2Arch::getAsyncError(const std::vector<HCL_HwModuleId> remoteModuleIDs,
+                                      const HCL_Comm                    comm,
+                                      hcclResult_t*                     asyncError)
+{
+    // for each remote module ID, get all the nics that connect it to this rank, and check if any nic is down
+    for (auto& remoteModuleID : remoteModuleIDs)
+    {
+        const nics_mask_t nicsToRemote = m_serverConnectivity.getAllPortsGlbl(remoteModuleID, comm);
+        for (auto nic : nicsToRemote)
+        {
+            if (m_hclNic.mask[nic] && !m_hclNic.state[nic])
+            {
+                LOG_HCL_ERR(HCL, "NIC {} is down", nic);
+                *asyncError = hcclPortDown;
+                return;
+            }
+        }
+    }
+
+    *asyncError = hcclSuccess;
 }

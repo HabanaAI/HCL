@@ -35,14 +35,16 @@ extern "C" {
  * @HBLDV_QP_CAP_SACK: Enable selective acknowledgment feature.
  * @HBLDV_QP_CAP_ENCAP: Enable packet encapsulation.
  * @HBLDV_QP_CAP_COLL: Enable collective operations.
+ * @HBLDV_QP_CAP_MIGRATE: Migrate from old QP.
  */
 enum hbldv_qp_caps {
-	HBLDV_QP_CAP_LOOPBACK = 0x1,
-	HBLDV_QP_CAP_CONG_CTRL = 0x2,
-	HBLDV_QP_CAP_COMPRESSION = 0x4,
-	HBLDV_QP_CAP_SACK = 0x8,
-	HBLDV_QP_CAP_ENCAP = 0x10,
-	HBLDV_QP_CAP_COLL = 0x20,
+	HBLDV_QP_CAP_LOOPBACK = 1 << 0,
+	HBLDV_QP_CAP_CONG_CTRL = 1 << 1,
+	HBLDV_QP_CAP_COMPRESSION = 1 << 2,
+	HBLDV_QP_CAP_SACK = 1 << 3,
+	HBLDV_QP_CAP_ENCAP = 1 << 4,
+	HBLDV_QP_CAP_COLL = 1 << 5,
+	HBLDV_QP_CAP_MIGRATE = 1 << 6,
 };
 
 /**
@@ -321,6 +323,7 @@ struct hbldv_qp_attr {
 	uint8_t coll_last_in_lag;
 	uint8_t encap_num;
 	uint8_t coll_lag_size;
+	struct ibv_qp *qp_to_migrate;
 };
 
 /**
@@ -537,34 +540,56 @@ struct hbldv_device_attr {
 	uint64_t hw_ports_mask;
 };
 
+/**
+ * struct hbldv_device_attr_temp - Device specific attributes.
+ * @caps: Capabilities mask.
+ * @num_ports: Number of available ports.
+ * @ext_ports_mask: Mask of IB indexes of relevant external ports for this context (1-based);
+ *                  this is subset from all the available ports.
+ * @hw_ports_mask: Mask of HW indexes of relevant ports for this context (0-based).
+ */
+struct hbldv_device_attr_temp {
+	uint64_t caps;
+	uint8_t num_ports;
+	uint64_t ext_ports_mask;
+	uint64_t hw_ports_mask;
+};
+
 bool hbldv_is_supported(struct ibv_device *device);
-struct ibv_context *hbldv_open_device(struct ibv_device *device,
-				      struct hbldv_ucontext_attr *attr);
+
+struct ibv_context *hbldv_open_device(struct ibv_device *device, struct hbldv_ucontext_attr *attr);
+int hbldv_query_device(struct ibv_context *context, struct hbldv_device_attr *attr);
+int hbldv_query_device_temp(struct ibv_context *context, struct hbldv_device_attr_temp *attr);
+
 int hbldv_set_port_ex(struct ibv_context *context, struct hbldv_port_ex_attr *attr);
 /* port_num should be 1-based */
 int hbldv_query_port(struct ibv_context *context, uint32_t port_num,
 		     struct hbldv_query_port_attr *hbl_attr);
+
 int hbldv_modify_qp(struct ibv_qp *ibqp, struct ibv_qp_attr *attr, int attr_mask,
 		    struct hbldv_qp_attr *hbl_attr);
+int hbldv_query_qp(struct ibv_qp *ibvqp, struct hbldv_query_qp_attr *qp_attr);
+int hbldv_migrate_qp(struct ibv_qp *ibqp, struct ibv_qp *new_ibqp);
+int hbldv_reserve_coll_qps(struct ibv_pd *ibvpd, struct hbldv_coll_qp_attr *coll_qp_attr,
+			   struct hbldv_coll_qp *coll_qp);
+
 struct hbldv_usr_fifo *hbldv_create_usr_fifo(struct ibv_context *context,
 					     struct hbldv_usr_fifo_attr *attr);
 int hbldv_destroy_usr_fifo(struct hbldv_usr_fifo *usr_fifo);
+
 struct ibv_cq *hbldv_create_cq(struct ibv_context *context, int cqe,
 			       struct ibv_comp_channel *channel, int comp_vector,
 			       struct hbldv_cq_attr *cq_attr);
 int hbldv_query_cq(struct ibv_cq *ibvcq, struct hbldv_query_cq_attr *hbl_cq);
-int hbldv_query_qp(struct ibv_qp *ibvqp, struct hbldv_query_qp_attr *qp_attr);
+
 struct hbldv_encap *hbldv_create_encap(struct ibv_context *context,
 				       struct hbldv_encap_attr *encap_attr);
 int hbldv_destroy_encap(struct hbldv_encap *hbl_encap);
-int hbldv_reserve_coll_qps(struct ibv_pd *ibvpd, struct hbldv_coll_qp_attr *coll_qp_attr,
-			   struct hbldv_coll_qp *coll_qp);
+
 int hbldv_reserve_coll_sched_resources(struct ibv_context *context,
 				       struct hbldv_coll_sched_resources *sched_resrc);
-int hbldv_query_device(struct ibv_context *context, struct hbldv_device_attr *attr);
-
 #ifdef __cplusplus
 }
-#endif
+#endif /* __cplusplus */
 
 #endif /* __HBLDV_H__ */

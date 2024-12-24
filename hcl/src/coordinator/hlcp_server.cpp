@@ -46,24 +46,6 @@ hlcp_server_t::hlcp_server_t(const sockaddr_t& ipaddr)
     memcpy(unique_id_buff_.data(), (uint8_t*)&unique_id, sizeof(unique_id));
 }
 
-hlcp_server_t::~hlcp_server_t() {}
-
-void hlcp_server_t::on_error(bool send, hlcp_command_t* cmd, const hlcp_packet_t& packet, hlcp_t& connection)
-{
-    HLCP_ERR("{} expected:{} {}, connection: {}", send ? "send" : "recv", cmd, packet, connection->str());
-    drop_connection(connection);
-}
-
-void hlcp_server_t::on_connect(hlcp_t& connection)
-{
-    connection.receive();
-}
-
-hcclResult_t hlcp_server_t::run()
-{
-    return hcclSuccess;
-}
-
 uint32_t hlcp_server_t::comm_init(uint32_t comm_size)
 {
     VERIFY(comm_size != 0, "zero comm group size specified");
@@ -81,7 +63,7 @@ uint32_t hlcp_server_t::comm_init(uint32_t comm_size)
         refVec.resize(comm_size);
     }
 
-    HLCP_INF("comm group initialized. ({}:{})", comm_size, gcfg_.send_threads);
+    HLCP_INF("comm group initialized. (ranks({}), sender threads({}))", comm_size, gcfg_.send_threads);
 
     return comm_size;
 }
@@ -98,26 +80,14 @@ bool hlcp_server_t::send_to_rank(HCL_Rank rank, const hlcp_command_t& cmd)
 
     RET_ON_FALSE(hlcp.send_command(cmd, gcfg_.op_timeout));
 
-    HLCP_LOG("sent: {} [{}] {}", cmd.id(), cmd.payload_size() + cmd.param_size(), socket.str());
+    HLCP_LOG("--> {}: {}", rank, cmd);
 
     hlcp.recv_ack();
 
     return true;
 }
 
-void hlcp_server_t::send_comm_data(uint32_t start_index, uint32_t count)
-{
-    HLCP_LOG("start: {}. count: {}", start_index, count);
-
-    hlcp_cmd_comm_data_t cmd(HCL_INVALID_RANK, ranks_headers_.data(), sizeof(RankInfoHeader) * comm_size_);
-
-    while (count--)
-    {
-        send_to_rank(start_index++, cmd);
-    }
-}
-
-void hlcp_server_t::send_qps_data(uint32_t start_index, uint32_t count)
+void hlcp_server_t::send_qps_data(uint32_t start_index, uint32_t count, sp_hlcp_cmd_t sp_cmd)
 {
     HLCP_LOG("start: {}. count: {}", start_index, count);
 
@@ -132,11 +102,11 @@ void hlcp_server_t::send_qps_data(uint32_t start_index, uint32_t count)
     }
 }
 
-void hlcp_server_t::send_sync(uint32_t start_index, uint32_t count)
+void hlcp_server_t::send_cmd(uint32_t start_index, uint32_t count, sp_hlcp_cmd_t sp_cmd)
 {
-    HLCP_LOG("start: {}. count: {}", start_index, count);
+    hlcp_command_t& cmd = *sp_cmd;
 
-    hlcp_cmd_sync_t cmd(HCL_INVALID_RANK);
+    HLCP_LOG("start: {}. count: {} cmd: {}", start_index, count, cmd);
 
     while (count--)
     {
@@ -158,25 +128,39 @@ void hlcp_server_t::validate_comm_data()
         }
     }
 
-    // set the box size for all ranks
+    const bool L3 = ranks_headers_[0].L3;
+
+    // set the box size for all ranks and check configuration
     for (RankInfoHeader& rankInfo : ranks_headers_)
     {
         rankInfo.boxSize = boxSize;
+        VERIFY(rankInfo.L3 == L3, "rank:{} L3:{} != {}", rankInfo.hcclRank, rankInfo.L3, L3);
     }
 
-    HLCP_LOG("Validated box_size={} for all boxes", boxSize);
+    HLCP_LOG("Validated configuration for all boxes. box_size={}, L3(IP): {}", boxSize, L3);
 }
 
-void hlcp_server_t::on_hlcp_sync(const hlcp_cmd_sync_t& cmd)
+void hlcp_server_t::comm_reset()
 {
-    if (++cnt_synched_ranks_ == comm_size_)
+    comm_size_  = 0;
+    comm_error_ = false;
+    nodes_.clear();
+    ranks_headers_.clear();
+    ranks_connections_.clear();
+}
+
+void hlcp_server_t::on_init(uint32_t comm_size)
+{
+    locker_t locker(lock_);
+    if (state_ != active)
     {
-        cnt_synched_ranks_ = 0;
-        parallel_send_to_all(&hlcp_server_t::send_sync);
+        comm_reset();
+        comm_size_ = comm_init(comm_size);
+        state_     = active;
     }
 }
 
-void hlcp_server_t::parallel_send_to_all(sender_func_t func)
+void hlcp_server_t::parallel_send_to_all(sender_func_t func, sp_hlcp_cmd_t sp_cmd)
 {
     uint32_t base      = comm_size_ / gcfg_.send_threads;
     uint32_t remainder = comm_size_ % gcfg_.send_threads;
@@ -186,14 +170,26 @@ void hlcp_server_t::parallel_send_to_all(sender_func_t func)
     {
         uint32_t ranks_in_thread = i < remainder ? base + 1 : base;
 
-        if (ranks_in_thread) std::thread(func, this, start_index, ranks_in_thread).detach();
+        if (ranks_in_thread) std::thread(func, this, start_index, ranks_in_thread, sp_cmd).detach();
 
         start_index += ranks_in_thread;
     }
 }
 
-void hlcp_server_t::on_hlcp_rank_data(const hlcp_cmd_rank_data_t& cmd, sockaddr_t& rank_addr)
+void hlcp_server_t::on_hlcp_sync(hlcp_cmd_sync_t& cmd)
 {
+    if (++cnt_synched_ranks_ == comm_size_)
+    {
+        state_             = operational;
+        cnt_synched_ranks_ = 0;
+        parallel_send_to_all(&hlcp_server_t::send_cmd, std::make_shared<hlcp_cmd_sync_t>(HCL_INVALID_RANK));
+    }
+}
+
+void hlcp_server_t::on_hlcp_rank_data(hlcp_cmd_rank_data_t& cmd)
+{
+    sockaddr_t rank_addr = cmd.param_.info.caddr;
+
     rank_addr.port(cmd.param_.hlcp_port);
 
     ranks_headers_[cmd.param_.info.hcclRank] = cmd.param_.info;
@@ -213,80 +209,20 @@ void hlcp_server_t::on_hlcp_rank_data(const hlcp_cmd_rank_data_t& cmd, sockaddr_
 
     lock_.unlock();
 
-    uint32_t done = ++cnt_synched_ranks_;
+    uint64_t done = ++cnt_synched_ranks_;
 
     HLCP_LOG("initialized {} of {}", done, comm_size_);
 
     if (done == comm_size_)
     {
         cnt_synched_ranks_ = 0;
+
         validate_comm_data();
 
-        parallel_send_to_all(&hlcp_server_t::send_comm_data);
-    }
-}
-
-void hlcp_server_t::on_message(const hlcp_message_t& msg, hlcp_t& connection)
-{
-    HLCP_LOG("msg: {}", msg);
-
-    if (comm_size_ == 0)
-    {
-        lock_.lock();
-        if (comm_size_ == 0)
-        {
-            VERIFY(msg.id == HLCP_RANK_DATA, "invalid state for this command {}. {} expected", msg.id, HLCP_RANK_DATA);
-
-            hlcp_rank_data_param_t& param = *(hlcp_rank_data_param_t*)msg.param;
-
-            comm_size_ = comm_init(param.comm_size);  // only once
-        }
-        lock_.unlock();
-    }
-
-    switch (msg.id)
-    {
-        case HLCP_RANK_DATA:  // "first handshake"
-        {
-            hlcp_cmd_rank_data_t command(msg);
-            sockaddr_t addr = connection->remote_addr;
-            close_connection(connection);
-
-            on_hlcp_rank_data(command, addr);
-        }
-        break;
-
-        case HLCP_QPS_CONF:  // "second handshake"
-        {
-            hlcp_cmd_qps_conf_t& command = *(new hlcp_cmd_qps_conf_t(msg));
-
-            command.payload_ = new uint8_t[msg.payload_size];
-
-            connection.receive_payload(command);
-        }
-        break;
-
-        case HLCP_LOG_MSG:  // collective log
-        {
-            hlcp_cmd_log_msg_t command(msg);
-            close_connection(connection);
-
-            on_hlcp_log_msg(command);
-        }
-        break;
-
-        case HLCP_SYNC:  // sync message
-        {
-            hlcp_cmd_sync_t command(msg);
-            close_connection(connection);
-
-            on_hlcp_sync(command);
-        }
-        break;
-
-        default:
-            VERIFY(false, "invalid cmd:{} remote:{} ", msg.id, connection->remote_addr.str());
-            break;
+        sp_hlcp_cmd_t sp_cmd = std::make_shared<hlcp_cmd_comm_data_t>(HCL_INVALID_RANK,
+                                                                      ranks_headers_.data(),
+                                                                      sizeof(RankInfoHeader) * comm_size_);
+        parallel_send_to_all(&hlcp_server_t::send_cmd, sp_cmd);
     }
 }
 
@@ -310,39 +246,17 @@ void hlcp_server_t::on_hlcp_qps_conf(hlcp_cmd_qps_conf_t& command)
         ranks_connections_[rank][remoteRank].remoteInfo = buffer.remoteInfo[rank];
     }
 
-    delete[] (uint8_t*)command.payload();
-    delete &command;
-
-}
-
-void hlcp_server_t::on_command(hlcp_command_t& cmd, hlcp_t& connection)
-{
-    HLCP_LOG("cmd: {}", cmd.id());
-
-    switch (cmd.id())
+    if (++cnt_synched_ranks_ == comm_size_)
     {
-        case HLCP_QPS_CONF:
-        {
-            on_hlcp_qps_conf((hlcp_cmd_qps_conf_t&)cmd);
-
-            close_connection(connection);
-
-            if (++cnt_synched_ranks_ == comm_size_)
-            {
-                cnt_synched_ranks_ = 0;
-                parallel_send_to_all(&hlcp_server_t::send_qps_data);
-            }
-
-        }
-        break;
-
-        default:
-            VERIFY(false, "invalid protocol cmd:{} remote:{} ", cmd, connection->remote_addr.str());
-            break;
+        cnt_synched_ranks_ = 0;
+        parallel_send_to_all(&hlcp_server_t::send_qps_data, nullptr);
     }
+
+    command.free_payload();
+    delete &command;
 }
 
-void hlcp_server_t::on_hlcp_log_msg(const hlcp_cmd_log_msg_t& cmd)
+void hlcp_server_t::on_hlcp_log_msg(hlcp_cmd_log_msg_t& cmd)
 {
     const CollectiveLogMessage& msg = cmd.param_;
 
@@ -368,5 +282,111 @@ void hlcp_server_t::on_hlcp_log_msg(const hlcp_cmd_log_msg_t& cmd)
                  msg.params.root);
 
         collective_logger_.processLogMessage(msg);
+    }
+}
+
+void hlcp_server_t::on_hlcp_nic_state(hlcp_cmd_nic_state_t& cmd)
+{
+    bool send = false;
+    if (state_ != migration)
+    {
+        locker_t locker(lock_);
+        if (state_ != migration)
+        {
+            state_ = migration;
+            send   = true;
+        }
+    }
+
+    if (send)
+    {
+        cnt_synched_ranks_ = 0;
+        parallel_send_to_all(&hlcp_server_t::send_cmd, std::make_shared<hlcp_cmd_nic_state_t>(cmd));
+    }
+}
+
+void hlcp_server_t::on_command(hlcp_command_t& cmd, hlcp_t& connection)
+{
+    HLCP_LOG("cmd: {}", cmd);
+
+    close_connection(connection);
+
+    switch (cmd.id())
+    {
+        case HLCP_RANK_DATA:  // "first handshake"
+            on_hlcp_rank_data(static_cast<hlcp_cmd_rank_data_t&>(cmd));
+            break;
+
+        case HLCP_QPS_CONF:  // "second handshake" and migration
+            on_hlcp_qps_conf(static_cast<hlcp_cmd_qps_conf_t&>(cmd));
+            break;
+
+        case HLCP_SYNC:  // sync message
+            on_hlcp_sync(static_cast<hlcp_cmd_sync_t&>(cmd));
+            break;
+
+        case HLCP_LOG_MSG:  // collective log
+            on_hlcp_log_msg(static_cast<hlcp_cmd_log_msg_t&>(cmd));
+            break;
+
+        case HLCP_NIC_STATE:  // nic down/up
+            on_hlcp_nic_state(static_cast<hlcp_cmd_nic_state_t&>(cmd));
+            break;
+    }
+}
+
+void hlcp_server_t::on_message(const hlcp_message_t& msg, hlcp_t& connection)
+{
+    HLCP_LOG("msg: {}", msg);
+
+    switch (msg.id)
+    {
+        case HLCP_RANK_DATA:  // "first handshake"
+        {
+            if (state_ != active)
+            {
+                hlcp_rank_data_param_t& param = *(hlcp_rank_data_param_t*)msg.param;
+                on_init(param.comm_size);
+            }
+
+            hlcp_cmd_rank_data_t command(msg);
+            command.param_.info.caddr = connection->remote_addr;
+            on_command(command, connection);
+            break;
+        }
+
+        case HLCP_QPS_CONF:  // "second handshake" and migration
+        {
+            hlcp_cmd_qps_conf_t& command = *(new hlcp_cmd_qps_conf_t(msg));
+            command.alloc_payload();
+            connection.receive_payload(command);  // will call on_command() after payload received
+            break;
+        }
+
+        case HLCP_SYNC:  // sync message
+        {
+            hlcp_cmd_sync_t command(msg);
+            on_command(command, connection);
+            break;
+        }
+
+        case HLCP_LOG_MSG:  // collective log
+        {
+            hlcp_cmd_log_msg_t command(msg);
+            on_command(command, connection);
+            break;
+        }
+
+        case HLCP_NIC_STATE:  // nic down/up
+        {
+            hlcp_cmd_nic_state_t command(msg);
+            on_command(command, connection);
+            break;
+        }
+
+        default:
+            HLCP_ERR("unknown msg id:{} remote:{} ", msg.id, connection->remote_addr.str());
+            drop_connection(connection);
+            break;
     }
 }

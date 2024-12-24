@@ -11,7 +11,6 @@
 #include "platform/gen2_arch_common/hcl_device_config.h"                // for HclDeviceConfig
 
 #include "hcl_utils.h"            // for VERIFY
-#include "hlthunk.h"              // for hlthunk_get_hw_ip_info, hlth...
 #include "ibverbs/hcl_ibverbs.h"  // for g_ibv
 #include "hcl_log_manager.h"      // for LOG_*
 
@@ -85,14 +84,14 @@ void Gen2ArchServerConnectivity::init(const bool readLkdPortsMask)
     if (m_lkdPortsMaskValid)
     {
         VERIFY(m_lkdPortsMasks.hwPortsMask != INVALID_PORTS_MASK, "Internal ports mask was not defined.");
-        m_enabled_ports_mask         = m_lkdPortsMasks.hwPortsMask;
-        m_lkd_enabled_scaleout_ports = m_lkdPortsMasks.hwExtPortsMask;
-        m_max_scaleout_ports         = m_lkd_enabled_scaleout_ports.count();
+        m_enabledPortsMask        = m_lkdPortsMasks.hwPortsMask;
+        m_lkdEnabledScaleoutPorts = m_lkdPortsMasks.hwExtPortsMask;
+        m_maxScaleoutPorts        = m_lkdEnabledScaleoutPorts.count();
         LOG_HCL_DEBUG(HCL,
                       "m_enabled_ports_mask={:024b}, m_lkd_enabled_scaleout_ports={:024b}, m_max_scaleout_ports={}",
-                      (uint64_t)m_enabled_ports_mask,
-                      (uint64_t)m_lkd_enabled_scaleout_ports,
-                      m_max_scaleout_ports);
+                      (uint64_t)m_enabledPortsMask,
+                      (uint64_t)m_lkdEnabledScaleoutPorts,
+                      m_maxScaleoutPorts);
     }
 
     m_usersConnectivityConfig.parseConfig(
@@ -145,14 +144,20 @@ uint16_t Gen2ArchServerConnectivity::getMaxSubPort(const bool isScaleoutPort, co
     return m_commsRuntimeConnectivity[DEFAULT_COMM_ID]->getMaxSubPort(isScaleoutPort);
 }
 
-nics_mask_t Gen2ArchServerConnectivity::getAllPorts(const int deviceId, const HCL_Comm hclCommId) const
+nics_mask_t Gen2ArchServerConnectivity::getAllPortsGlbl(const int deviceId, const HCL_Comm hclCommId) const
 {
-    return m_commsRuntimeConnectivity[DEFAULT_COMM_ID]->getAllPorts(deviceId);
+    return m_commsRuntimeConnectivity[DEFAULT_COMM_ID]->getAllPortsGlbl(deviceId);
 }
 
-nics_mask_t Gen2ArchServerConnectivity::getScaleOutPorts(const HCL_Comm hclCommId) const
+nics_mask_t Gen2ArchServerConnectivity::getAllPorts(const int         deviceId,
+                                                    const nics_mask_t enabledExternalPortsMask) const
 {
-    return m_commsRuntimeConnectivity[DEFAULT_COMM_ID]->getScaleOutPorts();
+    return m_commsRuntimeConnectivity[DEFAULT_COMM_ID]->getAllPorts(deviceId, enabledExternalPortsMask);
+}
+
+nics_mask_t Gen2ArchServerConnectivity::getScaleOutPortsGlbl(const HCL_Comm hclCommId) const
+{
+    return m_commsRuntimeConnectivity[DEFAULT_COMM_ID]->getScaleOutPortsGlbl();
 }
 
 nics_mask_t Gen2ArchServerConnectivity::getScaleUpPorts(const HCL_Comm hclCommId) const
@@ -165,9 +170,9 @@ uint16_t Gen2ArchServerConnectivity::getDefaultScaleUpPort(const HCL_Comm hclCom
     return m_commsRuntimeConnectivity[DEFAULT_COMM_ID]->getDefaultScaleUpPort();
 }
 
-uint64_t Gen2ArchServerConnectivity::getExternalPortsMask(const HCL_Comm hclCommId) const
+uint64_t Gen2ArchServerConnectivity::getExternalPortsMaskGlbl(const HCL_Comm hclCommId) const
 {
-    return m_commsRuntimeConnectivity[DEFAULT_COMM_ID]->getExternalPortsMask();
+    return m_commsRuntimeConnectivity[DEFAULT_COMM_ID]->getExternalPortsMaskGlbl();
 }
 
 uint16_t Gen2ArchServerConnectivity::getNumScaleUpPorts(const HCL_Comm hclCommId) const
@@ -175,14 +180,14 @@ uint16_t Gen2ArchServerConnectivity::getNumScaleUpPorts(const HCL_Comm hclCommId
     return m_commsRuntimeConnectivity[DEFAULT_COMM_ID]->getNumScaleUpPorts();
 }
 
-uint16_t Gen2ArchServerConnectivity::getNumScaleOutPorts(const HCL_Comm hclCommId) const
+uint16_t Gen2ArchServerConnectivity::getNumScaleOutPortsGlbl(const HCL_Comm hclCommId) const
 {
-    return m_commsRuntimeConnectivity[DEFAULT_COMM_ID]->getNumScaleOutPorts();
+    return m_commsRuntimeConnectivity[DEFAULT_COMM_ID]->getNumScaleOutPortsGlbl();
 }
 
-uint16_t Gen2ArchServerConnectivity::getScaleoutSubPortIndex(const uint16_t port, const HCL_Comm hclCommId) const
+uint16_t Gen2ArchServerConnectivity::getScaleoutSubPortIndexGlbl(const uint16_t port, const HCL_Comm hclCommId) const
 {
-    return m_commsRuntimeConnectivity[DEFAULT_COMM_ID]->getScaleoutSubPortIndex(port);
+    return m_commsRuntimeConnectivity[DEFAULT_COMM_ID]->getScaleoutSubPortIndexGlbl(port);
 }
 
 bool Gen2ArchServerConnectivity::isUpdateScaleOutGlobalContextRequired(const HCL_Comm hclCommId) const
@@ -192,7 +197,7 @@ bool Gen2ArchServerConnectivity::isUpdateScaleOutGlobalContextRequired(const HCL
 
 uint16_t Gen2ArchServerConnectivity::getDefaultScaleOutPortByIndex(const uint16_t nicIdx) const
 {
-    return m_lkd_enabled_scaleout_ports(nicIdx);
+    return m_lkdEnabledScaleoutPorts(nicIdx);
 }
 
 const nics_mask_t Gen2ArchServerConnectivity::getAllScaleoutPorts(const HCL_Comm hclCommId) const
@@ -213,12 +218,12 @@ uint16_t Gen2ArchServerConnectivity::getMaxNumScaleUpPortsPerConnection(const HC
 void Gen2ArchServerConnectivity::setUnitTestsPortsMasks(const nics_mask_t fullScaleoutPorts,
                                                         const nics_mask_t allPortsMask)
 {
-    m_enabled_ports_mask         = allPortsMask;
-    m_lkd_enabled_scaleout_ports = fullScaleoutPorts;
-    m_max_scaleout_ports         = fullScaleoutPorts.count();
+    m_enabledPortsMask        = allPortsMask;
+    m_lkdEnabledScaleoutPorts = fullScaleoutPorts;
+    m_maxScaleoutPorts        = fullScaleoutPorts.count();
     LOG_HCL_DEBUG(HCL,
                   "m_enabled_ports_mask={:024b}, m_lkd_enabled_scaleout_ports={:024b}, m_max_scaleout_ports={}",
-                  (uint64_t)m_enabled_ports_mask,
-                  (uint64_t)m_lkd_enabled_scaleout_ports,
-                  m_max_scaleout_ports);
+                  (uint64_t)m_enabledPortsMask,
+                  (uint64_t)m_lkdEnabledScaleoutPorts,
+                  m_maxScaleoutPorts);
 }

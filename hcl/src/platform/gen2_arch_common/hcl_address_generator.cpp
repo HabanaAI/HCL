@@ -9,7 +9,7 @@
 #include "platform/gen2_arch_common/device_buffer_manager.h"
 #include "hcl_math_utils.h"
 
-HclAddressGenerator::HclAddressGenerator(HclCommandsGen2Arch& commands) : m_commands(commands) {}
+HclAddressGenerator::HclAddressGenerator() {}
 
 uint64_t HclAddressGenerator::generateScaleUpRecvIndices(CommonState& commonState, uint32_t streamId)
 {
@@ -23,6 +23,8 @@ uint64_t HclAddressGenerator::generateScaleUpRecvAddress(CommonState&     common
                                                          HCL_CollectiveOp currentOp,
                                                          uint64_t         offset)
 {
+    if (m_explicitSuRecvAddr > 0) return m_explicitSuRecvAddr;
+
     uint64_t currentBoxRecvAddress = commonState.getRecvAddress(sliceIter) + boxNumInfo.m_boxNum *
                                                                                  commonState.m_boxStrideCount *
                                                                                  commonState.m_dataTypeSizeInBytes;
@@ -77,6 +79,7 @@ uint64_t HclAddressGenerator::generateScaleUpSendAddress(CommonState&     common
                                                          HCL_CollectiveOp currentOp,
                                                          uint64_t         offset)
 {
+    if (m_explicitSuSendAddr > 0) return m_explicitSuSendAddr;
     uint64_t currentBoxSendAddress = commonState.getSendAddress(sliceIter) + boxNumInfo.m_boxNum *
                                                                                  commonState.m_boxStrideCount *
                                                                                  commonState.m_dataTypeSizeInBytes;
@@ -168,6 +171,17 @@ uint64_t HclAddressGenerator::generateScaleUpSendAddress(CommonState&     common
     return addr;
 }
 
+uint64_t HclAddressGenerator::getAndReset_explicitSoSendAddress(CommonState& commonState)
+{
+    uint64_t addr = 0;
+    if (m_explicitSoSendAddr > 0)
+    {
+        addr                 = m_explicitSoSendAddr;
+        m_explicitSoSendAddr = 0;
+    }
+    return addr;
+}
+
 uint64_t HclAddressGenerator::generateScaleOutSendAddress(CommonState&     commonState,
                                                           unsigned         sliceIter,
                                                           BoxNumInfo&      boxNumInfo,
@@ -175,6 +189,8 @@ uint64_t HclAddressGenerator::generateScaleOutSendAddress(CommonState&     commo
                                                           uint64_t         offset)
 {
     VERIFY(boxNumInfo.m_orientation == BoxNumInfo::boxOrientation::NEXT_BOX);
+    if (uint64_t explicit_addr = getAndReset_explicitSoSendAddress(commonState)) return explicit_addr;
+
     uint64_t currentBoxSendAddress = commonState.getSendAddress(sliceIter) + boxNumInfo.m_boxNum *
                                                                                  commonState.m_boxStrideCount *
                                                                                  commonState.m_dataTypeSizeInBytes;
@@ -253,12 +269,25 @@ uint64_t HclAddressGenerator::generateScaleOutSendAddress(CommonState&     commo
     return addr;
 }
 
+uint64_t HclAddressGenerator::getAndReset_explicitSoRecvAddress(CommonState& commonState)
+{
+    uint64_t addr = 0;
+    if (m_explicitSoRecvAddr > 0)
+    {
+        addr                 = m_explicitSoRecvAddr;
+        m_explicitSoRecvAddr = 0;
+    }
+    return addr;
+}
+
 uint64_t HclAddressGenerator::generateScaleOutRecvAddress(CommonState&     commonState,
                                                           unsigned         sliceIter,
                                                           BoxNumInfo&      boxNumInfo,
                                                           HCL_CollectiveOp currentOp,
                                                           uint64_t         offset)
 {
+    if (uint64_t explicit_address = getAndReset_explicitSoRecvAddress(commonState)) return explicit_address;
+
     uint64_t currentBoxRecvAddress = commonState.getRecvAddress(sliceIter) + boxNumInfo.m_boxNum *
                                                                                  commonState.m_boxStrideCount *
                                                                                  commonState.m_dataTypeSizeInBytes;
@@ -324,7 +353,6 @@ uint64_t HclAddressGenerator::generateMemcpySrcAddress(CommonState& commonState,
                                                        unsigned     sliceIter,
                                                        BoxNumInfo&  boxNumInfo,
                                                        bool         reductionSignalToCg,
-                                                       uint32_t     dmaType,
                                                        uint64_t     offset,
                                                        bool         isReduction,
                                                        bool         useSibo,
@@ -332,6 +360,15 @@ uint64_t HclAddressGenerator::generateMemcpySrcAddress(CommonState& commonState,
                                                        bool         isReductionStream,
                                                        bool         isGDRMemcpy)
 {
+    if (isForScaleOut)
+    {
+        if (m_explicitSoMemcpySrcAddr > 0) return m_explicitSoMemcpySrcAddr;
+    }
+    else
+    {
+        if (m_explicitSuMemcpySrcAddr > 0) return m_explicitSuMemcpySrcAddr;
+    }
+
     if (isGDRMemcpy)
     {
         return generateIntermediateAddress(commonState, isForScaleOut, isGDRMemcpy, 0);
@@ -386,7 +423,6 @@ uint64_t HclAddressGenerator::generateMemcpyDstAddress(CommonState& commonState,
                                                        unsigned     sliceIter,
                                                        BoxNumInfo&  boxNumInfo,
                                                        bool         reductionSignalToCg,
-                                                       uint32_t     dmaType,
                                                        uint64_t     offset,
                                                        bool         reductionIsFirstBoxMemcpy,
                                                        bool         isReduction,
@@ -395,6 +431,15 @@ uint64_t HclAddressGenerator::generateMemcpyDstAddress(CommonState& commonState,
                                                        bool         isReductionStream,
                                                        bool         isGDRMemcpy)
 {
+    if (!isForScaleout)
+    {
+        if (m_explicitSuMemcpyDstAddr > 0) return m_explicitSuMemcpyDstAddr;
+    }
+    else
+    {
+        if (m_explicitSoMemcpyDstAddr > 0) return m_explicitSoMemcpyDstAddr;
+    }
+
     if (isGDRMemcpy)
     {
         unsigned bufferOffset = 0;

@@ -23,9 +23,10 @@
 #include "libfabric/hl_ofi.h"                             // for ofi_t
 #include "ofi_plugin.h"                                   // for OfiPlugin
 #include "hcl_log_manager.h"                              // for LOG_*
-#include "platform/gaudi2/context_manager.h"
-#include "hcl_types.h"                             // for MAX_COMPACT_RANK_INFO_NICS, SYN_VALID_DEVICE_ID
-#include "platform/gen2_arch_common/server_def.h"  // for Gen2ArchServerDef
+#include "hcl_types.h"                                    // for MAX_COMPACT_RANK_INFO_NICS, SYN_VALID_DEVICE_ID
+#include "ibverbs/hcl_ibverbs.h"                          // for g_ibv
+
+#include "platform/gen2_arch_common/server_connectivity_user_config.h"  // for json
 
 #include <netpacket/packet.h>  // for sockaddr_ll
 #include <linux/ethtool.h>     // for ethtool_drvinfo, ETHTOOL_GDRVINFO
@@ -132,12 +133,11 @@ bool IHclDevice::isCommExist(HCL_Comm comm)
 
 void IHclDevice::getMacAddressInfo()
 {
-    struct hlthunk_nic_get_ports_masks_out mask;
-    int                                    rc = hlthunk_nic_get_ports_masks(getFd(), &mask);
-    VERIFY(rc == 0, "hlthunk_nic_get_ports_masks() failed: {}", rc);
-    LOG_HCL_DEBUG(HCL, "mask.ports_mask={:024b}", mask.ports_mask);
+    portMaskConfig portsMasks;
+    g_ibv.get_port_mask(portsMasks);
+    LOG_HCL_DEBUG(HCL, "mask.ports_mask={:024b}", portsMasks.hwPortsMask);
 
-    const uint64_t enabledNicsMask = mask.ports_mask;
+    const uint64_t enabledNicsMask = portsMasks.hwPortsMask;
 
     /* All ports are disabled */
     if (enabledNicsMask == 0)
@@ -384,10 +384,9 @@ void IHclDevice::initNicsMask()
                   (uint64_t)m_deviceConfig.getDisabledPorts(),
                   (uint64_t)m_hclNic.mask);
 
-    hcclResult_t res = updateNicsState();
-    if (res != hcclSuccess)
+    for (uint32_t nic = 0; nic < m_hal->getMaxNics(); nic++)
     {
-        LOG_HCL_ERR(HCL, "At least one NIC is DOWN - Please check if network interfaces are up");
+        updateNicState(nic, isNicUp(nic), true);
     }
 }
 
@@ -428,20 +427,6 @@ hcclResult_t IHclDevice::networkFlush(HCL_Request* phRequest, synStreamHandle st
     return hcclSuccess;
 }
 
-int IHclDevice::pcieFlush()
-{
-    int      status = 0;
-    uint32_t flush_buf;
-    status = hlthunk_device_memory_read_block_experimental(getFd(), &flush_buf, getHal()->getFlushPCIeReg(), 4, 0);
-    if (status != 0)
-    {
-        LOG_HCL_DEBUG(HCL, "pcieFlush operation failed with status: [{}]", status);
-        return hcclInternalError;
-    }
-    LOG_HCL_DEBUG(HCL, "pcieFlush operation was completed");
-    return status;
-}
-
 int IHclDevice::getFd() const
 {
     return m_deviceConfig.getFd();
@@ -452,86 +437,36 @@ bool IHclDevice::isNicUp(uint32_t nic)
     return false;
 }
 
-hcclResult_t IHclDevice::updateNicsState()
+void IHclDevice::updateNicState(const uint32_t nic, const bool up, const bool atInit)
 {
-    // check link status for all ports,
-    // return after checking all ports even if detected error
-    hcclResult_t  res        = hcclSuccess;
-    HclConfigType configType = (HclConfigType)GCFG_BOX_TYPE_ID.value();
-    for (uint32_t nic = 0; nic < m_hal->getMaxNics(); nic++)
+    // update state of enabled ports
+    if ((m_hclNic.mask[nic]))
     {
-        bool up  = isNicUp(nic);
-        bool ext = isScaleOutPort(nic /*, HCL_Comm comm*/);
-
-        // disabled port, just log
-        if ((!m_hclNic.mask[nic]))
-        {
-            LOG_HCL_TRACE(HCL,
-                          "{} Network link fd({}), {} port({}) DISABLED, is {}",
-                          GCFG_BOX_TYPE.value(),
-                          getFd(),
-                          ext ? "external" : "internal",
-                          nic,
-                          up ? "up" : "down");
-        }
-        else  // enabled port
-        {
-            // state up
-            if (up)
-            {
-                LOG_HCL_TRACE(HCL,
-                              "{} Network link fd({}), {} port({}) is up",
-                              GCFG_BOX_TYPE.value(),
-                              getFd(),
-                              ext ? "external" : "internal",
-                              nic);
-            }
-            // state down :(
-            else
-            {
-                // clear bit
-                m_hclNic.mask.clear(nic);
-
-                // unknown server type could be simulator or PCIe card
-                bool unknownServerType = (configType == BACK_2_BACK || configType == UNKNOWN);
-                // internal port - we can't continue
-                if (!ext && !unknownServerType)
-                {
-                    LOG_HCL_ERR(HCL,
-                                "{} Network link fd({}), {} port({}) is down",
-                                GCFG_BOX_TYPE.value(),
-                                getFd(),
-                                ext ? "external" : "internal",
-                                nic);
-                    res = hcclInternalError;
-                }
-                // HLS1 external port or unknown server type - issue warning
-                // if will try to open QP on port later it will ERROR
-                else
-                {
-                    LOG_HCL_DEBUG(HCL,
-                                  "{} Network link fd({}), external port({}) is down",
-                                  GCFG_BOX_TYPE.value(),
-                                  getFd(),
-                                  nic);
-                }
-            }
-        }
+        m_hclNic.state[nic] = up;
+        if (!up && atInit) m_hclNic.mask[nic] = false;  // update disabled nic mask
     }
-    return res;
+
+    LOG_HCL_TRACE(HCL,
+                  "{} Network link fd({}), {} port({}){} is {}",
+                  GCFG_BOX_TYPE.value(),
+                  getFd(),
+                  isScaleOutPort(nic) ? "external" : "internal",
+                  nic,
+                  m_hclNic.mask[nic] ? "" : " DISABLED",
+                  up ? "up" : "down");
 }
 
 void IHclDevice::waitForAllEvents(bool isCsDone) {}
 
 void IHclDevice::waitForAllEvents(uint32_t queueOffset, bool isCsDone) {}
 
-uint32_t IHclDevice::allocateConnection(uint32_t port, HCL_Rank rank, HCL_Comm comm, uint8_t qpId, uint8_t qpSet)
+uint32_t IHclDevice::allocateQp(uint32_t port, HCL_Rank rank, HCL_Comm comm, uint8_t qpId, uint8_t qpSet)
 {
     VERIFY(isNicUp(port), "Nic({}) is DOWN, can't allocate connection", port);
 
     uint32_t& qpn = getComm(comm).m_rankInfo.remoteInfo[rank].gaudiNicQPs[port].qp[qpSet][qpId];
 
-    qpn = createQp(port, qpId);
+    qpn = createQpnInLKD(port, qpId);
 
     LOG_HCL_DEBUG(HCL,
                   "Allocate QP, remoteRank({}){} nic: {} qpSet: {}, qpn: {}, qpIdx: {}",
@@ -550,7 +485,7 @@ void IHclDevice::registerOpenQpCallback(HclConfigType configType, std::function<
     m_openQpsCallbacks[configType] = callback;
 }
 
-hcclResult_t IHclDevice::openQps(HCL_Comm comm)
+hcclResult_t IHclDevice::openQpToRemoteRanks(const HCL_Comm comm)
 {
     hcclResult_t  rc;
     HclConfigType configType = (HclConfigType)GCFG_BOX_TYPE_ID.value();
@@ -582,26 +517,26 @@ void IHclDevice::openWQs()
     }
 }
 
-uint8_t IHclDevice::getPeerNic(HCL_Rank rank, HCL_Comm comm, uint8_t port)
+uint8_t IHclDevice::getPeerNic(const HCL_Rank rank, const HCL_Comm comm, const uint8_t port)
 {
     return port;
 }
 
-hcclResult_t IHclDevice::updateQps(HCL_Comm comm)
+hcclResult_t IHclDevice::connectCommQps(HCL_Comm comm)
 {
     LOG_HCL_HEADER(HCL);
 
     for (auto& rank : getRanks(comm))
     {
-        updateRankQps(comm, rank);
+        connectRankQps(comm, rank);
     }
     return hcclSuccess;
 }
 
-hcclResult_t IHclDevice::updateRankQps(HCL_Comm comm, HCL_Rank rank)
+hcclResult_t IHclDevice::connectRankQps(HCL_Comm comm, HCL_Rank rank)
 {
     LOG_HCL_TRACE(HCL,
-                  "updateRankQps remoteRank({}) maxNics {} MaxQPsPerNic {}",
+                  "connectRankQps remoteRank({}) maxNics {} MaxQPsPerNic {}",
                   rank,
                   m_hal->getMaxNics(),
                   m_hal->getMaxQPsPerNic());
@@ -622,7 +557,8 @@ hcclResult_t IHclDevice::updateRankQps(HCL_Comm comm, HCL_Rank rank)
 
                 const uint16_t nic = getComm(comm).m_rankInfo.remoteInfo[rank].gaudiNicQPs.qp[index].nic;
                 LOG_HCL_DEBUG(HCL_COORD,
-                              "comm({}), rank({}), index={}, stream({}), nic({}), qpn({}), qpSet({}) calling setupQps",
+                              "comm({}), rank({}), index={}, stream({}), nic({}), qpn({}), qpSet({}) calling "
+                              "establishQpConnectionWithPeerQp",
                               comm,
                               rank,
                               index,
@@ -632,7 +568,7 @@ hcclResult_t IHclDevice::updateRankQps(HCL_Comm comm, HCL_Rank rank)
                               qpSet);
 
                 // translate the index to nic
-                hcclResult_t rs = setupQps(comm, rank, stream, nic, qpn, qpSet);
+                hcclResult_t rs = establishQpConnectionWithPeerQp(comm, rank, stream, nic, qpn, qpSet);
                 if (rs != hcclSuccess)
                 {
                     return rs;

@@ -11,12 +11,16 @@
  ******************************************************************************/
 
 #include "hlcp_client.h"
-#include "hccl_helpers.h"     // for RETURN_ON_ERROR, RETURN_ON_COND
-#include "hcl_utils.h"        // for VERIFY, LOG_HCL_ERR
-#include "hcl_log_manager.h"  // for LOG_ERR, LOG_DEBUG
-#include "hcl_types.h"        // for RankInfo
+#include "hccl_helpers.h"              // for RETURN_ON_ERROR, RETURN_ON_COND
+#include "hcl_utils.h"                 // for VERIFY, LOG_HCL_ERR
+#include "hcl_log_manager.h"           // for LOG_ERR, LOG_DEBUG
+#include "hcl_types.h"                 // for RankInfo
+#include "coordinator/qp_migration.h"  // for IMigrationCallback
 
-hlcp_client_t::hlcp_client_t(uint32_t nranks, HCL_Rank rank, const internal_unique_id_t* internalUniqueId)
+hlcp_client_t::hlcp_client_t(const uint32_t              nranks,
+                             const HCL_Rank              rank,
+                             const internal_unique_id_t* internalUniqueId,
+                             IMigrationCallback&         migrationCb)
 : rank_(rank), ranks_(nranks)
 {
     if (GCFG_HCL_NULL_SUBMIT.value()) return;
@@ -30,157 +34,79 @@ hlcp_client_t::hlcp_client_t(uint32_t nranks, HCL_Rank rank, const internal_uniq
         return;
     }
 
-    hlcp_srv_ = internalUniqueId->address;
-
-    rank_addr_.resize(ranks_);
-    non_peers_.resize(ranks_);
+    hlcp_srv_     = internalUniqueId->address;
+    migration_cb_ = &migrationCb;
 
     HLCP_INF("{} {} hlcp_srv: {}", this, srv_.local_addr.str(), hlcp_srv_.str());
 }
 
-void hlcp_client_t::on_command(hlcp_command_t& cmd, hlcp_t& connection)
+void hlcp_client_t::reset()
 {
-    HLCP_LOG("{}", cmd.id());
+    non_peers_.clear();
+    rank_addr_.clear();
 
-    switch (state_)
+    non_peers_.resize(ranks_);
+    rank_addr_.resize(ranks_);
+}
+
+void hlcp_client_t::on_hlcp_comm_data(hlcp_cmd_comm_data_t& cmd)
+{
+    cmd_comm_data_.completed_ = true;
+}
+
+void hlcp_client_t::on_hlcp_qps_conf(hlcp_cmd_qps_conf_t& cmd)
+{
+    cmd_qps_conf_.completed_ = true;
+}
+
+void hlcp_client_t::on_hlcp_non_peer_data(hlcp_cmd_non_peers_t& cmd)
+{
+    non_peers_[cmd.param_].initialized = true;
+
+    delete &cmd;
+}
+
+void hlcp_client_t::on_hlcp_sync(hlcp_cmd_sync_t& cmd)
+{
+    if (cmd.param_ == HCL_INVALID_RANK)  // server sync
     {
-        case comm_data:
-            cmd_comm_data_.completed_ = true;
-            break;
-
-        case qps_conf:
-            cmd_qps_conf_.completed_ = true;
-
-            state_ = conf_done;
-            break;
-
-        case conf_done:
-        {
-            VERIFY(cmd.id() == HLCP_NON_PEERS);
-
-            hlcp_cmd_non_peers_t& command = (hlcp_cmd_non_peers_t&)cmd;
-
-            HCL_Rank rank = command.param_;
-
-            VERIFY(!non_peers_[rank].initialized, "non peer {} already initialized", rank);
-
-            non_peers_[rank].initialized = true;
-
-            delete &cmd;
-        }
-        break;
-
-        default:
-            VERIFY(false, "invalid protocol state: {}. {} remote:{} ", state_, cmd, connection->remote_addr.str());
-            break;
+        cmd_sync_.completed_ = true;
     }
-
-    close_connection(connection);
-}
-
-void hlcp_client_t::on_error(bool send, hlcp_command_t* cmd, const hlcp_packet_t& packet, hlcp_t& connection)
-{
-    HLCP_ERR("{} {} expected {} {}, connection: {}", state_, send ? "send" : "recv", cmd, packet, connection->str());
-
-    drop_connection(connection);
-}
-
-void hlcp_client_t::on_connect(hlcp_t& connection)
-{
-    //
-    // our server socket accepted new connection, can be from server or from other client
-    // depending on state
-    //
-    switch (state_)
+    else
     {
-        case comm_data:
-            connection.receive_command(cmd_comm_data_);
-            break;
+        VERIFY(!non_peers_[cmd.param_].synched, "non peer {} already synchronized", cmd.param_);
 
-        case qps_conf:
-            connection.receive_command(cmd_qps_conf_);
-            break;
-
-        case conf_done:  // we can receive server SYNC connect or NON_PEER connect
-            connection.receive();
-            break;
-
-        default:
-            VERIFY(false, "invalid protocol state: {}. remote:{} ", state_, connection->remote_addr.str());
-            break;
+        non_peers_[cmd.param_].synched = true;
     }
 }
 
-void hlcp_client_t::on_message(const hlcp_message_t& msg, hlcp_t& connection)
+void hlcp_client_t::on_hlcp_nic_state(hlcp_cmd_nic_state_t& cmd)
 {
-    HLCP_LOG("{}", msg.id);
-    switch (state_)
-    {
-        case conf_done:  // we can receive SYNC or NON_PEER data
-        {
-            if (msg.id == HLCP_NON_PEERS)
-            {
-                hlcp_cmd_non_peers_t* np_cmd = new hlcp_cmd_non_peers_t(msg);
-
-                HCL_Rank rank = np_cmd->param_;
-
-                np_cmd->payload_      = &non_peers_[rank].data;
-                np_cmd->payload_size_ = msg.payload_size;
-
-                connection.receive_payload(*np_cmd);
-            }
-            else if (msg.id == HLCP_SYNC)  // sync
-            {
-                hlcp_cmd_sync_t command(msg);
-                close_connection(connection);
-
-                HCL_Rank rank = command.param_;
-
-                if (rank == HCL_INVALID_RANK)  // server
-                {
-                    cmd_sync_.completed_ = true;
-                }
-                else
-                {
-                    VERIFY(!non_peers_[rank].synched, "non peer {} already synchronized", rank);
-
-                    non_peers_[rank].synched = true;
-                }
-            }
-        }
-        break;
-
-        default:
-            VERIFY(false, "invalid protocol state: {}. msg:{} remote:{} ", state_, msg, connection->remote_addr.str());
-            break;
-    }
+    migration_cb_->mcNicStateChange(cmd.param_);
 }
 
-bool hlcp_client_t::syncBetweenRanks()
+bool hlcp_client_t::rendezvous()
 {
     hlcp_cmd_sync_t cmd(rank_);
 
+    cmd_sync_.completed_ = false;
+
     RET_ON_FALSE(send_to_srv(cmd));
 
-    wait_condition(cmd_sync_.completed_, gcfg_.op_timeout);
+    wait_condition(cmd_sync_.completed_, gcfg_.op_timeout, "sync between ranks");
 
     HLCP_INF("completed");
 
     return true;
 }
 
-bool hlcp_client_t::destroy()
+bool hlcp_client_t::exchangeRankInfo(int nranks, const RankInfoHeader& myRankInfo, ranks_headers_t& ranksInfo)
 {
-    // Stop async thread
-    return true;
-}
+    reset();
 
-bool hlcp_client_t::commInitHandshake1(int nranks, RankInfoHeader& myRankInfo, ranks_headers_t& ranksInfo)
-{
     cmd_comm_data_.payload_      = ranksInfo.data();
     cmd_comm_data_.payload_size_ = nranks * sizeof(RankInfoHeader);
-
-    state_ = comm_data;
+    cmd_comm_data_.completed_    = false;
 
     hlcp_cmd_rank_data_t cmd({myRankInfo, srv_.local_addr.port(), (uint32_t)nranks});
 
@@ -191,12 +117,11 @@ bool hlcp_client_t::commInitHandshake1(int nranks, RankInfoHeader& myRankInfo, r
 
     RET_ON_FALSE(send_to_srv(cmd));
 
-    wait_condition(cmd_comm_data_.completed_, gcfg_.op_timeout);
+    wait_condition(cmd_comm_data_.completed_, gcfg_.op_timeout, "receive comm data");
 
     for (const auto& hdr : ranksInfo)
     {
         rank_addr_[hdr.hcclRank] = hdr.caddr;
-        addr_rank_.insert({rank_addr_[hdr.hcclRank].addr(), hdr.hcclRank});
     }
 
     HLCP_INF("completed");
@@ -204,27 +129,46 @@ bool hlcp_client_t::commInitHandshake1(int nranks, RankInfoHeader& myRankInfo, r
     return true;
 }
 
-bool hlcp_client_t::commInitHandshake2(int               nranks,
-                                       void*             myRankInfo,
-                                       uint32_t          rankInfoBufferSize,
-                                       remote_devices_t& remoteDevicesInfo)
+bool hlcp_client_t::xchg_qps_conf(int                   nranks,
+                                  const RankInfoBuffer& myRankInfo,
+                                  uint32_t              rankInfoBufferSize,
+                                  remote_devices_t&     remoteDevicesInfo)
 {
-    HLCP_LOG("");
+    HLCP_LOG("nranks={}, rankInfoBufferSize={}, remoteDevicesInfo.size={}",
+             nranks,
+             rankInfoBufferSize,
+             remoteDevicesInfo.size());
 
     cmd_qps_conf_.payload_      = remoteDevicesInfo.data();
     cmd_qps_conf_.payload_size_ = nranks * sizeof(RemoteDeviceConnectionInfo);
 
-    state_ = qps_conf;
+    cmd_qps_conf_.completed_ = false;
 
-    hlcp_cmd_qps_conf_t cmd(nranks, myRankInfo, rankInfoBufferSize);
+    hlcp_cmd_qps_conf_t cmd(nranks, const_cast<void*>(reinterpret_cast<const void*>(&myRankInfo)), rankInfoBufferSize);
 
     RET_ON_FALSE(send_to_srv(cmd));
 
-    wait_condition(cmd_qps_conf_.completed_, gcfg_.op_timeout);
+    wait_condition(cmd_qps_conf_.completed_, gcfg_.op_timeout, "recv QPs configuration");
 
     HLCP_INF("completed");
 
     return true;
+}
+
+bool hlcp_client_t::exchangeQpsInfo(int                   nranks,
+                                    const RankInfoBuffer& myRankInfo,
+                                    uint32_t              rankInfoBufferSize,
+                                    remote_devices_t&     remoteDevicesInfo)
+{
+    return xchg_qps_conf(nranks, myRankInfo, rankInfoBufferSize, remoteDevicesInfo);
+}
+
+bool hlcp_client_t::exchangeMigrationData(int                   nranks,
+                                          const RankInfoBuffer& myRankInfo,
+                                          uint32_t              rankInfoBufferSize,
+                                          remote_devices_t&     remoteDevicesInfo)
+{
+    return xchg_qps_conf(nranks, myRankInfo, rankInfoBufferSize, remoteDevicesInfo);
 }
 
 bool hlcp_client_t::send_to_rank(HCL_Rank rank, const hlcp_command_t& cmd)
@@ -239,7 +183,7 @@ bool hlcp_client_t::send_to_rank(HCL_Rank rank, const hlcp_command_t& cmd)
 
     RET_ON_FALSE(hlcp.send_command(cmd, gcfg_.op_timeout));
 
-    HLCP_LOG("sent:{} [{}] {}", cmd.id(), cmd.payload_size() + cmd.param_size(), socket.str());
+    HLCP_LOG("--> {}: {}", rank, cmd);
 
     hlcp.recv_ack();
 
@@ -249,46 +193,37 @@ bool hlcp_client_t::send_to_rank(HCL_Rank rank, const hlcp_command_t& cmd)
 hcclResult_t hlcp_client_t::sendRecvFromRanks(UniqueSortedVector& nonPeerRemoteRanks,
                                               std::vector<void*>& recvBuffers,
                                               std::vector<void*>& sendBuffers,
-                                              size_t              sendRecvBufSize,
-                                              HCL_Comm            comm)
+                                              size_t              sendRecvBufSize)
 {
-    HLCP_INF("comm: {}  nonPeers: {}  send_recv_size: {}", comm, nonPeerRemoteRanks, sendRecvBufSize);
-
-    if (!xchg_non_peer_data(nonPeerRemoteRanks, recvBuffers, sendBuffers, sendRecvBufSize, comm))
-        return hcclInternalError;
-
-    HLCP_INF("completed");
+    if (!xchg_non_peer_data(nonPeerRemoteRanks, recvBuffers, sendBuffers, sendRecvBufSize)) return hcclInternalError;
 
     return hcclSuccess;
 }
 
 bool hlcp_client_t::non_peer_data_ready(const UniqueSortedVector& nonPeerRemoteRanks, bool init)
 {
-    bool all_received = true;
-
     for (const auto& rank : nonPeerRemoteRanks)
     {
-        all_received &= (init ? non_peers_[rank].initialized : non_peers_[rank].synched);
+        if (!(init ? non_peers_[rank].initialized : non_peers_[rank].synched)) return false;
     }
 
-    return all_received;
+    return true;
 }
 
 bool hlcp_client_t::xchg_non_peer_data(const UniqueSortedVector& nonPeerRemoteRanks,
                                        const std::vector<void*>& recvBuffers,
                                        const std::vector<void*>& sendBuffers,
-                                       size_t                    sendRecvBufSize,
-                                       HCL_Comm                  comm)
+                                       size_t                    sendRecvBufSize)
 {
+    HLCP_INF("ranks: {}, send/recv size: {}", nonPeerRemoteRanks.size(), sendRecvBufSize);
     uint32_t i = 0;
     for (const HCL_Rank remoteRank : nonPeerRemoteRanks)
     {
         hlcp_cmd_non_peers_t cmd(rank_, sendBuffers[i++], sendRecvBufSize);
-
         send_to_rank(remoteRank, cmd);
     }
 
-    wait_condition(non_peer_data_ready(nonPeerRemoteRanks, true), gcfg_.op_timeout);
+    wait_condition(non_peer_data_ready(nonPeerRemoteRanks, true), gcfg_.op_timeout, "recv non peer data");
 
     i = 0;
     for (const HCL_Rank remoteRank : nonPeerRemoteRanks)
@@ -296,17 +231,17 @@ bool hlcp_client_t::xchg_non_peer_data(const UniqueSortedVector& nonPeerRemoteRa
         std::memcpy(recvBuffers[i++], &non_peers_[remoteRank].data, sendRecvBufSize);
     }
 
+    HLCP_INF("competed");
+
     return true;
 }
 
-void hlcp_client_t::synchronizeRemoteRanks(const HCL_Comm comm, const UniqueSortedVector& nonPeerRemoteRanks)
+bool hlcp_client_t::rendezvous(const UniqueSortedVector& nonPeerRemoteRanks)
 {
-    HLCP_INF("comm={}, remoteRanks={}", comm, nonPeerRemoteRanks);
-    VERIFY(sync_non_peers(comm, nonPeerRemoteRanks), "non peers sync failure");
-    HLCP_INF("completed");
+    return sync_non_peers(nonPeerRemoteRanks);
 }
 
-bool hlcp_client_t::sync_non_peers(const HCL_Comm comm, const UniqueSortedVector& nonPeerRemoteRanks)
+bool hlcp_client_t::sync_non_peers(const UniqueSortedVector& nonPeerRemoteRanks)
 {
     hlcp_cmd_sync_t cmd(rank_);
 
@@ -315,7 +250,7 @@ bool hlcp_client_t::sync_non_peers(const HCL_Comm comm, const UniqueSortedVector
         send_to_rank(remoteRank, cmd);
     }
 
-    wait_condition(non_peer_data_ready(nonPeerRemoteRanks, false), gcfg_.op_timeout);
+    wait_condition(non_peer_data_ready(nonPeerRemoteRanks, false), gcfg_.op_timeout, "sync non peers");
 
     return true;
 }
@@ -343,6 +278,15 @@ hcclResult_t hlcp_client_t::sendCollectiveLogErr()
     return hcclSuccess;
 }
 
+bool hlcp_client_t::sendNicStateChange(const NicState& nicState)
+{
+    HLCP_LOG("nic: {}, state: {}", nicState.nic, nicState.state ? "up" : "down");
+
+    hlcp_cmd_nic_state_t cmd(nicState);
+
+    return send_to_srv(hlcp_cmd_nic_state_t(nicState));
+}
+
 bool hlcp_client_t::send_to_srv(const hlcp_command_t& cmd)
 {
     socket_t socket;
@@ -353,7 +297,7 @@ bool hlcp_client_t::send_to_srv(const hlcp_command_t& cmd)
 
     RET_ON_FALSE(hlcp.send_command(cmd, gcfg_.op_timeout));
 
-    HLCP_LOG("sent: {} [{}] {}", cmd.id(), cmd.payload_size() + cmd.param_size(), socket.str());
+    HLCP_LOG("{}", cmd);
 
     hlcp.recv_ack();
 
@@ -364,7 +308,8 @@ bool hlcp_client_t::send_log_msg(CollectiveLogMessage& msg)
 {
     // take current time since epoch, in milliseconds
     const std::chrono::system_clock::time_point current = std::chrono::system_clock::now();
-    const std::chrono::milliseconds             ms =
+
+    const std::chrono::milliseconds ms =
         std::chrono::duration_cast<std::chrono::milliseconds>(current.time_since_epoch());
 
     msg.timestamp = ms.count();
@@ -372,4 +317,88 @@ bool hlcp_client_t::send_log_msg(CollectiveLogMessage& msg)
     hlcp_cmd_log_msg_t cmd(msg);
 
     return send_to_srv(cmd);
+}
+
+void hlcp_client_t::on_command(hlcp_command_t& cmd, hlcp_t& connection)
+{
+    close_connection(connection);
+
+    HLCP_LOG("{}", cmd);
+
+    switch (cmd.id())
+    {
+        case HLCP_COMM_DATA:
+            on_hlcp_comm_data(static_cast<hlcp_cmd_comm_data_t&>(cmd));
+            break;
+
+        case HLCP_QPS_CONF:
+            on_hlcp_qps_conf(static_cast<hlcp_cmd_qps_conf_t&>(cmd));
+            break;
+
+        case HLCP_SYNC:
+            on_hlcp_sync(static_cast<hlcp_cmd_sync_t&>(cmd));
+            break;
+
+        case HLCP_NON_PEERS:
+            on_hlcp_non_peer_data(static_cast<hlcp_cmd_non_peers_t&>(cmd));
+            break;
+
+        case HLCP_NIC_STATE:
+            on_hlcp_nic_state(static_cast<hlcp_cmd_nic_state_t&>(cmd));
+            break;
+
+        default:
+            HLCP_ERR("Unknown command id: {}", cmd.id());
+            break;
+    }
+}
+
+void hlcp_client_t::on_message(const hlcp_message_t& msg, hlcp_t& connection)
+{
+    HLCP_LOG("{}", msg.id);
+
+    switch (msg.id)
+    {
+        case HLCP_COMM_DATA:
+            connection.receive_payload(cmd_comm_data_);
+            break;
+
+        case HLCP_QPS_CONF:
+            connection.receive_payload(cmd_qps_conf_);
+            break;
+
+        case HLCP_SYNC:
+        {
+            hlcp_cmd_sync_t command(msg);
+            on_command(command, connection);
+            break;
+        }
+
+        case HLCP_NON_PEERS:
+        {
+            hlcp_cmd_non_peers_t& np_cmd = *(new hlcp_cmd_non_peers_t(msg));
+
+            HCL_Rank rank = np_cmd.param_;
+
+            VERIFY(!non_peers_[rank].initialized, "non peer {} already initialized", rank);
+
+            np_cmd.payload_      = &non_peers_[rank].data;
+            np_cmd.payload_size_ = msg.payload_size;
+
+            connection.receive_payload(np_cmd);
+            break;
+        }
+
+        case HLCP_NIC_STATE:
+        {
+            hlcp_cmd_nic_state_t command(msg);
+            on_command(command, connection);
+            break;
+        }
+
+        default:
+            HLCP_ERR("Unknown message id: {} from: {}", msg.id, connection->str());
+            drop_connection(connection);
+            break;
+    }
 }

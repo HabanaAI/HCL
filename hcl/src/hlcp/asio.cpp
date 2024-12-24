@@ -136,7 +136,7 @@ int asio_t::io_event(uint32_t events)
 
 bool asio_t::close()
 {
-    HLCP_LOG("running threads: {}", running_);
+    HLCP_LOG("running threads: {}", running_.load());
 
     if (running_ > 0)
     {
@@ -194,8 +194,7 @@ int asio_t::op_mode(asio_client_t& ioc)
 
 bool asio_t::arm_monitor(asio_client_t& ioc)
 {
-    if (ioc.mode_[armed])
-        return true;
+    if (ioc.mode_[armed]) return true;
 
     int op = op_mode(ioc);
 
@@ -204,7 +203,12 @@ bool asio_t::arm_monitor(asio_client_t& ioc)
     event.events   = ioc.events();
     event.data.ptr = ioc;
 
-    HLCP_LOG("[{}], op:{}. epoll_fd:{}, fd:{}  [{}]", event.data.ptr, op, epoll_fd_, ioc.io_fd(), events_to_str(event.events));
+    HLCP_LOG("[{}], op:{}. epoll_fd:{}, fd:{}  [{}]",
+             event.data.ptr,
+             op,
+             epoll_fd_,
+             ioc.io_fd(),
+             events_to_str(event.events));
 
     ioc.mode_[armed] = true;
     return epoll_ctl(epoll_fd_, op, ioc, &event) != -1;

@@ -128,6 +128,9 @@ public:
 };
 
 // set first N bits to 1
-#define NBITS(N) ((1ULL << (N)) - 1)
+constexpr uint64_t NBITS(int n)
+{
+    return (n == 64) ? UINT64_MAX : ((1ULL << n) - 1);
+}
 
 using nics_mask_t = bits_t;

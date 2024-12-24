@@ -34,7 +34,6 @@ uint64_t hcl::Gaudi3CyclicBufferManager::getPi()
 void hcl::Gaudi3CyclicBufferManager::incPi(uint32_t size)
 {
     m_pi += size;
-    static const uint64_t shift = std::log2(m_bufferSize);
-    m_hostPi                    = m_pi & ((1 << shift) - 1);
-    m_sizeSinceAlignment        = 0;
+    m_hostPi             = m_pi & m_pi_mask;
+    m_sizeSinceAlignment = 0;
 }

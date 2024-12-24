@@ -4,10 +4,7 @@
 
 hcclResult_t hccl_gaudi2_t::init_device(uint8_t apiId)
 {
-    // export HBM for GDR if required
-    device_->exportHBMMR();
-
-    FOR_I(device_->getHal()->getMaxStreams())
+    FOR_I(device_->getHal().getMaxStreams())
     {
         collectives_.push_back(new HclCollectiveRoutinesGaudi2((HclDeviceGaudi2*)device_, i, new WqeTrackerGaudi2()));
     }
@@ -17,4 +14,14 @@ hcclResult_t hccl_gaudi2_t::init_device(uint8_t apiId)
     LOG_HCL_DEBUG(HCL, "G2 device created");
 
     return hcclSuccess;
+}
+
+uint32_t hccl_gaudi2_t::stream_id(void* streamHandle)
+{
+    if (auto handle = synStreamGetHclStreamHandle((synStreamHandle)streamHandle))
+    {
+        return hcl::getStreamID(handle);
+    }
+
+    return 0;
 }

@@ -1,5 +1,6 @@
 #include "protocol.h"
 #include "hlcp_inc.h"
+#include "hcl_utils.h"  // for VERIFY
 #include <cstring>
 
 // build network packet from user supplied buffer  i.e. send
@@ -15,12 +16,6 @@ hlcp_packet_t& hlcp_packet_t::operator=(const hlcp_command_t& cmd)
 }
 
 // from network packet to user supplied buffer i.e. recv
-hlcp_command_t& hlcp_command_t::operator=(const hlcp_packet_t& packet)
-{
-    (*this) = packet.msg;
-    return (*this);
-}
-
 hlcp_command_t& hlcp_command_t::operator=(const hlcp_message_t& msg)
 {
     VERIFY(msg.id == id(), "invalid msg.id: {} != {}", msg.id, id());
@@ -34,15 +29,17 @@ std::ostream& operator<<(std::ostream& out, const hlcp_header_t& hdr)
     const magic_t& magic = *(magic_t*)hdr.magic;
 
     out << "[" << magic[0] << magic[1] << magic[2] << magic[3];
-    out << " " << std::hex << hdr.version << " ";
-    out << hdr.type << " " << hdr.footer << std::dec << "]";
+
+    out << std::hex << std::uppercase;
+    out << " " << hdr.version << " " << hdr.type << " " << hdr.footer << "]";
+    out << std::dec << std::nouppercase;
 
     return out;
 }
 
 std::ostream& operator<<(std::ostream& out, const hlcp_message_t& msg)
 {
-    return out << "[ " << msg.id << ", " << msg.payload_size << "]";
+    return out << "[" << msg.id << ", " << msg.payload_size << "]";
 }
 
 std::ostream& operator<<(std::ostream& out, const hlcp_packet_t& p)
@@ -52,7 +49,11 @@ std::ostream& operator<<(std::ostream& out, const hlcp_packet_t& p)
 
 std::ostream& operator<<(std::ostream& out, const hlcp_command_t& c)
 {
-    out << "cmd:" << "[" << c.id() << ", " << c.param_size() << ", ";
-    out << std::hex << c.payload() << std::dec << c.payload_size() << "]";
+    out << "cmd:" << "[" << c.name() << "(" << c.id() << "), " << c.param_size();
+    if (c.payload())
+    {
+        out << ", " << c.payload() << " " << c.payload_size();
+    }
+    out << "]";
     return out;
 }

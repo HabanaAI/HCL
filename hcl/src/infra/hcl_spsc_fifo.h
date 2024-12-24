@@ -84,6 +84,10 @@ public:
         return m_watermark & mask;
     }
 
+    inline constexpr uint32_t getCapacity() const { return CAPACITY; }
+
+    inline std::array<uint32_t, CAPACITY>& getBuf() { return m_buf; };
+
     inline bool isEmpty() { return m_ci >= m_pi; }
 
     inline bool isFull() { return getCi() == getPi() && !isEmpty(); }

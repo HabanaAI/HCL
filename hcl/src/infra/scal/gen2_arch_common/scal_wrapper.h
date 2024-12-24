@@ -34,7 +34,6 @@ public:
      *
      * @throw ScalErrorException
      */
-    Gen2ArchScalWrapper(scal_handle_t deviceHandle, ScalJsonNames& scalNames);
     Gen2ArchScalWrapper(int fd, ScalJsonNames& scalNames);
     Gen2ArchScalWrapper(Gen2ArchScalWrapper&&)                 = delete;
     Gen2ArchScalWrapper(const Gen2ArchScalWrapper&)            = delete;
@@ -47,7 +46,7 @@ public:
      *
      * @throw ScalErrorException
      */
-    CgComplex getCgInfo(std::string cgName) const;
+    CgComplex getCgInfo(const std::string& cgName) const;
 
     /**
      * @brief Get the Sm Info object
@@ -161,10 +160,8 @@ private:
      */
     void initSchedulersMap();
 
-    scal_monitor_pool_handle_t                    m_monPoolHandle = {0};
-    scal_pool_handle_t                            m_mpHandle      = {0};
-    scal_memory_pool_info                         m_mpInfo = {0};  // Currently HCL will holds only host memory pool
-    scal_monitor_pool_info                        m_monPoolInfo = {0};
+    scal_pool_handle_t                            m_mpHandle = {0};
+    scal_memory_pool_info                         m_mpInfo   = {0};  // Currently HCL will holds only host memory pool
     ScalJsonNames&                                m_scalNames;
     std::map<scal_core_handle_t, SchedulersIndex> m_schedulersHandleToCGGIndex;
     std::vector<unsigned>                         m_scaleUpNicEngines;

@@ -57,6 +57,7 @@ public:
     static const unsigned getFactor(const e_devicePoolID poolIdx);
 
 private:
+    static unsigned s_gcfgFactor;
     // Granularity requirements for buffers:
     // 8 for scaleup buffers pool
     // All values must be a power of 2

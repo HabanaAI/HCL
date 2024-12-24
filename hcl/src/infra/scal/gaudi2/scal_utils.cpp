@@ -34,7 +34,7 @@ unsigned hcl::Gaudi2HclScalUtils::getSOBIndex(uint32_t addr)
     return getSOBInfo(addr).sobId;
 }
 
-sob_info hcl::Gaudi2HclScalUtils::getSOBInfo(uint32_t addr)
+SobInfo hcl::Gaudi2HclScalUtils::getSOBInfo(uint32_t addr)
 {
     static constexpr uint32_t MAX_SIZE    = DCORE0_SYNC_MNGR_OBJS_MAX_OFFSET;
     static constexpr uint32_t DCORE0_BASE = mmDCORE0_SYNC_MNGR_OBJS_BASE & 0xffffffff;
@@ -42,7 +42,7 @@ sob_info hcl::Gaudi2HclScalUtils::getSOBInfo(uint32_t addr)
     static constexpr uint32_t DCORE2_BASE = mmDCORE2_SYNC_MNGR_OBJS_BASE & 0xffffffff;
     static constexpr uint32_t DCORE3_BASE = mmDCORE3_SYNC_MNGR_OBJS_BASE & 0xffffffff;
 
-    sob_info ret = {0};
+    SobInfo ret = {0};
 
     if (addr >= DCORE0_BASE && addr < DCORE0_BASE + MAX_SIZE)
     {
@@ -84,9 +84,13 @@ std::string hcl::Gaudi2HclScalUtils::printSOBInfo(uint32_t addr)
     return printSOBInfo(getSOBInfo(addr));
 }
 
-std::string hcl::Gaudi2HclScalUtils::printSOBInfo(sob_info sob)
+std::string hcl::Gaudi2HclScalUtils::printSOBInfo(SobInfo sob)
 {
     return "DCORE" + std::to_string(sob.dcore) + "_SYNC_MNGR_OBJS SOB_OBJ_" + std::to_string(sob.sobId);
+}
+std::string hcl::Gaudi2HclScalUtils::printMonArmInfo(unsigned smIdx, uint32_t monIdx)
+{
+    return "DCORE" + std::to_string(smIdx) + "_SYNC_MNGR_OBJS MON_ARM_" + std::to_string(monIdx);
 }
 
 // return the gaudi2 value from QMAN FW gaudi2_arc_host_packets.h

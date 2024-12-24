@@ -10,8 +10,8 @@ public:
     virtual int io_event(uint32_t events) override;  // for accept() only
 
 public:
-    acceptor_t() : async_socket_t() { events_ |= EPOLLIN; }  // for accept
-    acceptor_t(socket_op_notify_t& n) : async_socket_t(n) { events_ |= EPOLLIN; }
+    acceptor_t() : async_socket_t() { events_ = EPOLLIN | EPOLLONESHOT; }  // for accept
+    acceptor_t(socket_op_notify_t& n) : async_socket_t(n) { events_ = EPOLLIN | EPOLLONESHOT; }
 
     bool listen(const sockaddr_t& addr);
 

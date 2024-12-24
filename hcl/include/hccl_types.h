@@ -65,7 +65,8 @@ typedef enum
     hcclBusy,
     hcclNumResults,
     hcclStreamError,
-    hcclSynapseTerminated
+    hcclSynapseTerminated,
+    hcclPortDown
 } hcclResult_t;
 
 /* Data types */

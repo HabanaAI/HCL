@@ -219,5 +219,5 @@ float getProcMemConsInGB()
 
     return KB2GB(procMem);
 }
-
-volatile hcclResult_t g_status = hcclSuccess;
+bool                  LogContext::s_logCtxtCfg = GCFG_HCL_LOG_CONTEXT.value();
+volatile hcclResult_t g_status                 = hcclSuccess;

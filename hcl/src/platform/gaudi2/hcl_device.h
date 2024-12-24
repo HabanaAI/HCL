@@ -15,7 +15,8 @@
 #include "hlthunk.h"                                   // for hlthunk_device...
 #include "infra/scal/gen2_arch_common/scal_manager.h"  // for Gen2ArchScalMa...
 #include "gaudi2_nic.h"
-#include "qp_manager.h"
+#include "qp_manager_scaleout.h"
+#include "qp_manager_scaleup.h"
 #include "platform/gen2_arch_common/hcl_device_config.h"  // for HclDeviceConfig
 #include "interfaces/hcl_hal.h"                           // for HalPtr
 #include "platform/gaudi2/context_manager.h"              // for Context...
@@ -44,14 +45,14 @@ public:
 
     ContextManager& getContextManager();
 
-    virtual uint8_t  getPeerNic(HCL_Rank rank, HCL_Comm comm, uint8_t port) override;
+    virtual uint8_t  getPeerNic(const HCL_Rank rank, const HCL_Comm comm, const uint8_t port) override;
     virtual unsigned getSenderWqeTableSize() override;
     virtual unsigned getReceiverWqeTableSize() override;
 
-    virtual hcclResult_t openQpsHlsScaleOut(HCL_Comm comm, const UniqueSortedVector& outerRanks) override;
-    hcclResult_t         updateQps(HCL_Comm comm) override;
+    virtual hcclResult_t openQpsScaleOut(HCL_Comm comm, const UniqueSortedVector& outerRanks) override;
+    hcclResult_t         connectCommQps(HCL_Comm comm) override;
 
-    void openQpToRemoteRanks(const HCL_Comm comm, const HCL_Rank remoteRank);
+    void openQpToSingleRank(const HCL_Comm comm, const HCL_Rank remoteRank);
 
     virtual void updateDisabledPorts() override;
 
@@ -61,11 +62,14 @@ protected:
     std::unique_ptr<ContextManager> m_contextManager;
 
 private:
-    hcclResult_t  openQps(HCL_Comm comm, const UniqueSortedVector& ranks);
+    hcclResult_t  openQpToRemoteRanks(const HCL_Comm comm, const UniqueSortedVector& ranks);
     void          setEdmaEngineGroupSizes() override;
     HclConfigType getConfigType() override { return HLS2; };
 
-    virtual void     registerQps(HCL_Comm comm, HCL_Rank remoteRank, const QpsVector& qps, int nic) override;
+    virtual void     addQPsToQPManagerDB(const HCL_Comm   comm,
+                                         const HCL_Rank   remoteRank,
+                                         const QpsVector& qps,
+                                         const size_t     nic) override;
     virtual bool     isSender(unsigned qpi) override;
     virtual uint32_t getQpi(HCL_Comm comm, uint8_t nic, HCL_Rank remoteRank, uint32_t qpn, uint8_t qpSet) override;
 

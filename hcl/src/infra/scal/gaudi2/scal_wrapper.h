@@ -20,7 +20,6 @@ namespace hcl
 class Gaudi2ScalWrapper : public Gen2ArchScalWrapper
 {
 public:
-    Gaudi2ScalWrapper(scal_handle_t deviceHandle, ScalJsonNames& scalNames);
     Gaudi2ScalWrapper(int fd, ScalJsonNames& scalNames);
     Gaudi2ScalWrapper(Gaudi2ScalWrapper&&)                 = delete;
     Gaudi2ScalWrapper(const Gaudi2ScalWrapper&)            = delete;

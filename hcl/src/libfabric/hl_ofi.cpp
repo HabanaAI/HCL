@@ -22,7 +22,6 @@
 #include "rdma/fi_errno.h"               // for FI_ENODATA
 #include "hl_ofi_component.h"            // for ofi_component_t, ofiComm_t, list...
 #include "hl_ofi_rdm_component.h"        // for ofi_rdm_component_t
-#include "hl_ofi_param.h"                // for hl_ofi_exclude_tcp_if
 #include "hl_topo.h"
 #include <sys/utsname.h>  // for getting kernel version
 
@@ -265,48 +264,31 @@ std::optional<ofi_t::CORE_PROVIDER> ofi_t::get_core_provider(const std::string& 
     return std::nullopt;
 }
 
-static int in_list(const char* const item, const char* const list)
+static bool is_tcp_interface_excluded(const char* const interface)
 {
-    int   ret   = 0;
-    char* token = NULL;
-
-    char* list_temp = strdup(list);
-    if (list_temp == NULL && list != NULL)
+    try
     {
-        LOG_ERR(HCL_OFI, "Unable to duplicate list");
-        ret = hcclLibfabricError;
-        free(list_temp);
-        return ret;
+        std::regex regex(GCFG_HCL_HNIC_TCP_EXCLUDE_IF.value());
+        return std::regex_match(interface, regex);
     }
-
-    token = strtok((char*)list_temp, ",");
-    while (token)
+    catch (const std::regex_error& e)
     {
-        if (!strncmp(item, token, strlen(token)))
-        {
-            ret = hcclLibfabricError;
-            free(list_temp);
-            return ret;
-        }
-        token = strtok(NULL, ",");
+        LOG_ERR(HCL_OFI, "TCP exclude regex failed: {}", e.what());
+        return false;
     }
-
-    free(list_temp);
-    return ret;
 }
 
 bool ofi_t::exclude_tcp_provider(const fi_info* const provider, const uint64_t expected_mem_tag_format)
 {
-    char*             tcp_if_exclude_list = hl_ofi_exclude_tcp_if();
-    const char* const name                = provider->domain_attr->name;
-    const uint32_t    addr_format         = provider->addr_format;
-    const uint64_t    mem_tag_format      = provider->ep_attr->mem_tag_format;
+    const char* const name           = provider->domain_attr->name;
+    const uint32_t    addr_format    = provider->addr_format;
+    const uint64_t    mem_tag_format = provider->ep_attr->mem_tag_format;
 
     auto                     desired_tcp_if = get_desired_tcp_if_from_env_var();
     std::vector<std::string> parsed_ifs_prefix_list;
     parse_user_tcp_ifs(desired_tcp_if, parsed_ifs_prefix_list);
 
-    if (in_list(name, tcp_if_exclude_list))
+    if (is_tcp_interface_excluded(name))
     {
         LOG_HCL_DEBUG(HCL_OFI, "Filtering out provider {} due to explicit exclusion request", std::string(name));
         return true;
@@ -649,8 +631,8 @@ int ofi_t::init()
 
     if (info->domain_attr->mr_mode & FI_MR_LOCAL)
     {
-        // currently, only gaudi-direct and verbs provider require MR_LOCAL
-        if (isGaudiDirect() || isVerbs())
+        // currently, only verbs provider (with or without gaudi-direct) require MR_LOCAL
+        if (isVerbs())
         {
             LOG_HCL_DEBUG(HCL_OFI,
                           "Provider {} requires registration of local memory buffers",

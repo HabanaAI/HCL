@@ -32,15 +32,8 @@ public:
 
     virtual uint32_t getMaxEDMAs() const = 0;
 
-    virtual uint32_t getDefaultBoxSize() const          = 0;
-    virtual uint32_t getDefaultScaleupGroupSize() const = 0;
-
-    virtual uint64_t getFlushPCIeReg() const = 0;
-
     virtual uint32_t getMaxQpPerInternalNic() const = 0;
     virtual uint32_t getMaxQpPerExternalNic() const = 0;
-
-    virtual const DevicesSet& getHwModules() const = 0;
 };
 
 using HalPtr = std::shared_ptr<Hal>;

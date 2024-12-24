@@ -7,5 +7,5 @@ class HclDeviceConfig;
 class HclDeviceConfigFactory
 {
 public:
-    static std::unique_ptr<HclDeviceConfig> createDeviceConfig();
+    static std::unique_ptr<HclDeviceConfig> createDeviceConfig(void* device, void* context);
 };

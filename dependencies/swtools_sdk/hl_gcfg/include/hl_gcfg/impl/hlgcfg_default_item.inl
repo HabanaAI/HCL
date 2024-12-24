@@ -1,6 +1,7 @@
 #pragma once
 #include "hl_gcfg/hlgcfg.hpp"
 #include "hlgcfg_log.hpp"
+#include "hl_gcfg/string_utils.hpp"
 namespace hl_gcfg{
 HLGCFG_INLINE_NAMESPACE{
 

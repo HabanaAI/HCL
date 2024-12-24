@@ -24,7 +24,8 @@ void serializeAllocBarrierCommand(hcl::ScalStreamBase&                          
                                   unsigned                                                 schedIdx,
                                   uint32_t                                                 completionGroupIndex,
                                   uint32_t                                                 requiredSobs,
-                                  llvm_vecsmall::SmallVector<uint32_t, MAX_STREAM_TO_INC>* fences = nullptr);
+                                  llvm_vecsmall::SmallVector<uint32_t, MAX_STREAM_TO_INC>* fences        = nullptr,
+                                  const LBWBurstData_t*                                    destBurstData = nullptr);
 
 void serializeFenceDecCommand(hcl::ScalStreamBase& scalStream,
                               unsigned             schedIdx,
@@ -36,24 +37,16 @@ void serializeFenceIncCommand(hcl::ScalStreamBase& scalStream,
                               uint32_t             fenceIndex,
                               uint32_t             target = 1);
 
-void serializeLbwWriteCommand(hcl::ScalStreamBase& scalStream,
-                              unsigned             schedIdx,
-                              uint32_t             destination,
-                              uint32_t             data,
-                              bool                 blockUntilCompletion = false);
+void serializeLbwWriteCommand(hcl::ScalStreamBase& scalStream, unsigned schedIdx, uint32_t destination, uint32_t data);
 
 void serializeLbwWriteWithFenceDecCommand(hcl::ScalStreamBase& scalStream,
                                           unsigned             schedIdx,
                                           uint32_t             destination,
                                           uint32_t             data,
                                           uint32_t             fenceIndex,
-                                          uint32_t             fenceTarget          = 1,
-                                          bool                 blockUntilCompletion = false);
+                                          uint32_t             fenceTarget = 1);
 
-void serializeLbwBurstWriteCommand(hcl::ScalStreamBase&      scalStream,
-                                   unsigned                  schedIdx,
-                                   const LBWBurstDestData_t& destData,
-                                   bool                      blockUntilCompletion = false);
+void serializeLbwBurstWriteCommand(hcl::ScalStreamBase& scalStream, unsigned schedIdx, const LBWBurstData_t& destData);
 
 void serializeDmaCommand(hcl::ScalStreamBase& scalStream,
                          unsigned             schedIdx,

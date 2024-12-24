@@ -266,13 +266,21 @@ struct sched_arc_cmd_dispatch_cme_ecb_list_t {
 	/**<
 	 * Engine Group type of CME
 	 */
-	uint32_t :7;
+	uint32_t :6;
 	/**<
 	 * Reserved
+	 */
+	uint32_t size_multiplier:1;
+	/**<
+	 * ECB List Size Multiplier.
+	 * [1]: ecb_list_size (next 16 bits) should be multipled by 256
+	 * to arrive at the actual size in bytes
+	 * [0]: ecb_list_size (next 16 bits) is actual size of list in bytes
 	 */
 	uint32_t ecb_list_size:16;
 	/**<
 	 * ECB List Size
+	 * Actual size of Ecb List depends on multipler above
 	 */
 	struct {
 		uint32_t :8;
@@ -718,6 +726,24 @@ struct sched_arc_fence_id_arr_t {
 } __attribute__ ((aligned(4), __packed__));
 
 /**
+ * \struct  sched_arc_lbw_write_t
+ * \brief   structure to store address and data for lbw write
+ * \details address and data to be written through the lbw
+ */
+struct sched_arc_lbw_write_t {
+	uint32_t addr;
+	/**<
+	 * destination LBU address
+	 * Note: its LBU address and not LBW, it should start with
+	 * 0xFxxxxxx
+	 */
+	uint32_t data;
+	/**<
+	 * source data to be written
+	 */
+} __attribute__ ((aligned(4), __packed__));
+
+/**
  * \struct  sched_arc_cmd_alloc_nic_barrier_t
  * \brief   allocate NIC barrier
  * \details allocate required barrier resources so that barrier can be sent
@@ -740,11 +766,15 @@ struct sched_arc_cmd_alloc_nic_barrier_t {
 	/**<
 	 * required number of sobs to be allocated
 	 */
-	uint32_t cmd_size_bytes:4;
+	uint32_t cmd_size_bytes:6;
 	/**<
 	 * Size of command in bytes
 	 */
-	uint32_t rsvd:8;
+	uint32_t num_lbw_write:5;
+	/**<
+	 * Number of lbw writes
+	 */
+	uint32_t rsvd:1;
 	/**<
 	 * Reserved
 	 */
@@ -752,6 +782,10 @@ struct sched_arc_cmd_alloc_nic_barrier_t {
 	/**<
 	 * array of fence Ids. Each element can contain upto 4 fence IDs.
 	 * Uses ACP fence
+	 */
+	struct sched_arc_lbw_write_t lbw_addr_data[0];
+	/**
+	 * array of data for LBW burst write operation
 	 */
 } __attribute__ ((aligned(4), __packed__));
 
@@ -907,18 +941,7 @@ struct sched_arc_cmd_lbw_write_t {
 	 */
 	uint32_t target:6;
 	/**< target value of the fence */
-	uint32_t block_next:1;
-	/**<
-	 * Block execution of next command by putting the stream into
-	 * suspended state
-	 * TODO: Remove this
-	 */
-	uint32_t wait_for_completion:1;
-	/**<
-	 * Wait until current write is completed
-	 * TODO: Remove this
-	 */
-	uint32_t reserved:12;
+	uint32_t reserved:14;
 	/**<
 	 * Reserved
 	 */
@@ -1131,13 +1154,10 @@ struct sched_arc_cmd_nic_edma_ops_t {
 	 * Command Size in Bytes, it includes the dword that
 	 * contains the size field
 	 */
-	struct arc_cmd_nic_edma_ops_v3_t edma_ops_v3[0];
 	struct arc_cmd_update_edma_nic_ctxt_v3_t edma_ctxt_v3[0];
-	struct arc_cmd_nic_edma_ops_cdc_t edma_cdc[0];
 	struct arc_cmd_nic_edma_sibo_ops_v3_t sibo_ops_v3[0];
 	struct arc_cmd_nic_edma_sibo_memset_v3_t sibo_memset_v3[0];
 	struct arc_cmd_nic_edma_lin_ops_v3_t lin_ops_v3[0];
-	struct arc_cmd_nic_edma_lin_memset_v3_t lin_memset_v3[0];
 	struct arc_cmd_nic_edma_lin_memset_v3_2_t lin_memset[0];
 	/**<
 	 * NIC EDMA command payload that needs to be dispatched

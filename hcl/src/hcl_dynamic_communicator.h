@@ -18,6 +18,34 @@
 class HclStaticBuffersManager;
 class IHclDevice;
 class Gen2ArchServerDef;
+class Gen2ArchServerConnectivity;
+
+class CommConnectivity
+{
+public:
+    CommConnectivity(const HCL_Comm hclComm, const Gen2ArchServerConnectivity& serverConnectivity);
+    CommConnectivity(CommConnectivity&)  = delete;
+    CommConnectivity(CommConnectivity&&) = delete;
+
+    void updateScaleOutPortsMask(const Gen2ArchServerConnectivity& serverConnectivity,
+                                 const nics_mask_t                 operationalScaleOutPortsMask);
+
+    nics_mask_t getExternalPortsMask() const { return m_enabledExternalPortsMask; }
+    nics_mask_t getScaleOutPorts() const { return m_enabledScaleoutPorts; }
+    uint16_t    getNumScaleOutPorts() const { return m_enabledScaleoutPorts.count(); }
+    uint16_t    getScaleoutSubPortIndex(const uint16_t port) const { return m_enabledScaleoutSubPorts.at(port); }
+
+private:
+    void setPortsMasks(const Gen2ArchServerConnectivity& serverConnectivity,
+                       const nics_mask_t                 operationalScaleOutPortsMask);
+    void setNumScaleOutPorts(const Gen2ArchServerConnectivity& serverConnectivity);
+
+    const HCL_Comm m_comm;
+
+    nics_mask_t                            m_enabledExternalPortsMask {};  // After masking by LKD & HCL & NICs-Down
+    nics_mask_t                            m_enabledScaleoutPorts {};      // After LKD, HCL Mask
+    std::unordered_map<uint16_t, uint16_t> m_enabledScaleoutSubPorts;      // Key => Port, Value => max sub port index
+};
 
 class HclDynamicCommunicator
 {
@@ -65,7 +93,7 @@ public:
     uint16_t                  getMyScaleupGroup();
     const UniqueSortedVector& getRanks() const;
     uint32_t                  getCommSize();
-    uint32_t                  getScaleupGroupSize();
+    uint32_t                  getScaleupGroupSize() const;
     const uint64_t            getCollectiveCtr() const;
     void                      incCollectiveCtr();
     const uint64_t            incSendCtr(int peer);
@@ -80,6 +108,10 @@ public:
     hcclResult_t      prepareAndValidateComm(bool isLoopbackModeOrNullSubmission = false);
     void              AddNewRemoteDevice(HCL_Rank newRank);
     const std::string getCommUniqueId() const;
+
+    Gen2ArchServerDef& getServerDef() { return m_serverDef; };
+
+    void getAsyncError(hcclResult_t* asyncError);
 
     HclRemoteDeviceArray m_remoteDevices;
     RankInfo             m_rankInfo           = {};
@@ -100,9 +132,13 @@ public:
     std::vector<uint64_t> m_streamLatestLongSo;
 
     operator HCL_Comm() const { return m_commId; }
+    const CommConnectivity& getCommConnectivity() const { return m_commConnectivity; }
+    CommConnectivity&       getCommConnectivity() { return m_commConnectivity; }
 
 private:
-    HCL_Comm     m_commId;
+    HCL_Comm         m_commId;
+    CommConnectivity m_commConnectivity;
+
     hcclResult_t validateComm();
     hcclResult_t validateRankIds();
     /**
@@ -132,4 +168,5 @@ private:
     std::vector<HCL_Rank> m_remoteRanks   = {};
     uint64_t              m_collectiveCtr = 0;
     uint64_t              m_sliceSize;
+    unsigned              m_maxScaleOutQpSetsNum;
 };

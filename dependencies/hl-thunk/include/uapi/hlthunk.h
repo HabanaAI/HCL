@@ -49,6 +49,7 @@ enum hlthunk_device_name {
 	HLTHUNK_DEVICE_FS1 = 9,
 	HLTHUNK_DEVICE_GAUDI2C = 10,
 	HLTHUNK_DEVICE_GAUDI2D = 11,
+	HLTHUNK_DEVICE_GAUDI3D = 12,
 	HLTHUNK_DEVICE_MAX
 };
 
@@ -1192,6 +1193,17 @@ hlthunk_public int hlthunk_get_dram_usage(int fd,
  * otherwise - returns Linux error code.
  */
 hlthunk_public int hlthunk_get_device_status_info(int fd);
+
+/**
+ * This function retrieves the status of a specific device with an option to stall any upcoming
+ * soft resets. It is useful to ensure that the status will remain the same for a certain amount
+ * of time after polling.
+ * @param fd file descriptor handle of habanalabs main device
+ * @param soft_reset_stall whether to stall any upcoming soft reset after the polling
+ * @return enum value that represents the device's status in case it was acquired,
+ * otherwise - returns Linux error code.
+ */
+hlthunk_public int hlthunk_get_device_status_info_telemetry(int fd, bool soft_reset_stall);
 
 /**
  * This function checks whether a specific device is idle
@@ -2644,29 +2656,49 @@ hlthunk_public uint64_t hlthunk_nic_xe_device_memory_alloc(int fd, uint32_t vm, 
 hlthunk_public int hlthunk_nic_xe_device_memory_free(int fd, uint64_t handle);
 
 /**
- * This function maps memory for Xe device. The given device virtual address will be mapped to the
+ * This function binds memory for Xe device. The given device virtual address will be bound to the
  * given device or host memory. Either the device memory handle or the host memory pointer should
  * be 0 or NULL respectively.
  * @param fd file descriptor handle of the device
  * @param vm ID of the parent VM
- * @param handle opaque handle representing the device memory to map
- * @param hva pointer to host memory to map
- * @param dva device virtual memory to map
- * @param size requested memory size to map
+ * @param handle opaque handle representing the device memory to bind
+ * @param hva pointer to host memory to bind
+ * @param dva device virtual memory to bind
+ * @param size requested memory size to bind
  * @return 0 for success, a negative value for failure
  */
-hlthunk_public int hlthunk_nic_xe_memory_map(int fd, uint32_t vm, uint64_t handle, void *hva,
-						uint64_t dva, uint64_t size);
+hlthunk_public int hlthunk_nic_xe_memory_bind(int fd, uint32_t vm, uint64_t handle, void *hva,
+					      uint64_t dva, uint64_t size);
 
 /**
- * This function unmaps memory for Xe device.
+ * This function unbinds memory for Xe device.
  * @param fd file descriptor handle of the device
  * @param vm ID of the parent VM
- * @param dva device virtual memory to unmap
- * @param size requested memory size to unmap
+ * @param dva device virtual memory to unbind
+ * @param size requested memory size to unbind
  * @return 0 for success, a negative value for failure
  */
-hlthunk_public int hlthunk_nic_xe_memory_unmap(int fd, uint32_t vm, uint64_t dva, uint64_t size);
+hlthunk_public int hlthunk_nic_xe_memory_unbind(int fd, uint32_t vm, uint64_t dva, uint64_t size);
+
+/**
+ * This function memory maps memory for Xe device. The given buffer will be memory mapped into the
+ * processes memory.
+ * @param fd file descriptor handle of the device
+ * @param handle opaque handle representing the device memory to map
+ * @param size requested memory size to map
+ * @return pointer for success, MMAP_FAILED for failure and errno is set to indicate the cause of
+ *         the error.
+ */
+hlthunk_public void *hlthunk_nic_xe_device_memory_map(int fd, uint32_t handle, size_t size);
+
+/**
+ * This function unbinds memory for Xe device.
+ * @param addr memory address to unmap
+ * @param size requested memory size to unmap
+ * @return 0 for success, a negative value for failure and errno is set to indicate the cause of the
+ *         error.
+ */
+hlthunk_public int hlthunk_nic_xe_device_memory_unmap(void *addr, size_t size);
 
 /**
  * This function retrieves the signed device information.
@@ -2688,6 +2720,16 @@ hlthunk_public int hlthunk_get_dev_info_signed(int fd, uint32_t nonce,
  */
 hlthunk_public int hlthunk_get_time_sync_per_die_info(int fd, uint32_t die_index,
 					struct hlthunk_time_sync_info *info);
+
+/**
+ * This function reports the user’s memory consumption in bytes alongside timestamp in seconds.
+ * @param fd file descriptor handle of habanalabs main device
+ * @param used_mem_bytes device used memory in bytes
+ * @param timestamp_sec time stamp in seconds
+ * @return 0 for success, negative value for failure
+ */
+hlthunk_public int hlthunk_set_memory_consumption(int fd, uint64_t used_mem_bytes,
+						  uint64_t timestamp_sec);
 
 #ifdef __cplusplus
 }   //extern "C"

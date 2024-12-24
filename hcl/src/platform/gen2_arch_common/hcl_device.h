@@ -5,6 +5,7 @@
 #include <set>            // for set
 #include <unordered_map>  // for unordered_map
 #include <unordered_set>  // for unordered_set
+#include <memory>         // for unique_ptr
 
 #include "hl_logger/hllog_core.hpp"  // for logger
 
@@ -19,6 +20,7 @@
 #include "platform/gen2_arch_common/scaleout_provider.h"
 #include "platform/gen2_arch_common/qp_manager.h"
 #include "platform/gen2_arch_common/server_connectivity_types.h"  // for DEFAULT_COMM_ID
+#include "platform/gen2_arch_common/nics_events_handler_impl.h"   // for NicsEventHandler
 
 class Gen2ArchDevicePortMapping;
 class HclCommandsGen2Arch;
@@ -28,10 +30,10 @@ class DeviceBufferManager;
 class QPManager;
 class Gen2ArchServerConnectivity;
 class Gen2ArchServerDef;
+class IntermediateBufferContainer;
 
 namespace hcl
 {
-class IntermediateBufferContainer;
 class Gen2ArchScalManager;
 };  // namespace hcl
 
@@ -51,11 +53,11 @@ public:
     HclDeviceGen2Arch(const HclDeviceGen2Arch&)            = delete;
     HclDeviceGen2Arch& operator=(const HclDeviceGen2Arch&) = delete;
 
-    virtual void setTraceMarker(const synStreamHandle stream_handle, uint32_t val);
+    virtual void setTraceMarker(const synStreamHandle stream_handle, uint32_t val) override;
     virtual nics_mask_t
     getActiveNics(HCL_Rank fromRank, HCL_Rank toRank, int physicalQueueOffset, HCL_Comm comm) override;
 
-    virtual nics_mask_t getAllPorts(const int deviceId, const HCL_Comm comm) const;
+    virtual nics_mask_t getAllPorts(const int deviceId, const nics_mask_t enabledExternalPortsMask) const;
     virtual bool        isScaleOutPort(const uint16_t port, const HCL_Comm comm = DEFAULT_COMM_ID) const override;
 
     virtual hcclResult_t onNewCommStart(HCL_Comm comm, uint32_t commSize, HclConfig& config) override;
@@ -77,13 +79,13 @@ public:
      */
     void openAllRequiredNonPeerQPs(const HCL_Comm comm, const std::set<HCL_Rank>& remoteRanks);
 
-    virtual uint32_t createQp(uint32_t port, uint8_t qpId) override;
+    virtual uint32_t createQpnInLKD(const uint32_t port, const uint8_t qpId) override;
 
     void                 updateRankHasQp(const HCL_Comm comm, const HCL_Rank remoteRank);
     DeviceBufferManager& getSIB(const uint32_t streamIndex);
     uint64_t             getSIBBufferSize() const;
     virtual void         getLagInfo(const uint16_t nic, uint8_t& lagIdx, uint8_t& lastInLag, const HCL_Comm comm);
-    virtual hcclResult_t openQpsHlsScaleOut(HCL_Comm comm, const UniqueSortedVector& outerRanks) = 0;
+    virtual hcclResult_t openQpsScaleOut(HCL_Comm comm, const UniqueSortedVector& outerRanks) = 0;
     virtual HclCommandsGen2Arch& getGen2ArchCommands();
     ScaleoutProvider*            getScaleOutProvider();
     const std::set<HCL_Rank>&    getOpenScaleOutRanks(const HCL_Comm comm);
@@ -101,13 +103,6 @@ public:
     virtual void destroyQp(uint32_t port, uint32_t qpn) override;
     void         dfa(hl_logger::LoggerSPtr logger);
 
-    /**
-     * @brief Maps all HBM allocated by HCL to a dmabuf
-     *
-     * @param device
-     * @return hcclResult_t
-     */
-    void         exportHBMMR();
     virtual bool isACcbHalfFullForDeviceBenchMark(const unsigned archStreamIdx) override;
 
     virtual uint64_t getDRAMSize() override;
@@ -115,30 +110,42 @@ public:
 
     virtual void setGaudiDirect() override;
 
-    hcl::IntermediateBufferContainer* m_sibContainer = nullptr;
-    HclDeviceControllerGen2Arch&      m_deviceController;
+    std::unique_ptr<IntermediateBufferContainer> m_sibContainer;
+    HclDeviceControllerGen2Arch&                 m_deviceController;
 
     SignalsCalculator& getSignalsCalculator() const { return *m_signalsCalculator; }
 
-protected:
-    virtual void registerQps(HCL_Comm comm, HCL_Rank remoteRank, const QpsVector& qps, int nic) = 0;
+    virtual bool      supportNicFaultTolerance() const { return false; }
+    NicsEventHandler& getNicsFaultHandler() { return *m_nicsEventsHandler; }
 
-    virtual uint32_t getQpi(HCL_Comm comm, uint8_t nic, HCL_Rank remoteRank, uint32_t qpn, uint8_t qpSet) = 0;
+    void
+    getAsyncError(const std::vector<HCL_HwModuleId> remoteModuleIDs, const HCL_Comm comm, hcclResult_t* asyncError);
+
+protected:
+    virtual void
+    addQPsToQPManagerDB(const HCL_Comm comm, const HCL_Rank remoteRank, const QpsVector& qps, const size_t nic) = 0;
+
+    virtual uint32_t
+    getQpi(const HCL_Comm comm, const uint8_t nic, const HCL_Rank remoteRank, uint32_t qpn, uint8_t qpSet) = 0;
     virtual uint32_t getDestQpi(const unsigned qpi, const unsigned nic) const;
     virtual bool     isSender(unsigned _qpi) = 0;
 
-    virtual hcclResult_t openQpsHLS(HCL_Comm comm);
-    virtual hcclResult_t openQpsHlsScaleUp(HCL_Comm comm) = 0;
+    virtual hcclResult_t openQpsHLS(const HCL_Comm comm);
+    virtual hcclResult_t openQpsHlsScaleUp(const HCL_Comm comm) = 0;
 
     virtual void allocateQPDBStorage(const HCL_Comm comm);
 
     void checkSignals();
 
-    virtual bool isNicUp(uint32_t nic) override;
-    virtual hcclResult_t
-    setupQps(HCL_Comm comm, HCL_Rank rank, uint32_t qpId, uint32_t port, uint32_t qpn, uint8_t qpSet) override;
+    virtual bool         isNicUp(uint32_t nic) override;
+    virtual hcclResult_t establishQpConnectionWithPeerQp(HCL_Comm comm,
+                                                         HCL_Rank rank,
+                                                         uint32_t qpId,
+                                                         uint32_t port,
+                                                         uint32_t qpn,
+                                                         uint8_t  qpSet) override;
 
-    void             initRemoteNicsLoopback(HCL_Comm comm);
+    void             initRemoteNicsLoopback(const HCL_Comm comm);
     virtual void     setEdmaEngineGroupSizes() = 0;
     virtual uint16_t getMaxNumScaleUpPortsPerConnection(const HCL_Comm hclCommId = DEFAULT_COMM_ID) const final;
 
@@ -161,6 +168,8 @@ protected:
 
     Gen2ArchServerDef&          m_serverDef;
     Gen2ArchServerConnectivity& m_serverConnectivity;
+
+    std::unique_ptr<NicsEventHandler> m_nicsEventsHandler = nullptr;
 
     unsigned edmaEngineGroupSizes[2] = {
         0,

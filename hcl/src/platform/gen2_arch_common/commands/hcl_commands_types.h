@@ -1,26 +1,15 @@
 #pragma once
 
-#include "llvm/small_vector.h"  // for SmallVector
 #include "infra/scal/gen2_arch_common/scal_stream.h"
 #include "platform/gen2_arch_common/types.h"
 #include "hcl_api_types.h"
 
 class HclDynamicCommunicator;
-struct LBWBurstAddressData
-{
-    uint32_t address;
-    uint32_t data;
-};
-
-constexpr int maxAddressDataBurstSize = 32;
-
-typedef llvm_vecsmall::SmallVector<LBWBurstAddressData, maxAddressDataBurstSize> LBWBurstDestData_t;
 struct DmaCmdParams
 {
     DmaCmdParams() {}
 
     explicit DmaCmdParams(unsigned         schedIdx,
-                          uint32_t         dmaType,
                           uint32_t         soAddressLSB,
                           uint32_t         soAddressLSB2,
                           HCL_CollectiveOp collectiveOp,
@@ -44,7 +33,6 @@ struct DmaCmdParams
                           bool             isBFloat,
                           bool             isFirstWrite)
     : m_schedIdx(schedIdx),
-      m_dmaType(dmaType),
       m_soAddressLSB(soAddressLSB),
       m_soAddressLSB2(soAddressLSB2),
       m_collectiveOp(collectiveOp),

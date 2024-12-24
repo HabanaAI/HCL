@@ -1238,6 +1238,7 @@ enum hl_server_type {
  *                          May return 0 even though no new data is available, in that case
  *                          timestamp will be 0.
  * HL_INFO_USER_ENGINE_ERR_EVENT - Retrieve the last engine id that reported an error.
+ * HL_INFO_MEMORY_CONSUMPTION - Set the current user's memory consumption at a certain timestamp
  * HL_INFO_MODULE_PARAMS - Retrieve the device's actual values of module
  *                         parameters.
  */
@@ -1281,6 +1282,7 @@ enum hl_server_type {
 #define HL_INFO_USER_ENGINE_ERR_EVENT		38
 #define HL_INFO_TIME_SYNC_PER_DIE		39
 #define HL_INFO_DEV_SIGNED			40
+#define HL_INFO_MEMORY_CONSUMPTION		41
 #define HL_INFO_MODULE_PARAMS			255
 
 #define HL_INFO_VERSION_MAX_LEN			128
@@ -1416,9 +1418,11 @@ struct hl_info_hw_idle {
 	__u64 busy_engines_mask_ext[HL_BUSY_ENGINES_MASK_EXT_SIZE];
 };
 
+#define HL_SOFT_RESET_STALL_AFTER_POLLING_MS	30
+
 struct hl_info_device_status {
 	__u32 status;
-	__u32 pad;
+	__u32 soft_reset_stall;
 };
 
 struct hl_info_device_utilization {
@@ -1851,6 +1855,16 @@ struct hl_info_signed {
 	__u16 dev_info_len;
 	__u8 dev_info[SEC_DEV_INFO_BUF_SZ];
 	__u8 pad[2];
+};
+
+/*
+ * struct hl_info_memory_consumption - device memory consumption information
+ * @used_mem: used memory size in bytes
+ * @timestamp_sec: timestamp in seconds
+ */
+struct hl_info_memory_consumption {
+	__u64 used_mem;
+	__u64 timestamp_sec;
 };
 
 /**

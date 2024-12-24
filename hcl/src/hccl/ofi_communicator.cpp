@@ -8,14 +8,13 @@
 #include "hcl_utils.h"                            // for LOG_HCL_ERR, LOG_HC...
 #include "hcl_dynamic_communicator.h"             // for HclDynamicCommunicator
 #include "interfaces/hcl_unique_sorted_vector.h"  // for UniqueSortedVector
-#include "libfabric/libfabric_common.h"           // for post_recv, post_send
-#include "libfabric/mr_mapping.h"                 // for MRMapping
+#include "libfabric/libfabric_common.h"           // for ofiCommOp
 #include "libfabric/hl_ofi.h"                     // for ofi_t, OFI_UNLIKELY
 #include "libfabric/hl_ofi_component.h"           // for allConnectionComm
 #include "hcl_log_manager.h"                      // for LOG_ERR, LOG_DEBUG, LOG_INFO
 #include "infra/hcl_debug_stats.h"                // for DEBUG_STATS_...
 
-ofi_communicator::ofi_communicator() : my_rank_(-1) {}
+ofi_communicator::ofi_communicator(std::shared_ptr<MemoryRegion> mr) : my_rank_(-1), m_mr(mr) {}
 
 bool ofi_communicator::initializeCommunicator(int                       hcclRank,
                                               int                       nranks,
@@ -40,8 +39,9 @@ bool ofi_communicator::initializeCommunicator(int                       hcclRank
     m_ofi_        = hclDevice->getOfiHandle();
     m_ofiDeviceId = hclDevice->getOfiDeviceId();
     m_device_     = hclDevice;
-    m_qpSetCount  = qpSetCount;
-    my_rank_      = hcclRank;
+    // In case of multi qp per set an additional single-qp set is create for small sizes under threshold.
+    m_qpSetCount = qpSetCount + (GCFG_HCL_SINGLE_QP_PER_SET.value() ? 0 : 1);
+    my_rank_     = hcclRank;
 
     for (const HCL_Rank peer : peers)
     {
@@ -66,8 +66,6 @@ bool ofi_communicator::initializeCommunicator(int                       hcclRank
             }
         }
     }
-
-    threads_manager_.initThreads(0, my_rank_);
 
     return true;
 }
@@ -154,9 +152,11 @@ hcclResult_t ofi_communicator::sendAsync(void*                  sendbuff,
         return hcclLibfabricError;
     }
 
-    int status = post_send(m_peerRankToConnectionInfo[peer][qpSetIndex][hostConnIdx].sendComm,
+    int status = ofiCommOp(CommOp::SEND,
+                           m_peerRankToConnectionInfo[peer][qpSetIndex][hostConnIdx].sendComm,
                            sendbuff,
                            size,
+                           m_mr ? m_mr->getMRHandle() : NULL,
                            &handle->ofi.req,
                            m_ofi_,
                            compParams);
@@ -166,7 +166,6 @@ hcclResult_t ofi_communicator::sendAsync(void*                  sendbuff,
         return hcclLibfabricError;
     }
 
-    handle->isOfiReq       = true;
     handle->ofi.recvBuffer = nullptr;
     handle->ofi.size       = size;
 
@@ -189,9 +188,11 @@ hcclResult_t ofi_communicator::recvAsync(void*                  recvbuff,
         return hcclLibfabricError;
     }
 
-    int status = post_recv(m_peerRankToConnectionInfo[peer][qpSetIndex][hostConnIdx].recvComm,
+    int status = ofiCommOp(CommOp::RECV,
+                           m_peerRankToConnectionInfo[peer][qpSetIndex][hostConnIdx].recvComm,
                            recvbuff,
                            size,
+                           m_mr ? m_mr->getMRHandle() : NULL,
                            &handle->ofi.req,
                            m_ofi_,
                            compParams);
@@ -201,8 +202,6 @@ hcclResult_t ofi_communicator::recvAsync(void*                  recvbuff,
         return hcclLibfabricError;
     }
 
-    handle->isOfiReq       = true;
-    handle->ofi.ofiComm    = m_peerRankToConnectionInfo[peer][qpSetIndex][hostConnIdx].recvComm;
     handle->ofi.recvBuffer = recvbuff;
     handle->ofi.size       = size;
 
@@ -252,7 +251,6 @@ bool ofi_communicator::destroy()
             }
         }
     }
-    threads_manager_.destroy();
 
     return true;
 }

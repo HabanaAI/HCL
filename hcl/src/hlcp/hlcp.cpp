@@ -17,7 +17,7 @@ bool hlcp_t::send_command(const hlcp_command_t& cmd, uint32_t timeout_sec)
 {
     RET_ON_FALSE(send_command(cmd));
 
-    wait_condition(tx_.completed, timeout_sec);
+    wait_condition(tx_.completed, timeout_sec, cmd);
 
     return true;
 }
@@ -88,7 +88,7 @@ bool hlcp_t::recv_payload()
 
 bool hlcp_t::receive_command(hlcp_command_t& cmd)
 {
-    HLCP_LOG("{}: {}", cmd.id(), transport_->str());
+    HLCP_LOG("{}: {}", cmd, transport_->str());
 
     rx_ = cmd;
 
@@ -113,18 +113,15 @@ bool hlcp_t::receive_payload(hlcp_command_t& cmd)
     return recv_payload();
 }
 
-bool hlcp_t::inspect_header(const hlcp_packet_t& packet)
+bool hlcp_t::inspect_header()
 {
-    const magic_t& magic = *(magic_t*)packet.hdr.magic;
-
-    //
-    // called when packet header received
+    const auto& hdr   = rx_.packet.hdr;
+    const auto& magic = *(magic_t*)hdr.magic;
     //
     // check packet signature
     //
-
-    return ((magic == (magic_t)HLCP_MAGIC) && (packet.hdr.version <= HLCP_VERSION) &&
-            (packet.hdr.footer == HLCP_FOOTER));
+    return (magic == magic_t(HLCP_MAGIC)) && (hdr.version <= HLCP_VERSION) && (hdr.footer == HLCP_FOOTER) &&
+           (rx_.state != ack || (hdr.type == HLCP_PKT_ACK));
 }
 
 bool hlcp_t::check_payload()
@@ -132,7 +129,7 @@ bool hlcp_t::check_payload()
     if (rx_.packet.msg.payload_size > rx_.cmd->payload_size())
     {
         // network packet payload has more data then user expects
-        notify_->on_error(false, rx_.cmd, rx_.packet, (*this));
+        notify_->on_error(rx_.cmd, rx_.packet, (*this), "payload size mismatch");
         return false;
     }
 
@@ -151,23 +148,15 @@ void hlcp_t::on_recv(const packet_t& p, socket_base_t& s)
     }
 
     // state  == header, ack
-    if (!inspect_header(rx_.packet))
+    if (!inspect_header())
     {
-        notify_->on_error(false, rx_.cmd, rx_.packet, (*this));
+        notify_->on_error(rx_.cmd, rx_.packet, (*this), "invalid header");
         return;
     }
 
-    if (rx_.state == ack)
-    {
-        if (rx_.packet.hdr.type != HLCP_PKT_ACK)
-        {
-            notify_->on_error(false, rx_.cmd, rx_.packet, (*this));
-        }
+    if (rx_.state == ack) return;
 
-        return;
-    }
-
-    // state  == header
+    // state == header
 
     if (!rx_.cmd)
     {
@@ -179,13 +168,13 @@ void hlcp_t::on_recv(const packet_t& p, socket_base_t& s)
     // user did asked for specific command
     if (rx_.cmd->id() != rx_.packet.msg.id)
     {
-        // but different one arrived
-        notify_->on_error(false, rx_.cmd, rx_.packet, (*this));
+        // but different one has arrived
+        notify_->on_error(rx_.cmd, rx_.packet, (*this), "unexpected message id");
         return;
     }
 
     // copy command's param to user's buffer
-    *(rx_.cmd) = rx_.packet;
+    *(rx_.cmd) = rx_.packet.msg;
 
     if (check_payload())
     {

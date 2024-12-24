@@ -6,7 +6,7 @@
 #define is_expired()      (NOW() >= __expired__)
 
 #define wait_sleep 100000  // usec  - 0.1 Seconds
-#define wait_condition(cond, timeout_sec)                                                                              \
+#define wait_condition(cond, timeout_sec, reason)                                                                      \
     do                                                                                                                 \
     {                                                                                                                  \
         set_expired((timeout_sec));                                                                                    \
@@ -14,7 +14,7 @@
         {                                                                                                              \
             if (is_expired())                                                                                          \
             {                                                                                                          \
-                HLCP_ERR("timeout ({}) expired while waiting for: " #cond, timeout_sec);                               \
+                HLCP_ERR("operation: {} timeout ({}) expired while waiting for: " #cond, timeout_sec, reason);         \
                 return false;                                                                                          \
             }                                                                                                          \
             usleep(wait_sleep);                                                                                        \
@@ -23,6 +23,7 @@
 
 #define RET_ON_FALSE(func)                                                                                             \
     if (!func) return false
+
 #define RET_ON_ERR(func)                                                                                               \
     if (func == -1)                                                                                                    \
     {                                                                                                                  \

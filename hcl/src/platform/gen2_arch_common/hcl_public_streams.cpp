@@ -1,5 +1,7 @@
 #include "hcl_public_streams.h"
 
+#include <cstddef>
+#include <hl_logger/hllog_core.hpp>
 #include <vector>   // for vector
 #include <cstdint>  // for uint32_t, uint...
 #include <memory>   // for unique_ptr
@@ -8,7 +10,8 @@
 
 #include "hcl_types.h"       // for remoteInfoNicToIndex
 #include "hcl_exceptions.h"  // for hcl
-#include "scal.h"            // for scal_handle_t
+#include "platform/gen2_arch_common/host_stream.h"
+#include "scal.h"  // for scal_handle_t
 #include "hcl_utils.h"
 #include "platform/gen2_arch_common/hccl_device.h"
 #include "dfa_defines.hpp"                        // for DfaErrorCode
@@ -24,6 +27,7 @@
 // #define HCL_API_CALL __attribute__((visibility("default")))
 
 bool HCL_API_CALL tdrDetectionFlag = false;  // Timeout Detection and Recovery
+
 class hccl_communicator;
 
 using namespace hcl;
@@ -252,6 +256,7 @@ bool HclPublicStreams::logDfaMain(DfaStatus& dfaStatus, void (*dfaLogFunc)(int, 
         hccl_ctx.dfaLog(synDevFailLog);
         dfaLogCommInfo(hccl_device(), dfaLoggers);
         dfaLogHostFences(hccl_device(), synDevFailLog);
+        dfaLogCmdBuff(hccl_device(), synDevFailLog);
 
         return true;
     }
@@ -338,6 +343,287 @@ void HclPublicStreams::dfaLogHostFences(IHclDevice* iDev, hl_logger::LoggerSPtr 
     }
 }
 
+static int getAccelNum(IHclDevice* device)
+{
+    const std::string accelPath = getHLDevice(device->getFd());
+    const std::string accel     = accelPath.substr(accelPath.find_last_of("/") + 1);
+    return accel[accel.length() - 1] - '0';
+}
+
+void HclPublicStreams::dfaLogCmdBuff(IHclDevice* iDev, hl_logger::LoggerSPtr logger)
+{
+    HclDeviceGen2Arch* devGen2 = dynamic_cast<HclDeviceGen2Arch*>(iDev);
+
+    if (devGen2 == nullptr)
+    {
+        HLLOG_UNTYPED(logger, HLLOG_LEVEL_INFO, "Device is not HclDeviceGen2Arch");
+        return;
+    }
+
+    ScaleoutProvider* scaleoutProvider = devGen2->getScaleOutProvider();
+    if (scaleoutProvider == nullptr)
+    {
+        HLLOG_UNTYPED(logger, HLLOG_LEVEL_INFO, "Device doesn't have scaleoutProvider");
+        return;
+    }
+    LibfabricScaleoutProvider* libfabricScaleoutProvider;
+    if (scaleoutProvider->isHostNic())
+    {
+        libfabricScaleoutProvider = reinterpret_cast<LibfabricScaleoutProvider*>(scaleoutProvider);
+    }
+    else
+    {
+        return;
+    }
+    HLLOG_UNTYPED(logger, HLLOG_LEVEL_INFO, "============================ Command Buffer ==========================");
+    for (unsigned archStream = 0; archStream < ScalJsonNames::numberOfArchsStreams; archStream++)
+    {
+        for (size_t uarchStream = 0;
+             uarchStream < (GCFG_ENABLE_HNIC_MICRO_STREAMS.value() ? HOST_MICRO_ARCH_STREAMS : 1);
+             uarchStream++)
+        {
+            HostStream* send_stream =
+                libfabricScaleoutProvider->m_hostStreamVec[archStream][uarchStream][HOST_STREAM_SEND];
+            HostStream* send_wait_stream =
+                libfabricScaleoutProvider->m_hostStreamVec[archStream][uarchStream][HOST_STREAM_WAIT_FOR_SEND_COMP];
+
+            spHostStreamFifo inner_queue           = send_stream->getInnerQueue();
+            spHostStreamFifo outer_queue           = send_stream->getOuterQueue();
+            spHostStreamFifo send_wait_outer_queue = send_wait_stream->getOuterQueue();
+
+            printStreamQueuesDFALog(archStream,
+                                    uarchStream,
+                                    &inner_queue,
+                                    &outer_queue,
+                                    &send_wait_outer_queue,
+                                    logger,
+                                    "SEND");
+
+            HostStream* recv_stream =
+                libfabricScaleoutProvider->m_hostStreamVec[archStream][uarchStream][HOST_STREAM_RECV];
+            HostStream* recv_wait_stream =
+                libfabricScaleoutProvider->m_hostStreamVec[archStream][uarchStream][HOST_STREAM_WAIT_FOR_RECV_COMP];
+
+            inner_queue                            = recv_stream->getInnerQueue();
+            outer_queue                            = recv_stream->getOuterQueue();
+            spHostStreamFifo recv_wait_outer_queue = recv_wait_stream->getOuterQueue();
+
+            printStreamQueuesDFALog(archStream,
+                                    uarchStream,
+                                    &inner_queue,
+                                    &outer_queue,
+                                    &recv_wait_outer_queue,
+                                    logger,
+                                    "RECV");
+        }
+    }
+}
+
+void HclPublicStreams::printStreamQueuesDFALog(unsigned              archStream,
+                                               size_t                uarchStream,
+                                               void*                 inner_queue,
+                                               void*                 outer_queue,
+                                               void*                 wait_outer_queue,
+                                               hl_logger::LoggerSPtr logger,
+                                               const std::string     stream_name)
+{
+    spHostStreamFifo inner_queue_obj      = *reinterpret_cast<spHostStreamFifo*>(inner_queue);
+    spHostStreamFifo outer_queue_obj      = *reinterpret_cast<spHostStreamFifo*>(outer_queue);
+    spHostStreamFifo wait_outer_queue_obj = *reinterpret_cast<spHostStreamFifo*>(wait_outer_queue);
+    HLLOG_UNTYPED(logger,
+                  HLLOG_LEVEL_INFO,
+                  "archStream: {} uarchStream: {} HOST_STREAM_{} Inner Buffer ci: {} pi: {} next_pi: {} watermark: {}",
+                  archStream,
+                  uarchStream,
+                  stream_name,
+                  inner_queue_obj->getCi(),
+                  inner_queue_obj->getPi(),
+                  inner_queue_obj->getNextPi(),
+                  inner_queue_obj->getWatermark());
+
+    printQueueDFALog(archStream, uarchStream, inner_queue, logger, stream_name);
+    HLLOG_UNTYPED(logger,
+                  HLLOG_LEVEL_INFO,
+                  "archStream: {} uarchStream: {} HOST_STREAM_{} Outer Buffer ci: {} pi: {} next_pi: {} watermark: {}",
+                  archStream,
+                  uarchStream,
+                  stream_name,
+                  outer_queue_obj->getCi(),
+                  outer_queue_obj->getPi(),
+                  outer_queue_obj->getNextPi(),
+                  outer_queue_obj->getWatermark());
+
+    printQueueDFALog(archStream, uarchStream, outer_queue, logger, stream_name);
+
+    HLLOG_UNTYPED(logger,
+                  HLLOG_LEVEL_INFO,
+                  "archStream: {} uarchStream: {} HOST_STREAM_WAIT_FOR_{}_COMP Outer Buffer ci: {} pi: {} next_pi: {} "
+                  "watermark: {}",
+                  archStream,
+                  uarchStream,
+                  stream_name,
+                  wait_outer_queue_obj->getCi(),
+                  wait_outer_queue_obj->getPi(),
+                  wait_outer_queue_obj->getNextPi(),
+                  wait_outer_queue_obj->getWatermark());
+    printQueueDFALog(archStream, uarchStream, wait_outer_queue, logger, stream_name);
+}
+
+void HclPublicStreams::printQueueDFALog(unsigned              archStream,
+                                        size_t                uarchStream,
+                                        void*                 queue,
+                                        hl_logger::LoggerSPtr logger,
+                                        const std::string     stream_name)
+{
+    const unsigned   margin          = 8;
+    spHostStreamFifo queue_obj       = *reinterpret_cast<spHostStreamFifo*>(queue);
+    auto&            queue_buff      = queue_obj->getBuf();
+    int              start_index     = (size_t)queue_obj->getCi() - margin;
+    size_t           end_index       = (size_t)queue_obj->getPi() + margin;
+    size_t           buffer_idx_diff = 0;
+    const size_t     step            = 4;
+
+    if (start_index < 0)
+    {
+        for (size_t idx = (size_t)queue_obj->getCapacity() + start_index; idx < queue_obj->getCapacity(); idx += step)
+        {
+            std::string out = fmt::format(FMT_COMPILE("[{:8},{:8}]:{:10x}|{:10x}|{:10x}|{:10x}"),
+                                          idx,
+                                          idx + 3,
+                                          queue_buff[idx],
+                                          queue_buff[idx + 1],
+                                          queue_buff[idx + 2],
+                                          queue_buff[idx + 3]);
+
+            HLLOG_UNTYPED(logger, HLLOG_LEVEL_INFO, "{}", out);
+        }
+        start_index = 0;
+    }
+    else if (queue_obj->getCi() > queue_obj->getPi())
+    {
+        for (size_t idx = start_index; idx < (size_t)queue_obj->getCapacity(); idx += step)
+        {
+            std::string out = fmt::format(FMT_COMPILE("[{:8},{:8}]:{:10x}|{:10x}|{:10x}|{:10x}"),
+                                          idx,
+                                          idx + 3,
+                                          queue_buff[idx],
+                                          queue_buff[idx + 1],
+                                          queue_buff[idx + 2],
+                                          queue_buff[idx + 3]);
+
+            HLLOG_UNTYPED(logger, HLLOG_LEVEL_INFO, "{}", out);
+        }
+        start_index = 0;
+    }
+    if (end_index > queue_obj->getCapacity())
+    {
+        buffer_idx_diff = end_index - queue_obj->getCapacity();
+        end_index       = queue_obj->getCapacity();
+    }
+
+    for (size_t idx = start_index; (size_t)start_index < end_index; start_index += step)
+    {
+        std::string out = fmt::format(FMT_COMPILE("[{:8},{:8}]:{:10x}|{:10x}|{:10x}|{:10x}"),
+                                      idx,
+                                      idx + 3,
+                                      queue_buff[idx],
+                                      queue_buff[idx + 1],
+                                      queue_buff[idx + 2],
+                                      queue_buff[idx + 3]);
+
+        HLLOG_UNTYPED(logger, HLLOG_LEVEL_INFO, "{}", out);
+    }
+    for (size_t idx = 0; idx < buffer_idx_diff; idx += step)
+    {
+        std::string out = fmt::format(FMT_COMPILE("[{:8},{:8}]:{:10x}|{:10x}|{:10x}|{:10x}"),
+                                      idx,
+                                      idx + 3,
+                                      queue_buff[idx],
+                                      queue_buff[idx + 1],
+                                      queue_buff[idx + 2],
+                                      queue_buff[idx + 3]);
+
+        HLLOG_UNTYPED(logger, HLLOG_LEVEL_INFO, "{}", out);
+    }
+}
+
+static void dumpQpWqes(IHclDevice* device, int nic, uint32_t qp, hl_logger::LoggerSPtr logger)
+{
+    if (!GCFG_HCL_DFA_DUMP_WQE.value())
+    {
+        HLLOG_UNTYPED(logger, HLLOG_LEVEL_INFO, "wqe dump not enabled");
+        return;
+    }
+
+    // reset wqe_index
+    const int          accelNum = getAccelNum(device);
+    const std::string& wqe_index_reset_path =
+        fmt::format(FMT_COMPILE("/sys/class/infiniband/hbl_{}/wq/ports/{}/qp/{}/reset"), accelNum, nic, qp);
+
+    std::FILE* wqe_index_reset_file = fopen(wqe_index_reset_path.c_str(), "r");
+    if (nullptr == wqe_index_reset_file)
+    {
+        HLLOG_UNTYPED(logger, HLLOG_LEVEL_ERROR, "Failed opening reset wqe index file: {}", wqe_index_reset_path);
+    }
+
+    static constexpr int BUFF_SIZE = 4 * 1024;
+    std::vector<char>    wqe_reset(BUFF_SIZE);
+    if (0 == fread(wqe_reset.data(), sizeof(char), BUFF_SIZE, wqe_index_reset_file))
+    {
+        HLLOG_UNTYPED(logger, HLLOG_LEVEL_ERROR, "Failed to reset wqe index: {}", wqe_index_reset_path);
+    }
+    fclose(wqe_index_reset_file);
+
+    // create wqe dump file name
+    const std::string& wqe_dump_path =
+        fmt::format(FMT_COMPILE("/sys/class/infiniband/hbl_{}/wq/ports/{}/qp/{}/show"), accelNum, nic, qp);
+
+    // start wqe dump
+    HLLOG_UNTYPED(logger, HLLOG_LEVEL_INFO, "----------------- wqe dump -----------------");
+
+    // read sysfs max_pi times
+    for (uint64_t wqeIndex = 0; wqeIndex < device->getSenderWqeTableSize(); wqeIndex++)
+    {
+        std::FILE* wqe_dump_file = fopen(wqe_dump_path.c_str(), "r");
+        if (nullptr == wqe_dump_file)
+        {
+            HLLOG_UNTYPED(logger, HLLOG_LEVEL_ERROR, "Failed opening wqe_dump_file: {}", wqe_dump_path);
+            return;
+        }
+
+        std::vector<char> wqe_data(BUFF_SIZE);
+        if (0 == fread(wqe_data.data(), sizeof(char), BUFF_SIZE, wqe_dump_file))
+        {
+            HLLOG_UNTYPED(logger,
+                          HLLOG_LEVEL_ERROR,
+                          "Failed reading wqe data for nic {} qp {} wqe {}",
+                          nic,
+                          qp,
+                          wqeIndex);
+            fclose(wqe_dump_file);
+            return;
+        }
+        fclose(wqe_dump_file);
+
+        HLLOG_UNTYPED(logger, HLLOG_LEVEL_INFO, "{}", wqe_data.data());
+    }
+    HLLOG_UNTYPED(logger, HLLOG_LEVEL_INFO, "----------------- wqe dump end -----------------");
+
+    // reset wqe_index again
+    wqe_index_reset_file = fopen(wqe_index_reset_path.c_str(), "r");
+    if (nullptr == wqe_index_reset_file)
+    {
+        HLLOG_UNTYPED(logger, HLLOG_LEVEL_ERROR, "Failed opening reset wqe index file: {}", wqe_index_reset_path);
+        return;
+    }
+
+    if (0 == fread(wqe_reset.data(), sizeof(char), BUFF_SIZE, wqe_index_reset_file))
+    {
+        HLLOG_UNTYPED(logger, HLLOG_LEVEL_ERROR, "Failed to reset wqe index: {}", wqe_index_reset_path);
+    }
+    fclose(wqe_index_reset_file);
+}
+
 static void
 dumpQpContext(IHclDevice* iDev, int nic, const std::vector<uint32_t>& qpList, const DfaLoggersV3& dfaLoggers)
 {
@@ -365,6 +651,9 @@ dumpQpContext(IHclDevice* iDev, int nic, const std::vector<uint32_t>& qpList, co
                 continue;
             }
             HLLOG_UNTYPED(logger, HLLOG_LEVEL_INFO, "{}\n{}", header, buff.data());
+            if (req == 0) continue;
+
+            dumpQpWqes(iDev, nic, qp, logger);
         }
     }
 }
@@ -397,7 +686,7 @@ void HclPublicStreams::dfaLogCommInfo(IHclDevice* iDev, DfaLoggersV3& dfaLoggers
                       HLLOG_LEVEL_INFO,
                       "------------------------------------------------------------------------------");
 
-        for (uint8_t nic = 0; nic < iDev->getHal()->getMaxNics(); nic++)
+        for (uint8_t nic = 0; nic < iDev->getHal().getMaxNics(); nic++)
         {
             bool nicHeaderLogged = false;
 
@@ -419,7 +708,7 @@ void HclPublicStreams::dfaLogCommInfo(IHclDevice* iDev, DfaLoggersV3& dfaLoggers
                         {
                             for (uint8_t qpSet = 0; qpSet < MAX_QPS_SETS_PER_CONNECTION; qpSet++)
                             {
-                                for (int j = 0; j < MAX_QPS_PER_CONNECTION; j++)
+                                for (uint32_t j = 0; j < QPS_ARRAY_LENGTH; j++)
                                 {
                                     GaudiNicQPs::NicQPs& nicQPs = rankInfo.remoteInfo[rank].gaudiNicQPs[activeNic];
                                     if (nicQPs.qp[qpSet][j] != 0)

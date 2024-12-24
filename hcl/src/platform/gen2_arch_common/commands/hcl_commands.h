@@ -46,31 +46,28 @@ public:
                                         uint32_t             indexOfSubBuffer   = 0,
                                         uint32_t             memsetValue        = 0) = 0;
 
-    virtual void
-    serializeAllocBarrierCommand(hcl::ScalStreamBase&                                     scalStream,
-                                 unsigned                                                 schedIdx,
-                                 uint32_t                                                 completionGroupIndex,
-                                 uint32_t                                                 requiredSobs,
-                                 llvm_vecsmall::SmallVector<uint32_t, MAX_STREAM_TO_INC>* fences = nullptr) = 0;
+    virtual void serializeAllocBarrierCommand(hcl::ScalStreamBase& scalStream,
+                                              unsigned             schedIdx,
+                                              uint32_t             completionGroupIndex,
+                                              uint32_t             requiredSobs,
+                                              llvm_vecsmall::SmallVector<uint32_t, MAX_STREAM_TO_INC>* fences = nullptr,
+                                              const LBWBurstData_t* destData = nullptr) = 0;
 
     virtual void serializeLbwWriteCommand(hcl::ScalStreamBase& scalStream,
                                           unsigned             schedIdx,
                                           uint32_t             destination,
-                                          uint32_t             data,
-                                          bool                 blockUntilCompletion = false) = 0;
+                                          uint32_t             data) = 0;
 
     virtual void serializeLbwWriteWithFenceDecCommand(hcl::ScalStreamBase& scalStream,
                                                       unsigned             schedIdx,
                                                       uint32_t             destination,
                                                       uint32_t             data,
                                                       uint32_t             fenceIndex,
-                                                      uint32_t             fenceTarget          = 1,
-                                                      bool                 blockUntilCompletion = false) = 0;
+                                                      uint32_t             fenceTarget = 1) = 0;
 
-    virtual void serializeLbwBurstWriteCommand(hcl::ScalStreamBase&      scalStream,
-                                               unsigned                  schedIdx,
-                                               const LBWBurstDestData_t& destData,
-                                               bool                      blockUntilCompletion = false) = 0;
+    virtual void serializeLbwBurstWriteCommand(hcl::ScalStreamBase&  scalStream,
+                                               unsigned              schedIdx,
+                                               const LBWBurstData_t& destData) = 0;
 
     virtual void serializeFenceDecCommand(hcl::ScalStreamBase& scalStream,
                                           unsigned             schedIdx,
@@ -113,12 +110,4 @@ public:
                                       hcclDataType_t       dataType,
                                       uint32_t             sobAddr          = 0,
                                       bool                 isFirstBufferUse = false) = 0;
-
-public:
-    virtual bool     isCastDown(uint32_t dmaType) = 0;
-    virtual bool     isCastUp(uint32_t dmaType)   = 0;
-    virtual bool     isMemCpy(uint32_t dmaType)   = 0;
-    virtual unsigned getDmaTypeCastUp()           = 0;
-    virtual unsigned getDmaTypeCastDown()         = 0;
-    virtual unsigned getDmaTypeMemCpy()           = 0;
 };

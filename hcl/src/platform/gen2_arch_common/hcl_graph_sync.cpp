@@ -31,8 +31,8 @@ void HclGraphSyncGen2Arch::createSetupMonMessages(hcl::ScalStream& scalStream,
                                                   uint64_t         smBase,
                                                   bool             isLong)
 {
-    LBWBurstDestData_t destData;
-    unsigned           schedIdx = scalStream.getSchedIdx();
+    LBWBurstData_t destData;
+    unsigned       schedIdx = scalStream.getSchedIdx();
 
     // Setup to payload address (of the dccmQ of scheduler)
     uint32_t destination = getAddrMonPayAddrl(smBase, monitorIdx);
@@ -44,9 +44,9 @@ void HclGraphSyncGen2Arch::createSetupMonMessages(hcl::ScalStream& scalStream,
     uint32_t value = createSchedMonExpFence(fenceIdx);
     destination    = getAddrMonPayData(smBase, monitorIdx);
     destData.push_back({destination, value});
-
-    unsigned soQuarter = monitorIdx % MONITORS_PER_FENCE;
-    VERIFY(soQuarter <= 3);
+    // we assume that the monitor of each soQuarter is located in a corresponding offset in the SM
+    unsigned soQuarter = monitorIdx / (SO_TOTAL_COUNT / SO_QUARTERS);
+    VERIFY(soQuarter >= 0 && soQuarter < SO_QUARTERS);
 
     value = createMonConfig(isLong, soQuarter);
 
@@ -72,8 +72,9 @@ void HclGraphSyncGen2Arch::createArmMonMessages(hcl::ScalStream& scalStream,
     const unsigned soIdxNoMask = soIdx >> 3;  // LSB are the mask, so unnecessary for long Sos
     const uint8_t  mask        = ~(1 << (soIdx % 8));
     VERIFY(soIdxNoMask <= 0x3ff);
-    VERIFY(monitorIdx % 4 == (soIdxNoMask >> 8),
-           "regular monitors are set up to the (monitorIdx % 4) quarter of the SM");
+    VERIFY(monitorIdx % SO_QUARTERS == (soIdxNoMask >> 8),
+           "regular monitors are set up to the (monitorIdx % {}) quarter of the SM",
+           SO_QUARTERS);
 
     // Arm from last to first, as message to the first indicates that the Arm is complete.
     const uint32_t baseAddrInSm = getOffsetMonArm(monitorIdx);
@@ -97,9 +98,9 @@ void HclGraphSyncGen2Arch::createArmLongMonMessages(hcl::ScalStream& scalStream,
     VERIFY(soIdxNoMask <= 0x3ff);
     VERIFY((soIdxNoMask >> 8) == 0, "long monitors are set up to the first quarter of the SM");
     // Arm from last to first, as message to the first indicates that the Arm is complete.
-    const uint32_t     monArmSize   = getArmMonSize();
-    const uint32_t     baseAddrInSm = getOffsetMonArm(monitorIdx);
-    LBWBurstDestData_t destData;
+    const uint32_t monArmSize   = getArmMonSize();
+    const uint32_t baseAddrInSm = getOffsetMonArm(monitorIdx);
+    LBWBurstData_t destData;
 
     for (int i = LONG_MON_DWORD_SIZE - 1; i >= 0; --i)
     {
@@ -259,23 +260,27 @@ void HclGraphSyncGen2Arch::setSyncData(uint32_t syncObjectBase, unsigned soSize)
 
 void HclGraphSyncGen2Arch::createSyncStreamsMessages(hcl::ScalStream& scalStream,
                                                      unsigned         monBase,
-                                                     unsigned         syncDcoreIdx,
+                                                     unsigned         smIdx,
                                                      unsigned         soVal,
                                                      unsigned         soIdx,
                                                      unsigned         fenceIdx,
                                                      bool             useEqual)
 {
-    const uint32_t smBase    = getSyncManagerBase(syncDcoreIdx);
-    const unsigned soTotalNr = 8192;
-    unsigned       soQuarter = soIdx / (soTotalNr / 4);
+    const uint32_t smBase     = getSyncManagerBase(smIdx);
+    unsigned       soQuarter  = soIdx / (SO_TOTAL_COUNT / SO_QUARTERS);
+    unsigned       monitorIdx = monBase + getRegularMonIdx(0, soQuarter, scalStream.getUarchStreamIndex());
 
-    createArmMonMessages(scalStream,
-                         soVal,
-                         soIdx,
-                         monBase + getRegularMonIdx(0, soQuarter, scalStream.getStreamIndex()),
-                         smBase,
-                         fenceIdx,
-                         true);
+    LOG_HCL_DEBUG(HCL,
+                  "Adding stream wait on SO: schedIdx={}, uarchStreamId={} SO={}, targetValue {}, "
+                  "mon_arm_reg={}, fenceIdx={}",
+                  scalStream.getSchedIdx(),
+                  scalStream.getUarchStreamIndex(),
+                  m_utils->printSOBInfo(m_utils->calculateSoAddressFromIdxAndSM(smIdx, soIdx)),
+                  soVal,
+                  m_utils->printMonArmInfo(smIdx, monitorIdx),
+                  fenceIdx);
+
+    createArmMonMessages(scalStream, soVal, soIdx, monitorIdx, smBase, fenceIdx, true);
 }
 
 void HclGraphSyncGen2Arch::createResetSoMessages(
@@ -331,22 +336,36 @@ void HclGraphSyncGen2Arch::addPendingWait(uint32_t longSoIdx, uint64_t longSoVal
     }
 }
 
-void HclGraphSyncGen2Arch::addWait(hcl::ScalStream&              scalStream,
-                                   int                           streamId,
-                                   unsigned                      dcoreIdx,
-                                   uint32_t                      monIdx,
-                                   std::map<uint32_t, uint64_t>& waitedValues,
-                                   unsigned                      fenceIdx)
+void HclGraphSyncGen2Arch::addStreamWaitOnLongSo(hcl::ScalStream&              scalStream,
+                                                 int                           streamId,
+                                                 unsigned                      smIdx,
+                                                 uint32_t                      monIdx,
+                                                 std::map<uint32_t, uint64_t>& waitedValues,
+                                                 unsigned                      fenceIdx)
 {
     for (auto& waitSo : m_pendingWaits)
     {
+        // Arm the mon, if there is only 1 target value for this LSO or the targetValue is higher thane the prev
+        // targetValue we where waiting on
         if (waitedValues.find(waitSo.first) == waitedValues.end() || waitedValues[waitSo.first] < waitSo.second)
         {
+            LOG_HCL_DEBUG(HCL,
+                          "Adding stream wait on LSO: schedIdx={}, uarchStreamId={} LSO={}..{}, targetValue {}, "
+                          "mon_arm_regs={}..{}, fenceIdx={}",
+                          scalStream.getSchedIdx(),
+                          scalStream.getUarchStreamIndex(),
+                          m_utils->printSOBInfo(m_utils->calculateSoAddressFromIdxAndSM(smIdx, waitSo.first)),
+                          waitSo.first + 3,
+                          waitSo.second,
+                          m_utils->printMonArmInfo(smIdx, monIdx),
+                          monIdx + 3,
+                          fenceIdx);
+
             createArmLongMonMessages(scalStream,
                                      waitSo.second,
                                      waitSo.first,
                                      monIdx,
-                                     getSyncManagerBase(dcoreIdx),
+                                     getSyncManagerBase(smIdx),
                                      fenceIdx,
                                      false /* waiting for longSo can't use equal to value */);
 
@@ -365,14 +384,26 @@ void HclGraphSyncGen2Arch::addWait(hcl::ScalStream&              scalStream,
     }
 }
 
-void HclGraphSyncGen2Arch::addInternalWait(hcl::ScalStream& scalStream,
-                                           unsigned         dcoreIdx,
-                                           uint32_t         monIdx,
-                                           uint64_t         soValue,
-                                           unsigned         soIdx,
-                                           unsigned         fenceIdx)
+void HclGraphSyncGen2Arch::addStreamWaitOnLongSo(hcl::ScalStream& scalStream,
+                                                 unsigned         smIdx,
+                                                 uint32_t         monIdx,
+                                                 uint64_t         soValue,
+                                                 unsigned         soIdx,
+                                                 unsigned         fenceIdx)
 {
-    createArmLongMonMessages(scalStream, soValue, soIdx, monIdx, getSyncManagerBase(dcoreIdx), fenceIdx, true);
+    LOG_HCL_DEBUG(HCL,
+                  "Adding stream wait on LSO: schedIdx={}, uarchStreamId={} LSO={}..{}, targetValue {}, "
+                  "mon_arm_regs={}..{}, fenceIdx={}",
+                  scalStream.getSchedIdx(),
+                  scalStream.getUarchStreamIndex(),
+                  m_utils->printSOBInfo(m_utils->calculateSoAddressFromIdxAndSM(smIdx, soIdx)),
+                  soIdx + 3,
+                  soValue,
+                  m_utils->printMonArmInfo(smIdx, monIdx),
+                  monIdx + 3,
+                  fenceIdx);
+
+    createArmLongMonMessages(scalStream, soValue, soIdx, monIdx, getSyncManagerBase(smIdx), fenceIdx, true);
 }
 
 void HclGraphSyncGen2Arch::addSetupLongMonitors(hcl::ScalStream& scalStream,

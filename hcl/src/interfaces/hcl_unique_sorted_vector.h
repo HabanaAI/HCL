@@ -1,6 +1,7 @@
 #pragma once
 
 #include "hcl_inc.h"
+#include "hcl_log_manager.h"  // for hl_logger macros
 
 #include <vector>
 #include <ostream>
@@ -46,3 +47,4 @@ private:
 };
 
 std::ostream& operator<<(std::ostream& os, const UniqueSortedVector& uniqueSortedVector);
+HLLOG_DEFINE_OSTREAM_FORMATTER(UniqueSortedVector);

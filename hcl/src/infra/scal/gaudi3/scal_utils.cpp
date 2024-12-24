@@ -59,14 +59,14 @@ unsigned hcl::Gaudi3HclScalUtils::getSOBIndex(uint32_t addr)
     return getSOBInfo(addr).sobId;
 }
 
-sob_info hcl::Gaudi3HclScalUtils::getSOBInfo(uint32_t addr)
+SobInfo hcl::Gaudi3HclScalUtils::getSOBInfo(uint32_t addr)
 {
     // max size of an sm block
     static constexpr uint32_t MAX_SM_SIZE = offsetof(gaudi3::block_sob_objs, cq_direct);
     static constexpr uint32_t HD0_BASE    = mmHD0_SYNC_MNGR_OBJS_BASE & 0xffffffff;
     static constexpr uint32_t BASE_MASK   = 0xfff00000;
 
-    sob_info ret = {0};
+    SobInfo ret = {0};
 
     /*
     HD0_BASE=0xfe380000
@@ -109,10 +109,16 @@ std::string hcl::Gaudi3HclScalUtils::printSOBInfo(uint32_t addr)
     return printSOBInfo(getSOBInfo(addr));
 }
 
-std::string hcl::Gaudi3HclScalUtils::printSOBInfo(sob_info sob)
+std::string hcl::Gaudi3HclScalUtils::printSOBInfo(SobInfo sob)
 {
     return "HD" + std::to_string(sob.dcore) + "_SYNC_MNGR_OBJS SOB_OBJ_" + std::to_string(sob.ssm) + "_" +
            std::to_string(sob.sobId);
+}
+
+std::string hcl::Gaudi3HclScalUtils::printMonArmInfo(unsigned smIdx, uint32_t monIdx)
+{
+    return "HD" + std::to_string(smIdx >> 1) + "_SYNC_MNGR_OBJS MON_ARM_" + std::to_string(smIdx & 0x01) + "_" +
+           std::to_string(monIdx);
 }
 
 // return the gaudi3 value from QMAN FW gaudi3_arc_host_packets.h

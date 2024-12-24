@@ -1,6 +1,4 @@
 #include "platform/gen2_arch_common/signals/calculator.h"
-#include "platform/gaudi2/signals/calculator.h"
-#include "platform/gaudi3/signals/calculator.h"
 #include "platform/gen2_arch_common/collective_states.h"
 #include "hcl_utils.h"
 #include "hcl_global_conf.h"  // for GFCG_*...

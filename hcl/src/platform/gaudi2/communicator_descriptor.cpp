@@ -68,8 +68,7 @@ void LRU::resizeDB(HCL_Comm comm)
 
 unsigned LRU::use(HCL_Comm comm)
 {
-    // comm must be allocated already
-    VERIFY(comm < m_communicators.size(), "LRU::use comm({}) should be resized on registerQPs", comm);
+    VERIFY(comm < m_communicators.size(), "comm must be allocated already LRU::use comm({})", comm);
 
     Entry& entry = m_communicators[comm];
     if (entry.state != Entry::ACTIVE)

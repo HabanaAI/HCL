@@ -17,6 +17,7 @@ static void init_error_tables()
     err2str[IBV_EVENT_PATH_MIG_ERR]        = "Numerical error";
     err2str[IBV_EVENT_PORT_ACTIVE]         = "Link up";
     err2str[IBV_EVENT_PORT_ERR]            = "Link down";
+    err2str[IBV_EVENT_LID_CHANGE]          = "Link shutdown";
     err2str[IBV_EVENT_GID_CHANGE]          = "GID table change",
 
     /* Rx packet errors*/
@@ -255,9 +256,15 @@ bool hcl_ibverbs_t::parse_ib_eqe(ibv_async_event* event)
 
         case IBV_EVENT_PORT_ACTIVE:
         case IBV_EVENT_PORT_ERR:
-            triggerDFA = false;
-            INF_IBV("{}, NIC({})", err2str[event->event_type], port2nic_[event->element.port_num]);
+        case IBV_EVENT_LID_CHANGE:
+        {
+            const uint32_t nic = port2nic_[event->element.port_num];
+            triggerDFA         = false;
+            INF_IBV("{}, NIC({})", err2str[event->event_type], nic);
+
+            report_nic_status(event->event_type, nic);
             break;
+        }
 
         case IBV_EVENT_SM_CHANGE:
         {
@@ -293,4 +300,16 @@ bool hcl_ibverbs_t::parse_ib_eqe(ibv_async_event* event)
     ibv_.ibv_ack_async_event(event);
 
     return triggerDFA;
+}
+
+void hcl_ibverbs_t::report_nic_status(const ibv_event_type& event, const uint32_t nic)
+{
+    if (!(event == IBV_EVENT_PORT_ACTIVE || event == IBV_EVENT_PORT_ERR || event == IBV_EVENT_LID_CHANGE))
+    {
+        CRT_IBV("unknown NIC event: {}", err2str[event]);
+        return;
+    }
+
+    const bool isPortUp = (event == IBV_EVENT_PORT_ACTIVE);
+    device_->updateNicState(nic, isPortUp, false);
 }

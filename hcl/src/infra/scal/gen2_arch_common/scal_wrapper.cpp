@@ -15,11 +15,6 @@
 
 using namespace hcl;
 
-Gen2ArchScalWrapper::Gen2ArchScalWrapper(scal_handle_t deviceHandle, ScalJsonNames& scalNames)
-: m_deviceHandle(deviceHandle), m_scalNames(scalNames)
-{
-}
-
 Gen2ArchScalWrapper::Gen2ArchScalWrapper(int fd, ScalJsonNames& scalNames) : m_scalNames(scalNames)
 {
     if (fd == -1) return;
@@ -227,7 +222,7 @@ void Gen2ArchScalWrapper::sendStream(const scal_stream_handle_t stream,
     }
 }
 
-Gen2ArchScalWrapper::CgComplex Gen2ArchScalWrapper::getCgInfo(std::string cgName) const
+Gen2ArchScalWrapper::CgComplex Gen2ArchScalWrapper::getCgInfo(const std::string& cgName) const
 {
     scal_comp_group_handle_t       cgHndl;
     scal_completion_group_infoV2_t cgScalInfo;

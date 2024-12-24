@@ -15,7 +15,10 @@ ofi_rdm_component_t::ofi_rdm_component_t(int ofiDeviceId, int hw_module_id, stru
 : ofi_component_t(ofiDeviceId, hw_module_id, prov, cpuid, FI_CQ_FORMAT_TAGGED),
   m_cqe_tagged_buffers(m_cqe_burst),
   m_tag(hw_module_id << 28),
-  m_max_tag(calculate_max_tag(prov))
+  m_max_tag(calculate_max_tag(prov)),
+  m_cq(std::make_shared<FiObject<struct fid_cq*>>(create_cq(m_domain.get(), m_cpuid, FI_CQ_FORMAT_TAGGED))),
+  m_cq_single(
+      std::make_shared<FiObject<struct fid_cq*>>(create_cq(m_domain_single.get(), m_cpuid, FI_CQ_FORMAT_TAGGED)))
 {
 }
 
@@ -70,7 +73,7 @@ int ofi_rdm_component_t::listen(uint64_t       tag,
     std::unique_ptr<listenComm_t> lComm;
     std::vector<uint8_t>          addr;
 
-    const auto [ep, av] = acquire_ep_av(hostConnIdx, EndpointRole::LISTEN, qpSetIndex);
+    const auto [ep, av, cq] = acquire_ep_av(hostConnIdx, EndpointRole::LISTEN, qpSetIndex);
 
     OFI_EXIT_ON_ERROR(ofi_plugin->w_fi_getname(&(ep->get()->fid), (void*)&ep_name, &namelen));
     addr = std::vector<uint8_t>(ep_name, ep_name + namelen);
@@ -93,6 +96,7 @@ int ofi_rdm_component_t::listen(uint64_t       tag,
     lComm                = std::make_unique<listenComm_t>();
     lComm->tag           = tag;
     lComm->local_ep      = *ep;
+    lComm->cq            = *cq;
     lComm->accepted      = false;
     lComm->dev           = m_ofiDeviceID;
     lComm->local_ep_addr = local_ep_addr;
@@ -147,7 +151,7 @@ int ofi_rdm_component_t::accept(listenComm_t* lComm, ofiComm_t** ofiComm)
         else if (rc == -FI_EAGAIN)
         {
             // Process completions to have enough resources for posting recv
-            OFI_EXIT_ON_ERROR(ofi_progress());
+            OFI_EXIT_ON_ERROR(ofi_progress(lComm->cq));
         }
         else
         {
@@ -165,14 +169,15 @@ int ofi_rdm_component_t::accept(listenComm_t* lComm, ofiComm_t** ofiComm)
     // Progress OFI until connection is accepted
     while (!lComm->accepted)
     {
-        OFI_EXIT_ON_ERROR(ofi_progress());
+        OFI_EXIT_ON_ERROR(ofi_progress(lComm->cq));
     }
-    LOG_HCL_DEBUG(HCL_OFI, "Connection accepted");
+    LOG_HCL_DEBUG(HCL_OFI, "Connection accepted ep = {}, cq = {}", fmt::ptr(lComm->local_ep), fmt::ptr(lComm->cq));
 
     // Build recvComm
     oComm                 = std::make_unique<ofiComm_t>();
     oComm->tag            = lComm->tag;
     oComm->local_ep       = lComm->local_ep;
+    oComm->cq             = lComm->cq;
     oComm->local_ep_addr  = lComm->local_ep_addr;
     oComm->remote_ep_addr = remote_ep;
     oComm->dev            = m_ofiDeviceID;
@@ -208,7 +213,7 @@ int ofi_rdm_component_t::connect(const void* handle,
         return hcclLibfabricError;
     }
 
-    const auto [ep, av] = acquire_ep_av(hostConnIdx, EndpointRole::CONNECT, qpSetIndex);
+    const auto [ep, av, cq] = acquire_ep_av(hostConnIdx, EndpointRole::CONNECT, qpSetIndex);
     const std::vector<uint8_t> addr(&remote_ep_addr[0], &remote_ep_addr[0] + sizeof(remote_ep_addr));
     try
     {
@@ -225,6 +230,7 @@ int ofi_rdm_component_t::connect(const void* handle,
     oComm                 = std::make_unique<ofiComm_t>();
     oComm->tag            = tag;
     oComm->local_ep       = *ep;
+    oComm->cq             = *cq;
     oComm->remote_ep_addr = remote_addr;
     oComm->dev            = m_ofiDeviceID;
 
@@ -257,7 +263,7 @@ int ofi_rdm_component_t::connect(const void* handle,
         else if (rc == -FI_EAGAIN)
         {
             // Process completions to have enough resources to send connect msg
-            OFI_EXIT_ON_ERROR(ofi_progress());
+            OFI_EXIT_ON_ERROR(ofi_progress(*cq));
         }
         else
         {
@@ -273,10 +279,10 @@ int ofi_rdm_component_t::connect(const void* handle,
     // Ensure the message is sent
     do
     {
-        OFI_EXIT_ON_ERROR(ofi_progress());
+        OFI_EXIT_ON_ERROR(ofi_progress(*cq));
     } while (req.state != OFI_REQ_COMPLETED);
 
-    LOG_HCL_DEBUG(HCL_OFI, "Connect to remote-EP succeeded");
+    LOG_HCL_DEBUG(HCL_OFI, "Connect to remote-EP succeeded ep = {}, cq = {}", fmt::ptr(ep->get()), fmt::ptr(cq->get()));
     *ofiComm = oComm.release();
     ret      = hcclSuccess;
 
@@ -353,10 +359,14 @@ int ofi_rdm_component_t::isend(ofiComm_t*             ofiComm,
     req->direction                 = OFI_SEND;
     req->compParams                = compParams;
 
-    OFI_EXIT_ON_ERROR(ofi_progress());
+    OFI_EXIT_ON_ERROR(ofi_progress(ofiComm->cq));
 
     if (nullptr != mHandle)
     {
+        if (m_ep_single == ofiComm->local_ep)
+        {
+            mHandle = get_mr()->getSingleQpMrHandle();
+        }
         desc = ofi_plugin->w_fi_mr_desc((fid_mr*)mHandle);
         if (nullptr == desc)
         {
@@ -414,10 +424,14 @@ int ofi_rdm_component_t::irecv(ofiComm_t*             ofiComm,
     req->direction                 = OFI_RECV;
     req->compParams                = compParams;
 
-    OFI_EXIT_ON_ERROR(ofi_progress());
+    OFI_EXIT_ON_ERROR(ofi_progress(ofiComm->cq));
 
     if (nullptr != mHandle)
     {
+        if (m_ep_single == ofiComm->local_ep)
+        {
+            mHandle = get_mr()->getSingleQpMrHandle();
+        }
         desc = ofi_plugin->w_fi_mr_desc((fid_mr*)mHandle);
         if (nullptr == desc)
         {
@@ -486,10 +500,16 @@ ofi_rdm_component_t::acquire_ep_av(unsigned hostConnIdx, ofi_rdm_component_t::En
         m_eps[std::make_tuple(hostConnIdx, role, qpSetIndex)] = ep_av;
         return ep_av;
     }
-    const auto av = std::make_shared<FiObject<struct fid_av*>>(create_av(m_domain.get()));
-    const auto ep =
-        std::make_shared<FiObject<struct fid_ep*>>(create_ep(m_prov, m_domain.get(), m_cq.get(), av->get()));
-    m_eps[std::make_tuple(hostConnIdx, role, qpSetIndex)] = std::make_tuple(ep, av);
+    const auto domain =
+        (GCFG_HCL_HNIC_SCALE_OUT_QP_SETS.value() != qpSetIndex) ? m_domain.get() : m_domain_single.get();
+    const auto av = std::make_shared<FiObject<struct fid_av*>>(create_av(domain));
+    const auto cq = (GCFG_HCL_HNIC_SCALE_OUT_QP_SETS.value() != qpSetIndex) ? m_cq : m_cq_single;
+    const auto ep = std::make_shared<FiObject<struct fid_ep*>>(create_ep(m_prov, domain, cq->get(), av->get()));
+    if (GCFG_HCL_HNIC_SCALE_OUT_QP_SETS.value() == qpSetIndex && !GCFG_HCL_SINGLE_QP_PER_SET.value())
+    {
+        m_ep_single = ep->get();
+    }
+    m_eps[std::make_tuple(hostConnIdx, role, qpSetIndex)] = std::make_tuple(ep, av, cq);
     return m_eps[std::make_tuple(hostConnIdx, role, qpSetIndex)];
 }
 
@@ -500,13 +520,13 @@ bool ofi_rdm_component_t::isDifferentQP(const unsigned                          
                                         const ofi_rdm_component_t::EndpointRole existingRole,
                                         const uint16_t                          existingQpSetIndex)
 {
-    if (!GCFG_HCL_SINGLE_QP_PER_SET.value())
+    // Check whether the qp set is single qp. The last qp set is a single qp set regardless of any other configuration.
+    if (GCFG_HCL_SINGLE_QP_PER_SET.value() || GCFG_HCL_HNIC_SCALE_OUT_QP_SETS.value() == requestedQpSetIndex)
     {
-        // There should be 4 QPs for each set
-        return ((requestedHostConnIdx != existingHostConnIdx) || (requestedRole != existingRole) ||
-                (requestedQpSetIndex != existingQpSetIndex));
+        // The set is single-qp
+        return requestedQpSetIndex != existingQpSetIndex;
     }
-
-    // There should be only one EP per set index.
-    return (requestedQpSetIndex != existingQpSetIndex);
+    // There should be 4 QPs for each set
+    return ((requestedHostConnIdx != existingHostConnIdx) || (requestedRole != existingRole) ||
+            (requestedQpSetIndex != existingQpSetIndex));
 }

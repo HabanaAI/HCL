@@ -8,7 +8,7 @@
 #include <utility>    // for pair
 
 #include "platform/gaudi2/types.h"                          // for HLS2_BOX_SIZE
-#include "sched_pkts.h"                                     // for g2fw
+#include "g2_sched_pkts.h"                                  // for g2fw
 #include "hcl_utils.h"                                      // for VERIFY
 #include "hcl_log_manager.h"                                // for LOG_*
 #include "platform/gaudi2/commands/hcl_commands.h"          // for HclCommandsGaudi2
@@ -27,7 +27,7 @@ NicPassthroughHandler::NicPassthroughHandler(const std::vector<unsigned>&      n
 
     for (unsigned deviceId = 0; deviceId < HLS2_BOX_SIZE; deviceId++)
     {
-        for (unsigned port : serverConnectivity.getAllPorts(deviceId /*, HCL_Comm comm*/))
+        for (unsigned port : serverConnectivity.getAllPortsGlbl(deviceId))
         {
             for (unsigned i = 0; i < nicEngines.size(); i++)
             {
@@ -142,7 +142,7 @@ void NicPassthroughHandler::addDeviceBuffer(const DwordsBoxesArray& deviceBuffer
 
     for (size_t deviceId = 0; deviceId < deviceBuffer.size(); deviceId++)
     {
-        for (unsigned nic : m_serverConnectivity.getAllPorts(deviceId, comm))
+        for (unsigned nic : m_serverConnectivity.getAllPortsGlbl(deviceId, comm))
         {
             for (const uint32_t val : deviceBuffer[deviceId])
             {

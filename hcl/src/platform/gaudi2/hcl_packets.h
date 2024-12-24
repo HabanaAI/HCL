@@ -8,7 +8,7 @@
 
 #include "hcl_types.h"
 #include "platform/gaudi2/types.h"
-#include "sched_pkts.h"
+#include "g2_sched_pkts.h"  // for g2fw
 #include "platform/gen2_arch_common/host_stream.h"
 #include "hcl_api_types.h"
 #include "platform/gen2_arch_common/device_buffer_manager.h"
@@ -30,7 +30,8 @@ void serializeAllocBarrierCommand(hcl::ScalStreamBase&                          
                                   unsigned                                                 schedIdx,
                                   uint32_t                                                 completionGroupIndex,
                                   uint32_t                                                 requiredSobs,
-                                  llvm_vecsmall::SmallVector<uint32_t, MAX_STREAM_TO_INC>* fences = nullptr);
+                                  llvm_vecsmall::SmallVector<uint32_t, MAX_STREAM_TO_INC>* fences        = nullptr,
+                                  const LBWBurstData_t*                                    destBurstData = nullptr);
 
 void serializeFenceDecCommand(hcl::ScalStreamBase& scalStream,
                               unsigned             schedIdx,
@@ -42,24 +43,16 @@ void serializeFenceIncCommand(hcl::ScalStreamBase& scalStream,
                               uint32_t             fenceIndex,
                               uint32_t             target = 1);
 
-void serializeLbwWriteCommand(hcl::ScalStreamBase& scalStream,
-                              unsigned             schedIdx,
-                              uint32_t             destination,
-                              uint32_t             data,
-                              bool                 blockUntilCompletion = false);
+void serializeLbwWriteCommand(hcl::ScalStreamBase& scalStream, unsigned schedIdx, uint32_t destination, uint32_t data);
 
 void serializeLbwWriteWithFenceDecCommand(hcl::ScalStreamBase& scalStream,
                                           unsigned             schedIdx,
                                           uint32_t             destination,
                                           uint32_t             data,
                                           uint32_t             fenceIndex,
-                                          uint32_t             fenceTarget          = 1,
-                                          bool                 blockUntilCompletion = false);
+                                          uint32_t             fenceTarget = 1);
 
-void serializeLbwBurstWriteCommand(hcl::ScalStreamBase&      scalStream,
-                                   unsigned                  schedIdx,
-                                   const LBWBurstDestData_t& destData,
-                                   bool                      blockUntilCompletion = false);
+void serializeLbwBurstWriteCommand(hcl::ScalStreamBase& scalStream, unsigned schedIdx, const LBWBurstData_t& destData);
 
 void serializeDmaCommand(hcl::ScalStreamBase& scalStream,
                          unsigned             schedIdx,
@@ -104,13 +97,20 @@ void serializeGlobalDmaCommand(hcl::ScalStreamBase&                  scalStream,
                                uint64_t                              fwBaseAddress,
                                uint32_t                              engineType);
 
+void serializeUpdateGlobalContextCommandHeader(g2fw::sched_arc_cmd_update_nic_glbl_ctxt_t& command,
+                                               uint32_t                                    soAddressLSB,
+                                               uint32_t                                    numDwords);
+
 void serializeUpdateGlobalContextCommand(hcl::ScalStreamBase&                scalStream,
                                          uint32_t                            soAddressLSB,
-                                         std::vector<g2fw::nic_glbl_ctxt_t>& contexts,
-                                         uint64_t                            sib_order_base_addr = 0,
-                                         uint64_t                            sib_acc_base_addr   = 0,
-                                         uint32_t                            sibo_rank_stride    = 0,
-                                         uint32_t                            siba_stride         = 0);
+                                         std::vector<g2fw::nic_glbl_ctxt_t>& contexts);
+
+void serializeUpdateGlobalContextInfo(hcl::ScalStreamBase& scalStream,
+                                      uint32_t             soAddressLSB,
+                                      uint64_t             sib_order_base_addr,
+                                      uint64_t             sib_acc_base_addr,
+                                      uint32_t             sibo_rank_stride,
+                                      uint32_t             siba_stride);
 
 void serializeUpdateGlobalContextScaleOutCommand(hcl::ScalStreamBase&                scalStream,
                                                  uint32_t                            soAddressLSB,

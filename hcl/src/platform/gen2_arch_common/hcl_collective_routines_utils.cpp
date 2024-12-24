@@ -132,7 +132,7 @@ void HclCollectiveRoutinesGen2Arch::provideScaleoutResources(SliceState& sliceSt
                   sliceState.m_setup.m_scaleoutInternalFences);
 
     m_deviceController.setHostFences(m_streamId,
-                                     currentStream.getStreamIndex(),
+                                     currentStream.getUarchStreamIndex(),
                                      sliceState.m_isSend,
                                      sliceState.m_setup.m_scaleoutInternalFences,
                                      sliceState.m_execution.m_scaleoutFences);
@@ -200,15 +200,7 @@ void HclCollectiveRoutinesGen2Arch::provideScaleoutResources(SliceState& sliceSt
 
         if (waitMethod != WaitMethod::WAIT_METHOD_MAX)
         {
-            sob_info sob = {.smIdx = m_deviceController.getSyncParams(m_streamId).m_smInfo.soSmIndex,
-                            .dcore = m_deviceController.getSyncParams(m_streamId).m_smInfo.soDcoreIndex,
-                            .ssm   = 0,
-                            .sobId = m_graphSync.getCurrentGeneralPurposeSo(waitMethod)};
-            sliceState.m_execution.m_scaleoutInternalSOBs.push_back(sob);
-            if (waitMethod != WaitMethod::GPSO_LONGTERM)
-            {
-                m_signalsManager->markMethodForCleanup(waitMethod);
-            }
+            addScaleoutInternalSOB(sliceState, waitMethod);
         }
     }
 
@@ -225,7 +217,7 @@ void HclCollectiveRoutinesGen2Arch::provideScaleoutResources(NonCollectiveState&
                   nonCollectiveState.m_comm,
                   nonCollectiveState.m_isScaleoutRequired);
     m_deviceController.setHostFences(m_streamId,
-                                     currentStream.getStreamIndex(),
+                                     currentStream.getUarchStreamIndex(),
                                      nonCollectiveState.m_isSend,
                                      nonCollectiveState.m_setup.m_scaleoutInternalFences,
                                      nonCollectiveState.m_execution.m_scaleoutFences);
@@ -239,7 +231,7 @@ void HclCollectiveRoutinesGen2Arch::provideScaleoutResources(NonCollectiveState&
     if (nonCollectiveState.m_setup.m_scaleoutInternalSOBs > 0)
     {
         WaitMethod waitMethod = nonCollectiveState.m_isSend ? WaitMethod::GPSO_0 : WaitMethod::GPSO_1;
-        sob_info   sob        = {.smIdx = m_deviceController.getSyncParams(m_streamId).m_smInfo.soSmIndex,
+        SobInfo    sob        = {.smIdx = m_deviceController.getSyncParams(m_streamId).m_smInfo.soSmIndex,
                                  .dcore = m_deviceController.getSyncParams(m_streamId).m_smInfo.soDcoreIndex,
                                  .ssm   = 0,
                                  .sobId = m_graphSync.getCurrentGeneralPurposeSo(waitMethod)};
@@ -390,7 +382,7 @@ void HclCollectiveRoutinesGen2Arch::getDeviceToRemoteIndex(CommonState&   common
                 VERIFY(false, "getDeviceToRemoteIndex: unsupported current op {}", commonState.m_currentOp);
         }
 
-        if (incWqeTracker && !GCFG_HCL_NULL_SUBMIT.value())
+        if (incWqeTracker && !m_nullSubmit)
         {
             m_wqeTracker->incWqe(commonState.m_dynamicComm,
                                  mod(rank, commonState.m_dynamicComm.getScaleupGroupSize()),
@@ -483,7 +475,8 @@ unsigned int HclCollectiveRoutinesGen2Arch::calcRequiredCreditAmount(CommonState
                                                 (unsigned)requiredExtraCredits);
             }
         }
-        else if (commonState.isScaleoutRequired(true, nexBoxNumInfo))
+        else if (commonState.isScaleoutRequired(true, nexBoxNumInfo) ||
+                 m_signalsManager->isEventRegistered(SignalEvent::HNIC_SCALEOUT_SEND))
         {
             uint64_t lastTargetVal = m_scaleoutProvider->getHostBufferManager(m_streamId)
                                          ->allocNextBuffer(m_longSo.targetValue, HNIC_SEND_POOL);
@@ -513,7 +506,8 @@ unsigned int HclCollectiveRoutinesGen2Arch::calcRequiredCreditAmount(CommonState
                                                 (unsigned)requiredExtraCredits);
             }
         }
-        else if (commonState.isScaleoutRequired(false, prevBoxNumInfo))
+        else if (commonState.isScaleoutRequired(false, prevBoxNumInfo) ||
+                 m_signalsManager->isEventRegistered(SignalEvent::HNIC_SCALEOUT_RECV))
         {
             unsigned continuousTargets = 0;
             if (commonState.m_currentOp == eHCLReduceScatter)
@@ -620,24 +614,26 @@ unsigned int HclCollectiveRoutinesGen2Arch::calcRequiredCreditAmount(CommonState
         }
     }
 
+    if (unlikely(m_requestStrongOrderIter))
+    {
+        requiredExtraCredits     = cgSize - 1;
+        m_requestStrongOrderIter = false;
+    }
+
     requiredExtraCredits = std::max((unsigned)1, requiredExtraCredits);
 
     return m_deviceController.handleExtraCredits(m_streamId, requiredExtraCredits);
 }
 
-uint64_t HclCollectiveRoutinesGen2Arch::getBufferClearSize(SliceState&    sendSliceState,
-                                                           uint64_t       scaleOutRecvCount,
-                                                           uint64_t       sizeInBytes,
-                                                           e_devicePoolID bufferId)
+void HclCollectiveRoutinesGen2Arch::addScaleoutInternalSOB(SliceState& sliceState, WaitMethod method)
 {
-    return sendSliceState.m_remainderCalculator->getBufferClearSize(sendSliceState.m_collectiveOp,
-                                                                    sizeInBytes,
-                                                                    bufferId,
-                                                                    sendSliceState.m_dataTypeSizeInBytes,
-                                                                    sendSliceState.m_rankScaleOutCount,
-                                                                    scaleOutRecvCount,
-                                                                    sendSliceState.isRoot(),
-                                                                    sendSliceState.m_16BitReduction,
-                                                                    sendSliceState.m_boxNumInfo,
-                                                                    sendSliceState.rootBox());
+    SobInfo sob = {.smIdx = m_deviceController.getSyncParams(m_streamId).m_smInfo.soSmIndex,
+                   .dcore = m_deviceController.getSyncParams(m_streamId).m_smInfo.soDcoreIndex,
+                   .ssm   = 0,
+                   .sobId = m_graphSync.getCurrentGeneralPurposeSo(method)};
+    sliceState.m_execution.m_scaleoutInternalSOBs.push_back(sob);
+    if (method != WaitMethod::GPSO_LONGTERM)
+    {
+        m_signalsManager->markMethodForCleanup(method);
+    }
 }

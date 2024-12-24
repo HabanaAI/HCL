@@ -52,8 +52,8 @@ GlobalConfSize GCFG_HCL_SLICE_SIZE(
 
 GlobalConfSize GCFG_HCL_GDR_SLICE_SIZE(
         "HCL_GDR_SLICE_SIZE",
-        "Slicing size in Gaudi-direct case, when HCL_INCREASED_SLICE_SIZE_FOR_GDR is enabled",
-        DfltSize(hl_gcfg::SizeParam("2MB")),
+        "Slicing size in Gaudi-direct case",
+        DfltSize(hl_gcfg::SizeParam("1MB")),
         MakePrivate);
 
 GlobalConfSize GCFG_FW_IMB_SIZE(
@@ -346,6 +346,12 @@ GlobalConfBool GCFG_HCL_NULL_SUBMIT(
     false,
     MakePrivate);
 
+GlobalConfUint64 GCFG_HCCL_PRIM_COLLECTIVE_MASK(
+        "HCCL_PRIM_COLLECTIVE_MASK",
+        "Bitmask to enable using primitive implementation of collectives (bitshift based on HCL_CollectiveOp)",
+        DfltUint64(DEFAULT_PRIM_COLLECTIVE_MASK) ,
+        MakePublic);
+
 GlobalConfBool GCFG_HCL_COLLECTIVE_LOG(
         "HCL_COLLECTIVE_LOG",
         "Collect HCL collective logs from all ranks to coordinator",
@@ -448,7 +454,7 @@ GlobalConfUint64 GCFG_HCL_HNIC_QP_SETS_COMM_SIZE_THRESHOLD(
 GlobalConfSize GCFG_HCL_HNIC_QP_SPRAY_THRESHOLD(
     "HCL_HNIC_QP_SPRAY_THRESHOLD",
     "Threshold of transaction size from which HNIC QP packet spray is enabled",
-    DfltSize(hl_gcfg::SizeParam("256kb")),
+    DfltSize(hl_gcfg::SizeParam("512kb")),
     MakePrivate);
 
 GlobalConfBool GCFG_HCL_ENABLE_G3_SR_AGG(
@@ -481,13 +487,6 @@ GlobalConfBool GCFG_HCCL_GET_MACS_FROM_DRIVER(
         false,
         MakePrivate);
 
-
-GlobalConfBool GCFG_HCL_ENABLE_HLCP(
-        "HCL_ENABLE_HLCP",
-        "use new coordinator",
-        true,
-        MakePublic);
-
 GlobalConfUint64 GCFG_HCL_HLCP_CLIENT_IO_THREADS(
         "HCL_HLCP_CLIENT_IO_THREADS",
         "HLCP client IO thread count",
@@ -515,7 +514,7 @@ GlobalConfUint64 GCFG_HCL_HLCP_OPS_TIMEOUT(
 GlobalConfBool GCFG_HCL_SINGLE_QP_PER_SET(
         "HCL_SINGLE_QP_PER_SET",
         "When true each QP set will contain a single QP, as opposed to 4 QPs when false",
-        true,
+        false,
         MakePrivate);
 
 GlobalConfBool GCFG_HCL_PROFILER_DEBUG_MODE(
@@ -524,8 +523,32 @@ GlobalConfBool GCFG_HCL_PROFILER_DEBUG_MODE(
         false,
         MakePublic);
 
-GlobalConfBool GCFG_HCL_GEN_UNIQUE_SERVER_ID(
-        "HCL_GEN_UNIQUE_SERVER_ID",
-        "use unique server ID to distinguish between hosts",
+GlobalConfString GCFG_HCL_HNIC_TCP_EXCLUDE_IF(
+        "HCL_HNIC_TCP_EXCLUDE_IF",
+        "Regex pattern of interface names to be filtered out for TCP providers",
+        std::string("^(lo|docker0|tunl0|virbr\\d)$"),
+        MakePrivate);
+
+GlobalConfBool GCFG_HCL_DFA_DUMP_WQE(
+        "HCL_DFA_DUMP_WQE",
+        "When true, dump all WQEs from all requester QPs on DFA. NOTE: Need to run as root.",
         false,
+        MakePublic);
+
+GlobalConfUint64 GCFG_HCL_FAULT_INJECT_LISTENER_PORT(
+        "HCL_FAULT_INJECT_LISTENER_PORT",
+        "TCP Port base to listen for fault injection thread, 0 if disabled",
+        0,
+        MakePrivate);
+
+GlobalConfUint64 GCFG_HCL_DBG_DYNAMIC_LAG_DROPPED_PORT_NUM(
+        "HCL_DBG_DYNAMIC_LAG_DROPPED_PORT_NUM",
+        "debug config - which port to drop",
+        0xFF,
+        MakePublic);
+
+GlobalConfUint64 GCFG_HCL_DBG_DYNAMIC_LAG_NUM_ITERATIONS(
+        "HCL_DBG_DYNAMIC_LAG_NUM_ITERATIONS",
+        "debug config - number of iterations to run until dropped port is restored",
+        0,
         MakePublic);

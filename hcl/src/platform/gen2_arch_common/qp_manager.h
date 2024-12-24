@@ -40,10 +40,15 @@ class QPManager
 {
 public:
     QPManager(HclDeviceGen2Arch& device) : m_device(device) {};
-    virtual ~QPManager() = default;
+    virtual ~QPManager()                   = default;
+    QPManager()                            = delete;  // Delete default constructor
+    QPManager(const QPManager&)            = delete;  // Delete copy constructor
+    QPManager& operator=(const QPManager&) = delete;  // Delete copy assignment
+    QPManager(QPManager&&)                 = delete;  // Delete move constructor
+    QPManager& operator=(QPManager&&)      = delete;  // Delete move assignment
 
-    virtual void registerQPs(const QPManagerHints& hints, const QpsVector& qps) = 0;
-    virtual void closeQPs(const QPManagerHints& hints)                          = 0;
+    virtual void addQPsToQPManagerDB(const QPManagerHints& hints, const QpsVector& qps) = 0;
+    virtual void ReleaseQPsResource(const QPManagerHints& hints)                        = 0;
     virtual void allocateQPDBStorage(const HCL_Comm comm) {};
 
     virtual uint32_t getQPn(const QPManagerHints& hints) const                      = 0;
@@ -51,26 +56,26 @@ public:
     virtual uint32_t getQPi(const HCL_CollectiveOp collectiveOp, const bool isSend) = 0;
     virtual uint32_t getDestQPi(const unsigned qpi) const                           = 0;
 
-    virtual void setConfiguration(hcl::ScalStream& stream, HCL_Comm comm, bool isSend)
+    virtual void setNicOffsetsAndLastRank(hcl::ScalStream& stream, const HCL_Comm comm, const bool isSend)
     {
         VERIFY(false, "unreachable code");
     };
 
-    virtual QPUsage getBaseQpAndUsage(HclDynamicCommunicator& dynamicComm,
-                                      HCL_CollectiveOp        collectiveOp,
-                                      bool                    isSend,
-                                      bool                    isComplexCollective,
-                                      bool                    isReductionInIMB,
-                                      bool                    isHierarchical,
-                                      uint64_t                count,
-                                      uint64_t                cellCount,
-                                      HclConfigType           boxType,
-                                      bool                    isScaleOut        = false,
-                                      HCL_Rank                remoteRank        = HCL_INVALID_RANK,
-                                      uint8_t                 qpSet             = 0,
-                                      const bool              isReduction       = false,
-                                      HCL_CollectiveOp        complexCollective = eHCLNoCollective,
-                                      bool                    isRoot            = false)
+    virtual QPUsage getBaseQpAndUsage(const HclDynamicCommunicator& dynamicComm,
+                                      HCL_CollectiveOp              collectiveOp,
+                                      bool                          isSend,
+                                      bool                          isComplexCollective,
+                                      bool                          isReductionInIMB,
+                                      bool                          isHierarchical,
+                                      uint64_t                      count,
+                                      uint64_t                      cellCount,
+                                      HclConfigType                 boxType,
+                                      bool                          isScaleOut        = false,
+                                      HCL_Rank                      remoteRank        = HCL_INVALID_RANK,
+                                      uint8_t                       qpSet             = 0,
+                                      const bool                    isReduction       = false,
+                                      HCL_CollectiveOp              complexCollective = eHCLNoCollective,
+                                      bool                          isRoot            = false)
     {
         VERIFY(false, "unreachable code");
         QPUsage ret = {0, false};

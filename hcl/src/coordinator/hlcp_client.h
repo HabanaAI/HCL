@@ -20,27 +20,33 @@
 #include "hlcp_commands.h"
 #include "coordinator.h"
 
-using ranks_addrs_t   = std::vector<sockaddr_t>;
-using addr_rank_map_t = std::unordered_map<std::string, HCL_Rank>;
-using rank_infos_t    = std::vector<RankInfoHeader>;
+using ranks_addrs_t = std::vector<sockaddr_t>;
+using rank_infos_t  = std::vector<RankInfoHeader>;
+
+// fwd decl;
+
+class IMigrationCallback;
 
 class hlcp_client_t
 : public IHcclCoordinatorClient
 , public coordinator_t
 {
 public:  // IHcclCoordinatorClient
-    hlcp_client_t(uint32_t nranks, HCL_Rank rank, const internal_unique_id_t* internalUniqueId);
+    hlcp_client_t(const uint32_t              nranks,
+                  const HCL_Rank              rank,
+                  const internal_unique_id_t* internalUniqueId,
+                  IMigrationCallback&         migrationCb);
+    hlcp_client_t(const hlcp_client_t&)            = delete;
+    hlcp_client_t& operator=(const hlcp_client_t&) = delete;
 
-    virtual bool destroy() override;
+    virtual bool exchangeRankInfo(int nranks, const RankInfoHeader& myRankInfo, rank_infos_t& ranksInfo) override;
 
-    virtual bool commInitHandshake1(int nranks, RankInfoHeader& myRankInfo, rank_infos_t& ranksInfo) override;
+    virtual bool exchangeQpsInfo(int                   nranks,
+                                 const RankInfoBuffer& rankInfoBuffer,
+                                 uint32_t              rankInfoBufferSize,
+                                 remote_devices_t&     remoteDevicesInfo) override;
 
-    virtual bool commInitHandshake2(int               nranks,
-                                    void*             rankInfoBuffer,
-                                    uint32_t          rankInfoBufferSize,
-                                    remote_devices_t& remoteDevicesInfo) override;
-
-    virtual bool syncBetweenRanks() override;
+    virtual bool rendezvous() override;
 
     virtual hcclResult_t sendCollectiveLog(const HCL_CollectiveOp op,
                                            const size_t           count,
@@ -48,29 +54,37 @@ public:  // IHcclCoordinatorClient
                                            const hcclRedOp_t      reduceOp,
                                            const HCL_Rank         peer,
                                            const HCL_Rank         root) override;
+
     virtual hcclResult_t sendCollectiveLogErr() override;
 
     virtual hcclResult_t sendRecvFromRanks(UniqueSortedVector& nonPeerRemoteRanks,
                                            std::vector<void*>& recvBuffers,
                                            std::vector<void*>& sendBuffers,
-                                           size_t              sendRecvBufSize,
-                                           HCL_Comm            comm) override;
+                                           size_t              sendRecvBufSize) override;
 
-    virtual void synchronizeRemoteRanks(const HCL_Comm comm, const UniqueSortedVector& remoteRanks) override;
+    virtual bool rendezvous(const UniqueSortedVector& remoteRanks) override;
+
+    virtual bool sendNicStateChange(const NicState& nicState) override;
+    virtual bool exchangeMigrationData(int                   nranks,
+                                       const RankInfoBuffer& myInfo,
+                                       uint32_t              rankInfoBufferSize,
+                                       remote_devices_t&     remoteDevicesInfo) override;
 
 public:                                                                               // coordinator_t
     virtual void on_command(hlcp_command_t& cmd, hlcp_t& connection) override;        // specific command
     virtual void on_message(const hlcp_message_t& msg, hlcp_t& connection) override;  // no payload
-    virtual void on_error(bool send, hlcp_command_t* cmd, const hlcp_packet_t& packet, hlcp_t& connection) override;
-    virtual void on_connect(hlcp_t& connection) override;
 
 private:
-    bool sync_non_peers(const HCL_Comm comm, const UniqueSortedVector& remoteRanks);
+    bool sync_non_peers(const UniqueSortedVector& remoteRanks);
     bool xchg_non_peer_data(const UniqueSortedVector& nonPeerRemoteRanks,
                             const std::vector<void*>& recvBuffers,
                             const std::vector<void*>& sendBuffers,
-                            size_t                    sendRecvBufSize,
-                            HCL_Comm                  comm);
+                            size_t                    sendRecvBufSize);
+
+    bool xchg_qps_conf(int                   nranks,
+                       const RankInfoBuffer& rankInfoBuffer,
+                       uint32_t              rankInfoBufferSize,
+                       remote_devices_t&     remoteDevicesInfo);
 
     bool non_peer_data_ready(const UniqueSortedVector& nonPeerRemoteRanks, bool init);
 
@@ -78,19 +92,26 @@ private:
     bool send_to_srv(const hlcp_command_t& cmd);
     bool send_log_msg(CollectiveLogMessage& msg);
 
+    void reset();
+
+    void on_hlcp_nic_state(hlcp_cmd_nic_state_t& cmd);
+    void on_hlcp_comm_data(hlcp_cmd_comm_data_t& cmd);
+    void on_hlcp_qps_conf(hlcp_cmd_qps_conf_t& cmd);
+    void on_hlcp_non_peer_data(hlcp_cmd_non_peers_t& cmd);
+    void on_hlcp_sync(hlcp_cmd_sync_t& cmd);
+
     HCL_Rank rank_  = HCL_INVALID_RANK;
     uint32_t ranks_ = 0;
 
     sockaddr_t hlcp_srv_;
 
-private:
     struct remote_device_conn_info_t
     {
         bool initialized = false;
         bool synched     = false;
         union _remote_device_conn_info_t
         {
-            RemoteDeviceConnectionInfo rd = {0};
+            RemoteDeviceConnectionInfo rd = {{0}};
             HostNicConnectInfo         hn;
 
             _remote_device_conn_info_t() {};
@@ -98,14 +119,6 @@ private:
     };
 
     using devices_conn_info_t = std::vector<remote_device_conn_info_t>;
-
-    enum
-    {
-        uninitialized,
-        comm_data,
-        qps_conf,
-        conf_done
-    } state_ = uninitialized;
 
     struct
     {
@@ -119,6 +132,5 @@ private:
     hlcp_cmd_sync_t      cmd_sync_;
 
     devices_conn_info_t non_peers_;
-    addr_rank_map_t     addr_rank_;
     ranks_addrs_t       rank_addr_;
 };

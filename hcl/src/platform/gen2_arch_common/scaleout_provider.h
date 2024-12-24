@@ -20,10 +20,10 @@ class HostBufferManager;
 class SignalsManager;
 class ofi_t;  // for getOfiHandle()
 
-constexpr unsigned MAX_NUM_POOLS = 20;
+constexpr unsigned MAX_NUM_HOST_POOLS = 20;
 struct HostBuffersAmount
 {
-    static constexpr std::array<std::pair<e_hostPoolID, unsigned>, MAX_NUM_POOLS> buffersArr = {
+    static constexpr std::array<std::pair<e_hostPoolID, unsigned>, MAX_NUM_HOST_POOLS> buffersArr = {
         {{HNIC_SEND_POOL, 16}, {HNIC_RECV_POOL, 16}}};
 
     static unsigned getBufferCount(e_hostPoolID key)
@@ -63,6 +63,12 @@ public:
 
     static ScaleoutProvider* createScaleOutProvider(HclDeviceGen2Arch* device);
 
+    virtual SignalEvent getScaleoutSendSignal()                                                        = 0;
+    virtual SignalEvent getScaleoutRecvSignal()                                                        = 0;
+    virtual int         getInternalScaleoutFences()                                                    = 0;
+    virtual int         setInternalScaleoutRecvWait(WaitMethod method, SignalsManager& signalsManager) = 0;
+    virtual void        validateSize(uint64_t size)                                                    = 0;
+
     // protected:
     HclDeviceGen2Arch* m_device = nullptr;
 };
@@ -85,6 +91,12 @@ public:
     virtual unsigned getNumOfNicsPerDevice(const HCL_Comm comm) const override;
     virtual void     requestScaleoutResources(SliceState& sliceState, SignalsManager& signalsManager) override;
     virtual void     requestScaleoutResources(NonCollectiveState& nonCollectiveState) override;
+
+    virtual SignalEvent getScaleoutSendSignal() override;
+    virtual SignalEvent getScaleoutRecvSignal() override;
+    virtual int         getInternalScaleoutFences() override;
+    virtual void        validateSize(uint64_t size) override;
+    virtual int         setInternalScaleoutRecvWait(WaitMethod method, SignalsManager& signalsManager) override;
 
 protected:
     void calculateScaleoutSendResources(SliceState& scaleupSetupInput, SignalsManager& signalsManager);
@@ -113,6 +125,12 @@ public:
     void             notifyHostScheduler(int archStreamIdx);
 
     virtual HostBufferManager* getHostBufferManager(unsigned streamIdx) override;
+
+    SignalEvent  getScaleoutSendSignal() override;
+    SignalEvent  getScaleoutRecvSignal() override;
+    virtual int  getInternalScaleoutFences() override;
+    virtual int  setInternalScaleoutRecvWait(WaitMethod method, SignalsManager& signalsManager) override;
+    virtual void validateSize(uint64_t size) override;
 
     std::vector<std::array<std::array<HostStream*, NUM_HOST_STREAMS>, HOST_MICRO_ARCH_STREAMS>> m_hostStreamVec;
 

@@ -13,6 +13,10 @@ namespace hcl
 class ScalStreamBase;
 }
 
+constexpr hcl::SchedulersIndex initCgSchedList[] = {hcl::SchedulersIndex::sendScaleUp,
+                                                    hcl::SchedulersIndex::recvScaleUp,
+                                                    hcl::SchedulersIndex::dma};
+
 namespace hcl
 {
 /**
@@ -35,13 +39,13 @@ public:
     virtual ~Gaudi3ScalManager();
 
     virtual void     initSimb(HclDeviceGen2Arch* device, uint8_t apiID) override;
-    virtual void     configQps(HCL_Comm comm, HclDeviceGen2Arch* device) override;
     virtual uint32_t getCMaxTargetValue() override;
 
+    uint64_t getInitCgNextSo();
+    int      getConfigurationCount() const { return m_configurationCount; };
+
 private:
-    virtual void configScaleupQps(HCL_Comm comm, HclDeviceGaudi3* device, bool isSend);
-    void         waitOnCg(Gen2ArchScalWrapper::CgComplex& cgComplex, const uint64_t target);
-    int          m_configurationCount = -1;
+    int m_configurationCount = -1;
 };
 
 }  // namespace hcl

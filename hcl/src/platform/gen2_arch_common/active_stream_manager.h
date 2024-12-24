@@ -32,6 +32,7 @@ public:
     hcl::ScalStream& getArbitratorStream(const hcl::SchedulersIndex schedIdx);
 
     inline hcl::ScalStream* getDmaScalStream(hcl::DMAStreams stream) { return m_dmaStreams[static_cast<int>(stream)]; }
+    void                    fillDmaStream(hcl::DMAStreams stream, unsigned archStreamIdx, unsigned schedIdx);
 
 private:
     llvm_vecsmall::SmallVector<hcl::ScalStream*, static_cast<size_t>(hcl::DMAStreams::max)> m_dmaStreams = {};
@@ -42,6 +43,4 @@ private:
     hcl::syncInfo&               m_longSo;
 
     CommonState* m_commonState;
-
-    void fillDmaStream(hcl::DMAStreams stream, unsigned archStreamIdx, unsigned schedIdx);
 };

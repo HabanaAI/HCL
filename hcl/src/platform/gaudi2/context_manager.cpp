@@ -11,7 +11,7 @@
 #include "platform/gaudi2/hcl_packets.h"                    // for serializeUpdate...
 #include "platform/gaudi2/nic_passthrough_handler.h"        // for NicPassthroughH...
 #include "platform/gaudi2/hal.h"                            // for Gaudi2Hal
-#include "sched_pkts.h"                                     // for g2fw
+#include "g2_sched_pkts.h"                                  // for g2fw
 #include "platform/gen2_arch_common/types.h"                // for reduction_datat...
 #include "hcl_global_conf.h"                                // for GCFG
 #include "platform/gaudi2/hcl_device.h"                     // for HclDeviceGaudi2
@@ -148,7 +148,7 @@ CachedCollectiveContext::CachedCollectiveContext(uint8_t                        
                                                  const std::vector<unsigned>&      nicEngines,
                                                  const Gen2ArchServerConnectivity& serverConnectivity,
                                                  HclCommandsGen2Arch&              commands)
-: m_lastSyncObjectAddressIndex(1),
+: m_lastSyncObjectAddressIndex(0),
   m_nicPassthroughHandler(nicEngines, serverConnectivity, commands),
   m_collectiveContextIndex(collectiveContextIndex)
 
@@ -169,17 +169,9 @@ void CachedCollectiveContext::dwordDiff(const RequiredCollectiveContext& require
 {
     dwordsForUpdate.DW0 = m_data.reduction_opcode != required.m_reductionOpcode.raw;
 
-    if ((m_data.sync_object_address_0 != required.m_syncObjectAddress) &&
-        (m_data.sync_object_address_1 != required.m_syncObjectAddress))
+    if (m_data.sync_object_address_0 != required.m_syncObjectAddress)
     {
-        if (m_lastSyncObjectAddressIndex == 1)
-        {
-            dwordsForUpdate.DW1 = true;
-        }
-        else
-        {
-            dwordsForUpdate.DW2 = true;
-        }
+        dwordsForUpdate.DW1 = true;
     }
 
     dwordsForUpdate.DW3 = m_data.buffer_addr_msb != required.m_addressMSB;
@@ -191,38 +183,8 @@ void CachedCollectiveContext::advanceSOB(edwords_t& dwordsForUpdate,
                                          unsigned&  syncObjectAddressIndex,
                                          uint64_t   requiredAddress)
 {
-    if (dwordsForUpdate.DW1)
-    {
-        m_lastSyncObjectAddressIndex = 0;
-    }
-    else if (dwordsForUpdate.DW2)
-    {
-        m_lastSyncObjectAddressIndex = 1;
-    }
-    else
-    {
-        if (requiredAddress == m_data.sync_object_address_0)
-        {
-            m_lastSyncObjectAddressIndex = 0;
-        }
-        else if (requiredAddress == m_data.sync_object_address_1)
-        {
-            m_lastSyncObjectAddressIndex = 1;
-        }
-    }
     syncObjectAddressIndex = m_lastSyncObjectAddressIndex;
-
-    switch (syncObjectAddressIndex)
-    {
-        case 0:
-            m_data.sync_object_address_0 += sizeof(uint32_t);
-            break;
-        case 1:
-            m_data.sync_object_address_1 += sizeof(uint32_t);
-            break;
-        default:
-            VERIFY(false);
-    }
+    m_data.sync_object_address_0 += sizeof(uint32_t);
 }
 
 void CachedCollectiveContext::addNicBufferToNicPassthroughHandler(const NicsDwordsArray& nicBuffer)
@@ -260,13 +222,14 @@ void ContextManager::serializeUpdateGlobalContext(hcl::ScalStreamBase& scalStrea
                                                   uint64_t             intermediateBaseAddress,
                                                   unsigned             intermediateSliceSize)
 {
-    SchedArcCommandsGaudi2::serializeUpdateGlobalContextCommand(scalStream,
-                                                                soAddressLSB,
-                                                                m_globalContexts,
-                                                                intermediateBaseAddress,
-                                                                intermediateBaseAddress,
-                                                                intermediateSliceSize,
-                                                                intermediateSliceSize);
+    SchedArcCommandsGaudi2::serializeUpdateGlobalContextCommand(scalStream, soAddressLSB, m_globalContexts);
+
+    SchedArcCommandsGaudi2::serializeUpdateGlobalContextInfo(scalStream,
+                                                             soAddressLSB,
+                                                             intermediateBaseAddress,
+                                                             intermediateBaseAddress,
+                                                             intermediateSliceSize,
+                                                             intermediateSliceSize);
 }
 
 void ContextManager::serializeUpdateGlobalContextScaleOut(hcl::ScalStreamBase& scalStream, uint32_t soAddressLSB)
@@ -508,10 +471,10 @@ void ContextManager::createCollectiveContexts(HclCommandsGen2Arch& commands, con
     {
         g2fw::nic_glbl_ctxt_t scaleoutGlobalContext;
         std::memset(&scaleoutGlobalContext, 0, sizeof(scaleoutGlobalContext));
-        scaleoutGlobalContext.total_nic_count = m_serverConnectivity.getNumScaleOutPorts(hclCommId);
-        scaleoutGlobalContext.sub_nic_idx =
-            m_serverConnectivity.getScaleoutSubPortIndex(m_serverConnectivity.getDefaultScaleOutPortByIndex(nic_idx),
-                                                         hclCommId);
+        scaleoutGlobalContext.total_nic_count = m_serverConnectivity.getNumScaleOutPortsGlbl(hclCommId);
+        scaleoutGlobalContext.sub_nic_idx     = m_serverConnectivity.getScaleoutSubPortIndexGlbl(
+            m_serverConnectivity.getDefaultScaleOutPortByIndex(nic_idx),
+            hclCommId);
         scaleoutGlobalContext.is_valid = 1;
         m_scaleoutGlobalContexts.push_back(scaleoutGlobalContext);
     }

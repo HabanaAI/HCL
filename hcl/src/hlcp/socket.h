@@ -180,3 +180,4 @@ static inline bool would_block()
 }
 
 std::ostream& operator<<(std::ostream& out, const socket_base_t& s);
+HLLOG_DEFINE_OSTREAM_FORMATTER(socket_base_t);

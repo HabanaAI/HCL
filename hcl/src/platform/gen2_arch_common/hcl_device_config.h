@@ -32,7 +32,8 @@ public:
     HclDeviceConfig& operator=(const HclDeviceConfig&) = delete;
     virtual ~HclDeviceConfig()                         = default;
 
-    bool init();
+    virtual bool init();
+    virtual void destroy() {};
 
     uint32_t          getHwModuleId() const { return m_hwModuleID; }
     int               getFd() const { return m_fd; }
@@ -76,4 +77,6 @@ protected:
     //       card_id:  [(dest_card, dest_nic), (dest_card, dest_nic), ...]
     std::map<unsigned, std::vector<std::pair<uint8_t, uint8_t>>> m_nics =
         std::map<unsigned, std::vector<std::pair<uint8_t, uint8_t>>>();
+
+    bool m_L3 = false; // gnic scaleout configuration. false: L2(MAC), true: L3(IP)
 };

@@ -2,44 +2,15 @@
 #include "platform/gen2_arch_common/hcl_packets_utils.h"
 
 #include <type_traits>
-
+#include "hccl_helpers.h"
 #include "hcl_utils.h"                                // for VERIFY
 #include "hcl_log_manager.h"                          // for LOG_*
 #include "platform/gaudi3/hcl_packets.h"              // for serializeAllocBa...
 #include "platform/gaudi3/send_recv_aggregator.h"     // for SendRecvAggregatorGaudi3
 #include "platform/gaudi3/nic_passthrough_handler.h"  // for pRecordWithMetadataGaudi3
-#include "profiler/gaudi3/gaudi3_global_stm_defs.h"
-#include "sched_pkts.h"  // for g3fw
+#include "platform/gaudi3/g3_sched_pkts.h"            // for g3fw
 
 HclCommandsGaudi3::HclCommandsGaudi3() : HclCommandsGen2Arch() {}
-
-bool HclCommandsGaudi3::isCastDown(uint32_t dmaType)
-{
-    return (g3fw::edma_eng_arc_cmd_t)dmaType == g3fw::NIC_EDMA_CMD_CAST_DOWN_CLEAR;
-}
-
-bool HclCommandsGaudi3::isCastUp(uint32_t dmaType)
-{
-    return (g3fw::edma_eng_arc_cmd_t)dmaType == g3fw::NIC_EDMA_CMD_CAST_UP_BATCH_V3;
-}
-
-bool HclCommandsGaudi3::isMemCpy(uint32_t dmaType)
-{
-    return (g3fw::edma_eng_arc_cmd_t)dmaType == g3fw::NIC_EDMA_CMD_MEMCPY_V3;
-}
-
-unsigned HclCommandsGaudi3::getDmaTypeCastUp()
-{
-    return g3fw::NIC_EDMA_CMD_CAST_UP_BATCH_V3;
-}
-unsigned HclCommandsGaudi3::getDmaTypeCastDown()
-{
-    return g3fw::NIC_EDMA_CMD_CAST_DOWN_CLEAR;
-}
-unsigned HclCommandsGaudi3::getDmaTypeMemCpy()
-{
-    return g3fw::NIC_EDMA_CMD_MEMCPY_V3;
-}
 
 void HclCommandsGaudi3::serializeDmaCommand(hcl::ScalStreamBase& scalStream, DmaCmdParams& cmd)
 {
@@ -153,48 +124,56 @@ void HclCommandsGaudi3::serializeScaleUpCollectiveOp(hcl::ScalStreamBase&   scal
 }
 
 void HclCommandsGaudi3::serializeScaleOutCollectiveOp(hcl::ScalStreamBase&    scalStream,
-                                                      ScaleOutCollectiveOpG3& scaleupCollectiveOp)
+                                                      ScaleOutCollectiveOpG3& scaleoutCollectiveOp)
 {
     // When All2All collective operation is being sliced,
     // We should serialize the command several times, in order
     // to be able to control the send offset (changes per chunk and iteration)
     // and the recv offset (changes per stride and iteration)
     uint64_t all2allOffset = 0;
-    uint64_t chunk         = scaleupCollectiveOp.m_cellCount;
+    uint64_t chunk         = scaleoutCollectiveOp.m_cellCount;
 
-    if (scaleupCollectiveOp.m_collectiveOp == eHCLAll2All)
+    if (scaleoutCollectiveOp.m_collectiveOp == eHCLAll2All)
     {
-        if (scaleupCollectiveOp.m_isSend)
+        if (scaleoutCollectiveOp.m_isSend)
         {
-            all2allOffset = chunk * scaleupCollectiveOp.m_dataType;
+            all2allOffset = chunk * hccl_data_type_elem_size(scaleoutCollectiveOp.m_dataType);
         }
         else
         {
-            all2allOffset = scaleupCollectiveOp.m_strideCount * scaleupCollectiveOp.m_dataType;
+            all2allOffset =
+                scaleoutCollectiveOp.m_strideCount * hccl_data_type_elem_size(scaleoutCollectiveOp.m_dataType);
         }
+        LOG_HCL_DEBUG(HCL,
+                      "Scaleout all2allOffset={} send={} stride={} data_typ={} chunk={}",
+                      all2allOffset,
+                      scaleoutCollectiveOp.m_isSend,
+                      scaleoutCollectiveOp.m_strideCount,
+                      scaleoutCollectiveOp.m_dataType,
+                      chunk);
     }
 
     hcclRedOp_t effectiveReductionOp =
-        (!scaleupCollectiveOp.m_doReduction) ? hcclOpNone : scaleupCollectiveOp.m_reduceOp;
+        (!scaleoutCollectiveOp.m_doReduction) ? hcclOpNone : scaleoutCollectiveOp.m_reduceOp;
     SchedArcCommandsGaudi3::serializeCollectiveCommand(scalStream,
-                                                       scaleupCollectiveOp.m_isSend,
+                                                       scaleoutCollectiveOp.m_isSend,
                                                        false,
-                                                       scaleupCollectiveOp.m_qpn,
-                                                       scaleupCollectiveOp.m_disregardRank,
-                                                       scaleupCollectiveOp.m_baseAddress +
-                                                           (all2allOffset * scaleupCollectiveOp.m_remoteRankIteration),
+                                                       scaleoutCollectiveOp.m_qpn,
+                                                       scaleoutCollectiveOp.m_disregardRank,
+                                                       scaleoutCollectiveOp.m_baseAddress +
+                                                           (all2allOffset * scaleoutCollectiveOp.m_remoteRankIteration),
                                                        chunk,
-                                                       scaleupCollectiveOp.m_hasBufferSize,
-                                                       scaleupCollectiveOp.m_count,
-                                                       scaleupCollectiveOp.m_dcore,
-                                                       scaleupCollectiveOp.m_ssm,
-                                                       scaleupCollectiveOp.m_sobId,
-                                                       scaleupCollectiveOp.m_ports_mask,
-                                                       scaleupCollectiveOp.m_collectiveOp,
+                                                       scaleoutCollectiveOp.m_hasBufferSize,
+                                                       scaleoutCollectiveOp.m_count,
+                                                       scaleoutCollectiveOp.m_dcore,
+                                                       scaleoutCollectiveOp.m_ssm,
+                                                       scaleoutCollectiveOp.m_sobId,
+                                                       scaleoutCollectiveOp.m_ports_mask,
+                                                       scaleoutCollectiveOp.m_collectiveOp,
                                                        effectiveReductionOp,
-                                                       scaleupCollectiveOp.m_dataType,
-                                                       scaleupCollectiveOp.m_ScaleupGroupSize,
-                                                       scaleupCollectiveOp.m_lagSize);
+                                                       scaleoutCollectiveOp.m_dataType,
+                                                       scaleoutCollectiveOp.m_ScaleupGroupSize,
+                                                       scaleoutCollectiveOp.m_lagSize);
 }
 
 void HclCommandsGaudi3::serializeScaleUpSendRecv(hcl::ScalStreamBase&              scalStream,
@@ -365,22 +344,23 @@ void HclCommandsGaudi3::serializeAllocBarrierCommand(hcl::ScalStreamBase& scalSt
                                                      unsigned             schedIdx,
                                                      uint32_t             completionGroupIndex,
                                                      uint32_t             requiredSobs,
-                                                     llvm_vecsmall::SmallVector<uint32_t, MAX_STREAM_TO_INC>* fences)
+                                                     llvm_vecsmall::SmallVector<uint32_t, MAX_STREAM_TO_INC>* fences,
+                                                     const LBWBurstData_t* destBurstData)
 {
     SchedArcCommandsGaudi3::serializeAllocBarrierCommand(scalStream,
                                                          schedIdx,
                                                          completionGroupIndex,
                                                          requiredSobs,
-                                                         fences);
+                                                         fences,
+                                                         destBurstData);
 };
 
 void HclCommandsGaudi3::serializeLbwWriteCommand(hcl::ScalStreamBase& scalStream,
                                                  unsigned             schedIdx,
                                                  uint32_t             destination,
-                                                 uint32_t             data,
-                                                 bool                 blockUntilCompletion)
+                                                 uint32_t             data)
 {
-    SchedArcCommandsGaudi3::serializeLbwWriteCommand(scalStream, schedIdx, destination, data, blockUntilCompletion);
+    SchedArcCommandsGaudi3::serializeLbwWriteCommand(scalStream, schedIdx, destination, data);
 };
 
 void HclCommandsGaudi3::serializeLbwWriteWithFenceDecCommand(hcl::ScalStreamBase& scalStream,
@@ -388,24 +368,21 @@ void HclCommandsGaudi3::serializeLbwWriteWithFenceDecCommand(hcl::ScalStreamBase
                                                              uint32_t             destination,
                                                              uint32_t             data,
                                                              uint32_t             fenceIndex,
-                                                             uint32_t             fenceTarget,
-                                                             bool                 blockUntilCompletion)
+                                                             uint32_t             fenceTarget)
 {
     SchedArcCommandsGaudi3::serializeLbwWriteWithFenceDecCommand(scalStream,
                                                                  schedIdx,
                                                                  destination,
                                                                  data,
                                                                  fenceIndex,
-                                                                 fenceTarget,
-                                                                 blockUntilCompletion);
+                                                                 fenceTarget);
 };
 
-void HclCommandsGaudi3::serializeLbwBurstWriteCommand(hcl::ScalStreamBase&      scalStream,
-                                                      unsigned                  schedIdx,
-                                                      const LBWBurstDestData_t& destData,
-                                                      bool                      blockUntilCompletion)
+void HclCommandsGaudi3::serializeLbwBurstWriteCommand(hcl::ScalStreamBase&  scalStream,
+                                                      unsigned              schedIdx,
+                                                      const LBWBurstData_t& destData)
 {
-    SchedArcCommandsGaudi3::serializeLbwBurstWriteCommand(scalStream, schedIdx, destData, blockUntilCompletion);
+    SchedArcCommandsGaudi3::serializeLbwBurstWriteCommand(scalStream, schedIdx, destData);
 };
 
 void HclCommandsGaudi3::serializeFenceDecCommand(hcl::ScalStreamBase& scalStream,

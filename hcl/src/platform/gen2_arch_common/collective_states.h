@@ -74,6 +74,41 @@ public:
     isSlicing(uint64_t totalCount, uint64_t totalCountPerRank, uint32_t bufferCount, uint32_t numRanks) = 0;
 };
 
+struct cuid_t
+{
+    union
+    {
+        struct
+        {
+            uint64_t collectiveOp        : 4;  // 0..3
+            uint64_t currentOp           : 4;  // 4..7
+            uint64_t inPlace             : 1;  // 8
+            uint64_t isRoot              : 1;  // 9
+            uint64_t isRootPeer          : 1;  // 10
+            uint64_t isRootBox           : 1;  // 11
+            uint64_t isMultiScaleupGroup : 1;  // 12
+            uint64_t isPeersOnly         : 1;  // 13
+            uint64_t isHostNic           : 1;  // 14
+            uint64_t isGaudiDirect       : 1;  // 15
+            uint64_t isFloat             : 1;  // 16
+            uint64_t isBf16              : 1;  // 17
+            uint64_t all2allIter         : 4;  // 18..21
+            uint64_t comm                : 16; // 22..37
+            uint64_t boxIterPhase        : 3;  // 38..40
+            uint64_t firstBox            : 1;  // 41
+            uint64_t lastBox             : 1;  // 42
+            uint64_t edgeIteration       : 1;  // 43
+            uint64_t firstScaleOut       : 1;  // 44
+            uint64_t reserved            : 19; // 45..63
+        };
+        uint64_t raw;
+    };
+    cuid_t(uint64_t val = 0) : raw(val) {}
+};
+
+std::ostream& operator<<(std::ostream& out, const cuid_t& cuid);
+HLLOG_DEFINE_OSTREAM_FORMATTER(cuid_t);
+
 class CommonState : public HclCollectiveParams
 {
 public:
@@ -81,6 +116,14 @@ public:
                          DeviceBufferManager& intermediateBufferManager,
                          bool                 isHostNic,
                          bool                 isGdr,
+                         unsigned             workDistributionGroupSize,
+                         const unsigned       maxNumScaleUpPortsPerConnection,
+                         unsigned             numScaleOutPorts,
+                         SignalsCalculator&   signalsCalculator,
+                         RemainderCalculator* remainderCalculator);
+
+    explicit CommonState(HclCollectiveParams& other,
+                         DeviceBufferManager& intermediateBufferManager,
                          unsigned             workDistributionGroupSize,
                          const unsigned       maxNumScaleUpPortsPerConnection,
                          unsigned             numScaleOutPorts,
@@ -122,6 +165,8 @@ public:
     uint64_t getIntermediateBuffer(e_devicePoolID poolIndex);
 
     const uint64_t m_hnicQpSprayThreshold;
+    const bool     m_singleQpPerSet;
+    const uint16_t m_qpSetCount;
     uint64_t       m_rankScaleUpCount;
     uint64_t       m_scaleUpStrideCount;
     uint64_t       m_boxCount;
@@ -190,8 +235,6 @@ public:
     bool     isSendAddrValid() const;
     bool     isRecvAddrValid() const;
 
-    void initializeSignalsCalculator();
-
     bool     isEdgeIteration(BoxNumInfo& boxNumInfo) const;
     bool     isEdgeIteration() const;
     unsigned calcBoxIterRecv(BoxNumInfo& boxNumInfo) const;
@@ -213,10 +256,10 @@ struct SliceExecutionOutput
     uint64_t m_deviceAddress = 0;
 
     // We requested 'm_setup.m_scaleoutInternalSOBs' sync objects. These are the actual SOBs.
-    llvm_vecsmall::SmallVector<sob_info, 16> m_scaleoutInternalSOBs;
+    llvm_vecsmall::SmallVector<SobInfo, 16> m_scaleoutInternalSOBs;
 
     // We requested 'm_setup.m_scaleoutInternalFences' fences. These are the actual fences.
-    llvm_vecsmall::SmallVector<fence_info, HOST_FENCES_NR> m_scaleoutFences;
+    llvm_vecsmall::SmallVector<FenceInfo, HOST_FENCES_NR> m_scaleoutFences;
 
     // These variables determine on which WaitEvent and on which WaitMethod the scaleout will signal to.
     WaitEvent  m_scaleoutCompletionWaitEvent  = WaitEvent::WAIT_EVENT_MAX;
@@ -249,18 +292,26 @@ public:
                         HCL_CollectiveOp     currentOp,
                         bool                 isSend,
                         unsigned             sliceIter,
-                        BoxNumInfo           boxNumInfo,
-                        int                  streamId);
+                        BoxNumInfo           boxNumInfo);
+
+    explicit SliceState(const CommonState& commonState,
+                        HCL_CollectiveOp   currentOp,
+                        bool               isSend,
+                        unsigned           sliceIter,
+                        BoxNumInfo         boxNumInfo);
 
     void calcBoxAndScaleOutCounts();
     bool gatherOpsWaitForRS(bool isScaleup);
+    void setScaleoutAddresses(HclAddressGenerator& addressGenerator, uint64_t offset);
+    void initSlice(bool calcScaleout = true);
+    void updateScaleoutCounts(HCL_Rank remoteRank, uint64_t inputCount, uint8_t requiredInternalFences);
 
     bool       m_isSend;
     unsigned   m_sliceIter;
     BoxNumInfo m_boxNumInfo;
+    HCL_Rank   m_remoteRank = HCL_INVALID_RANK;
 
     bool m_isHierarchicalFirst = false;
-    bool m_isHierarchicalLast  = false;
 
     struct SliceSetupOutput m_setup;
 

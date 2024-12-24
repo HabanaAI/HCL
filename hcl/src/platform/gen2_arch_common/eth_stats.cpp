@@ -99,7 +99,6 @@ void EthStats::getHabanaInterfaces(std::string pciAddr)
             close(sockFd);
             continue;
         }
-        close(sockFd);
 
         if (pciAddr != drvinfo.bus_info)
         {
@@ -107,6 +106,8 @@ void EthStats::getHabanaInterfaces(std::string pciAddr)
             close(sockFd);
             continue;
         }
+
+        close(sockFd);
 
         int port = getPortNum(ifName);
 

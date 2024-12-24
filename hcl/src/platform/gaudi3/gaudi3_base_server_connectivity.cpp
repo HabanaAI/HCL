@@ -115,11 +115,3 @@ bool Gaudi3BaseServerConnectivity::isRemoteScaleoutPort(const uint32_t remoteMod
 {
     return getGaudi3BasedRunTimeConnectivityConst(hclCommId).isRemoteScaleoutPort(remoteModuleId, remotePort);
 }
-
-std::ostream& operator<<(std::ostream& os, const DevicesSet& devices)
-{
-    std::stringstream ss;
-    std::copy(devices.begin(), devices.end(), std::ostream_iterator<decltype(*devices.begin())>(ss, ","));
-    os << ss.str();
-    return os;
-}

@@ -13,6 +13,8 @@
 #include "hccl_types.h"                                       // for hcclRedOp_t
 #include "platform/gaudi2/nic_passthrough_handler.h"          // for pRecordWithMetadata
 
+#define INIT_SEQUENCE_SIGNALS_FACTOR 2
+
 class ContextManager;
 class RequiredCollectiveContext;
 namespace hcl
@@ -140,31 +142,28 @@ public:
                          bool                       notifyRndvAck,
                          bool                       waitForRndvAcks);
 
-    virtual void
-    serializeAllocBarrierCommand(hcl::ScalStreamBase&                                     scalStream,
-                                 unsigned                                                 schedIdx,
-                                 uint32_t                                                 completionGroupIndex,
-                                 uint32_t                                                 requiredSobs,
-                                 llvm_vecsmall::SmallVector<uint32_t, MAX_STREAM_TO_INC>* fences = nullptr) override;
+    virtual void serializeAllocBarrierCommand(hcl::ScalStreamBase& scalStream,
+                                              unsigned             schedIdx,
+                                              uint32_t             completionGroupIndex,
+                                              uint32_t             requiredSobs,
+                                              llvm_vecsmall::SmallVector<uint32_t, MAX_STREAM_TO_INC>* fences = nullptr,
+                                              const LBWBurstData_t* destData = nullptr) override;
 
     virtual void serializeLbwWriteCommand(hcl::ScalStreamBase& scalStream,
                                           unsigned             schedIdx,
                                           uint32_t             destination,
-                                          uint32_t             data,
-                                          bool                 blockUntilCompletion = false) override;
+                                          uint32_t             data) override;
 
-    virtual void serializeLbwBurstWriteCommand(hcl::ScalStreamBase&      scalStream,
-                                               unsigned                  schedIdx,
-                                               const LBWBurstDestData_t& destData,
-                                               bool                      blockUntilCompletion = false) override;
+    virtual void serializeLbwBurstWriteCommand(hcl::ScalStreamBase&  scalStream,
+                                               unsigned              schedIdx,
+                                               const LBWBurstData_t& destData) override;
 
     virtual void serializeLbwWriteWithFenceDecCommand(hcl::ScalStreamBase& scalStream,
                                                       unsigned             schedIdx,
                                                       uint32_t             destination,
                                                       uint32_t             data,
                                                       uint32_t             fenceIndex,
-                                                      uint32_t             fenceTarget          = 1,
-                                                      bool                 blockUntilCompletion = false) override;
+                                                      uint32_t             fenceTarget = 1) override;
 
     virtual void serializeFenceDecCommand(hcl::ScalStreamBase& scalStream,
                                           unsigned             schedIdx,
@@ -217,13 +216,5 @@ public:
                                       uint32_t             sobAddr          = 0,
                                       bool                 isFirstBufferUse = false) override;
 
-    virtual void serializeSetTraceMarker(hcl::ScalStreamBase& scalStream, unsigned schedIdx, uint32_t val);
-
-protected:
-    virtual bool     isCastDown(uint32_t dmaType) override;
-    virtual bool     isCastUp(uint32_t dmaType) override;
-    virtual bool     isMemCpy(uint32_t dmaType) override;
-    virtual unsigned getDmaTypeCastUp() override;
-    virtual unsigned getDmaTypeCastDown() override;
-    virtual unsigned getDmaTypeMemCpy() override;
+    virtual void serializeSetTraceMarker(hcl::ScalStreamBase& scalStream, unsigned schedIdx, uint32_t val) override;
 };

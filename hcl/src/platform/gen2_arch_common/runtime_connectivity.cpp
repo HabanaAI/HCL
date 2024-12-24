@@ -65,10 +65,10 @@ void Gen2ArchRuntimeConnectivity::init(const ServerNicsConnectivityArray&  serve
     {
         m_serverConnectivity.setUnitTestsPortsMasks(m_fullScaleoutPorts, m_allPorts);
     }
-    setPortsMasks();
+    setPortsMasksGlbl();
     verifyPortsConfiguration();
     setNumScaleUpPorts();
-    setNumScaleOutPorts();
+    setNumScaleOutPortsGlbl();
     setMaxSubNics();
     initServerSpecifics();
 }
@@ -93,78 +93,19 @@ void Gen2ArchRuntimeConnectivity::assignCustomMapping(const ServerConnectivityUs
                  usersConnectivityConfig.getFilePathLoaded());
 }
 
-void Gen2ArchRuntimeConnectivity::setPortsMasks()
+void Gen2ArchRuntimeConnectivity::setPortsMasksGlbl()
 {
-    uint64_t scaleOutPortsMask = m_serverConnectivity.getUserScaleOutPortsMask();
-    LOG_HCL_DEBUG(HCL, "Started, m_hclCommId={}, scaleOutPortsMask={:024b}", m_hclCommId, scaleOutPortsMask);
+    RuntimePortsMasksUtils::SetPortsMaskInput input {.comm                         = m_hclCommId,
+                                                     .serverConnectivity           = m_serverConnectivity,
+                                                     .operationalScaleOutPortsMask = nics_mask_t(NBITS(64))};
 
-    // m_enabled_external_ports_mask should be the minimum between
-    // LKD port mask and user requested port mask (GCFG_SCALE_OUT_PORTS_MASK & GCFG_LOGICAL_SCALE_OUT_PORTS_MASK)
-    // GCFG_SCALE_OUT_PORTS_MASK.value() default = 0xc00100.
-    // GCFG_LOGICAL_SCALE_OUT_PORTS_MASK.value() is logical ports mask, LSB is logical SO port 0, default is
-    // 0xFFFFFF. It must be used for G3 since each device has different scaleout ports numbers Example for G2:
-    // +-------------------------------+---------------------------+-----------------------------+
-    // |           LKD mask            |          User mask        |          Used ports         |
-    // +-------------------------------+---------------------------+-----------------------------+
-    // |           0xc00100            |          0xc00000         |            22,23            |
-    // |         Enabled 8,22,23       |        Enabled 22,23      |                             |
-    // +-------------------------------+---------------------------+-----------------------------+
-    // |           LKD mask            |      New User mask        |          Used ports         |
-    // +-------------------------------+---------------------------+-----------------------------+
-    // |           0xc00100            |          0xFFFFFE         |            22,23            |
-    // |         Enabled 8,22,23       |        Disable 8          |                             |
-    // +-------------------------------+---------------------------+-----------------------------+
-    const uint16_t           maxScaleoutPorts = m_fullScaleoutPorts.count();  // TODO: collect for all comms
-    static const nics_mask_t allScaleoutNicsBits(NBITS(maxScaleoutPorts));
-    const nics_mask_t logicalScaleoutPortsMaskBits(allScaleoutNicsBits & GCFG_LOGICAL_SCALE_OUT_PORTS_MASK.value());
-    LOG_HCL_DEBUG(HCL,
-                  "maxScaleoutPorts={}, allScaleoutNicsBits={}, logicalScaleoutPortsMaskBits={}",
-                  maxScaleoutPorts,
-                  allScaleoutNicsBits.to_str(),
-                  logicalScaleoutPortsMaskBits.to_str());
-    nics_mask_t logicalScaleoutPortsMask;
+    RuntimePortsMasksUtils::SetPortsMaskOutput output = RuntimePortsMasksUtils::setPortsMasksCommon(input);
 
-    if (logicalScaleoutPortsMaskBits.count() < maxScaleoutPorts)  // any logical scaleout bit is reset?
-    {
-        LOG_HCL_INFO(HCL,
-                     "m_hclCommId={}, User requested logical scaleout ports mask of logicalScaleoutPortsMaskBits={}",
-                     m_hclCommId,
-                     logicalScaleoutPortsMaskBits.to_str());
-        uint64_t scaleoutPortIndex = 0;
-        for (uint16_t logical_port_idx = 0; logical_port_idx < maxScaleoutPorts; logical_port_idx++)
-        {
-            // find next scaleout port position from right
-            while ((scaleoutPortIndex < MAX_NICS_GEN2ARCH) && !isScaleoutPort(scaleoutPortIndex))
-            {
-                scaleoutPortIndex++;
-            }
-            if (logicalScaleoutPortsMaskBits[logical_port_idx])  // logical bit set, set correct scaleout port bit
-            {
-                logicalScaleoutPortsMask.set(scaleoutPortIndex);
-            }
-            scaleoutPortIndex++;
-        }
-        LOG_HCL_DEBUG(HCL,
-                      "m_hclCommId={}, Logical scaleout ports mask logicalScaleoutPortsMask={}",
-                      m_hclCommId,
-                      logicalScaleoutPortsMask.to_str());
-        scaleOutPortsMask &= logicalScaleoutPortsMask;
-    }
-    m_enabled_external_ports_mask = m_serverConnectivity.getLkdEnabledScaleoutPorts() & scaleOutPortsMask;
+    m_enabledExternalPortsMaskGlbl = output.enabledExternalPortsMask;
 
     // Define if scaleout global context should be updated - per user request & LKD ports mask
-    setUpdateScaleOutGlobalContextRequired(m_serverConnectivity.getLkdEnabledScaleoutPorts(), scaleOutPortsMask);
-
-    VERIFY(m_enabled_external_ports_mask != INVALID_PORTS_MASK, "External ports mask was not defined.");
-    LOG_HCL_INFO(HCL,
-                 "m_hclCommId={}, initialized with module_id {}, full ports mask {} external ports mask {}, "
-                 "user requested "
-                 "external ports mask {:024b}",
-                 m_hclCommId,
-                 m_moduleId,
-                 m_serverConnectivity.getEnabledPortsMask().to_str(),
-                 m_enabled_external_ports_mask.to_str(),
-                 scaleOutPortsMask);
+    setUpdateScaleOutGlobalContextRequiredGlbl(m_serverConnectivity.getLkdEnabledScaleoutPorts(),
+                                               nics_mask_t(output.scaleOutPortsMask));
 }
 
 int Gen2ArchRuntimeConnectivity::getRemoteDevice(const uint16_t port) const
@@ -214,7 +155,7 @@ void Gen2ArchRuntimeConnectivity::setNumScaleUpPorts()
     {
         if (isPortConnected(port_idx) && !isScaleoutPort(port_idx))
         {
-            m_enabled_scaleup_ports.set(port_idx);
+            m_enabledScaleupPorts.set(port_idx);
         }
     }
 }
@@ -263,11 +204,13 @@ uint16_t Gen2ArchRuntimeConnectivity::getMaxSubPort(const bool isScaleoutPort) c
     }
 }
 
-nics_mask_t Gen2ArchRuntimeConnectivity::getAllPorts(const int deviceId) const
+nics_mask_t Gen2ArchRuntimeConnectivity::getAllPorts(const int         deviceId,
+                                                     const nics_mask_t enabledExternalPortsMask) const
 {
     nics_mask_t       ports;
     const nics_mask_t enabledPorts =
-        (m_serverConnectivity.getEnabledPortsMask() & ~m_fullScaleoutPorts) | m_enabled_external_ports_mask;
+        nics_mask_t((m_serverConnectivity.getEnabledPortsMask() & ~m_fullScaleoutPorts) | enabledExternalPortsMask);
+
     for (unsigned port_idx = 0; port_idx < MAX_NICS_GEN2ARCH; port_idx++)
     {
         if (deviceId == getRemoteDevice(port_idx))
@@ -278,6 +221,11 @@ nics_mask_t Gen2ArchRuntimeConnectivity::getAllPorts(const int deviceId) const
     return ports;
 }
 
+nics_mask_t Gen2ArchRuntimeConnectivity::getAllPortsGlbl(const int deviceId) const
+{
+    return getAllPorts(deviceId, m_enabledExternalPortsMaskGlbl);
+}
+
 uint64_t Gen2ArchRuntimeConnectivity::getEnabledPortsMask() const
 {
     return m_serverConnectivity.getEnabledPortsMask();
@@ -285,17 +233,17 @@ uint64_t Gen2ArchRuntimeConnectivity::getEnabledPortsMask() const
 
 uint16_t Gen2ArchRuntimeConnectivity::getDefaultScaleUpPort() const
 {
-    return m_enabled_scaleup_ports(0);
+    return m_enabledScaleupPorts(0);
 }
 
-nics_mask_t Gen2ArchRuntimeConnectivity::getScaleOutPorts() const
+nics_mask_t Gen2ArchRuntimeConnectivity::getScaleOutPortsGlbl() const
 {
-    return m_enabled_scaleout_ports;
+    return m_enabledScaleoutPortsGlbl;
 }
 
 nics_mask_t Gen2ArchRuntimeConnectivity::getScaleUpPorts() const
 {
-    return m_enabled_scaleup_ports;
+    return m_enabledScaleupPorts;
 }
 
 void Gen2ArchRuntimeConnectivity::verifyPortsConfiguration() const
@@ -304,14 +252,14 @@ void Gen2ArchRuntimeConnectivity::verifyPortsConfiguration() const
     {
         if (isScaleoutPort(port_index))
         {
-            if (m_serverConnectivity.getEnabledPortsMask()[port_index] != m_enabled_external_ports_mask[port_index])
+            if (m_serverConnectivity.getEnabledPortsMask()[port_index] != m_enabledExternalPortsMaskGlbl[port_index])
             {
                 LOG_HCL_WARN(
                     HCL,
                     "m_hclCommId={}, Inconsistency between LKD ports mask {} and ext ports mask {} for port #{}",
                     m_hclCommId,
                     m_serverConnectivity.getEnabledPortsMask().to_str(),
-                    m_enabled_external_ports_mask.to_str(),
+                    m_enabledExternalPortsMaskGlbl.to_str(),
                     port_index);
             }
         }
@@ -347,11 +295,12 @@ void Gen2ArchRuntimeConnectivity::readAllPorts()
                  m_allPorts.to_str());
 }
 
-void Gen2ArchRuntimeConnectivity::setNumScaleOutPorts()
+void Gen2ArchRuntimeConnectivity::setNumScaleOutPortsGlbl()
 {
     uint16_t sub_port_index_min = 0;
     uint16_t sub_port_index_max = m_serverConnectivity.getMaxNumScaleOutPorts() - 1;  // Includes LKD mask
-
+    m_enabledScaleoutSubPortsGlbl.clear();
+    m_enabledScaleoutPortsGlbl = 0;
     // collect all ports that are pre-defined as scaleout ports and enabled in hl-thunk port mask
     for (uint16_t port_index = 0; port_index < MAX_NICS_GEN2ARCH; port_index++)
     {
@@ -366,15 +315,15 @@ void Gen2ArchRuntimeConnectivity::setNumScaleOutPorts()
             // +-------------------------------+---------------------------+-----------------------------+
             // |        8->2, 22->0, 23->1     |             1             |               22            |
             // +-------------------------------+---------------------------+-----------------------------+
-            if (m_enabled_external_ports_mask[port_index])
+            if (m_enabledExternalPortsMaskGlbl[port_index])
             {
-                m_enabled_scaleout_ports[port_index] = true;
-                m_enabled_scaleout_sub_ports.insert(std::make_pair(port_index, sub_port_index_min));
+                m_enabledScaleoutPortsGlbl[port_index] = true;
+                m_enabledScaleoutSubPortsGlbl.insert(std::make_pair(port_index, sub_port_index_min));
                 sub_port_index_min++;
             }
             else
             {
-                m_enabled_scaleout_sub_ports.insert(std::make_pair(port_index, sub_port_index_max));
+                m_enabledScaleoutSubPortsGlbl.insert(std::make_pair(port_index, sub_port_index_max));
                 sub_port_index_max--;
             }
         }
@@ -382,9 +331,9 @@ void Gen2ArchRuntimeConnectivity::setNumScaleOutPorts()
     LOG_HCL_INFO(HCL,
                  "Enabled number of scaleout ports for comm {} by LKD/user mask is: {} out of {} possible.",
                  m_hclCommId,
-                 m_enabled_scaleout_ports.to_str(),
+                 m_enabledScaleoutPortsGlbl.to_str(),
                  m_fullScaleoutPorts.to_str());
-    for (const auto kv : m_enabled_scaleout_sub_ports)
+    for (const auto kv : m_enabledScaleoutSubPortsGlbl)
     {
         LOG_HCL_DEBUG(HCL, "m_enabled_scaleout_sub_ports for comm {}: [{}, {}]", m_hclCommId, kv.first, kv.second);
     }
@@ -392,34 +341,117 @@ void Gen2ArchRuntimeConnectivity::setNumScaleOutPorts()
 
 uint16_t Gen2ArchRuntimeConnectivity::getNumScaleUpPorts() const
 {
-    return m_enabled_scaleup_ports.count();
+    return m_enabledScaleupPorts.count();
 }
 
-uint16_t Gen2ArchRuntimeConnectivity::getNumScaleOutPorts() const
+uint16_t Gen2ArchRuntimeConnectivity::getNumScaleOutPortsGlbl() const
 {
-    return m_enabled_scaleout_ports.count();
+    return m_enabledScaleoutPortsGlbl.count();
 }
 
-uint64_t Gen2ArchRuntimeConnectivity::getExternalPortsMask() const
+uint64_t Gen2ArchRuntimeConnectivity::getExternalPortsMaskGlbl() const
 {
-    return m_enabled_external_ports_mask;
+    return m_enabledExternalPortsMaskGlbl;
 }
 
-uint16_t Gen2ArchRuntimeConnectivity::getScaleoutSubPortIndex(const uint16_t port) const
+uint16_t Gen2ArchRuntimeConnectivity::getScaleoutSubPortIndexGlbl(const uint16_t port) const
 {
-    return m_enabled_scaleout_sub_ports.at(port);
+    return m_enabledScaleoutSubPortsGlbl.at(port);
 }
 
-void Gen2ArchRuntimeConnectivity::setUpdateScaleOutGlobalContextRequired(const uint64_t lkd_mask,
-                                                                         const uint64_t scaleOutPortsMask)
+void Gen2ArchRuntimeConnectivity::setUpdateScaleOutGlobalContextRequiredGlbl(const nics_mask_t lkd_mask,
+                                                                             const nics_mask_t scaleOutPortsMask)
 {
     // If LKD enables the same ports or less than the user requested, no need to update global scaleout context
     if (lkd_mask == (lkd_mask & scaleOutPortsMask))
     {
-        m_updateScaleOutGlobalContextRequired = false;
+        m_updateScaleOutGlobalContextRequiredGlbl = false;
     }
     else
     {
-        m_updateScaleOutGlobalContextRequired = true;
+        m_updateScaleOutGlobalContextRequiredGlbl = true;
     }
 }
+
+namespace RuntimePortsMasksUtils
+{
+SetPortsMaskOutput setPortsMasksCommon(const SetPortsMaskInput input)
+{
+    SetPortsMaskOutput output;
+
+    uint64_t scaleOutPortsMask = input.serverConnectivity.getUserScaleOutPortsMask();
+    LOG_DEBUG(HCL, "Started, m_hclCommId={}, scaleOutPortsMask={:024b}", input.comm, scaleOutPortsMask);
+
+    // m_enabled_external_ports_mask should be the minimum between
+    // LKD port mask and user requested port mask and the fault-tolerance mask (input from user):
+    //    (GCFG_SCALE_OUT_PORTS_MASK & GCFG_LOGICAL_SCALE_OUT_PORTS_MASK & operationalScaleOutPortsMask
+    // GCFG_SCALE_OUT_PORTS_MASK.value() default = 0xc00100.
+    // GCFG_LOGICAL_SCALE_OUT_PORTS_MASK.value() is logical ports mask, LSB is logical SO port 0, default is
+    // 0xFFFFFF. It must be used for G3 since each device has different scaleout ports numbers Example for G2:
+    // +-------------------------------+---------------------------+-----------------------------+
+    // |           LKD mask            |          User mask        |          Used ports         |
+    // +-------------------------------+---------------------------+-----------------------------+
+    // |           0xc00100            |          0xc00000         |            22,23            |
+    // |         Enabled 8,22,23       |        Enabled 22,23      |                             |
+    // +-------------------------------+---------------------------+-----------------------------+
+    // |           LKD mask            |      New User mask        |          Used ports         |
+    // +-------------------------------+---------------------------+-----------------------------+
+    // |           0xc00100            |          0xFFFFFE         |            22,23            |
+    // |         Enabled 8,22,23       |        Disable 8          |                             |
+    // +-------------------------------+---------------------------+-----------------------------+
+    const uint16_t maxScaleoutPorts =
+        input.serverConnectivity.getAllScaleoutPorts().count();  // TODO: collect for all comms
+    static const nics_mask_t allScaleoutNicsBits(NBITS(maxScaleoutPorts));
+    const nics_mask_t logicalScaleoutPortsMaskBits(allScaleoutNicsBits & GCFG_LOGICAL_SCALE_OUT_PORTS_MASK.value() &
+                                                   input.operationalScaleOutPortsMask);
+    LOG_DEBUG(HCL,
+              "maxScaleoutPorts={}, allScaleoutNicsBits={}, logicalScaleoutPortsMaskBits={}",
+              maxScaleoutPorts,
+              allScaleoutNicsBits.to_str(),
+              logicalScaleoutPortsMaskBits.to_str());
+    nics_mask_t logicalScaleoutPortsMask;
+
+    if (logicalScaleoutPortsMaskBits.count() < maxScaleoutPorts)  // any logical scaleout bit is reset?
+    {
+        LOG_INFO(HCL,
+                 "m_hclCommId={}, User requested logical scaleout ports mask of logicalScaleoutPortsMaskBits={}",
+                 input.comm,
+                 logicalScaleoutPortsMaskBits.to_str());
+        uint64_t scaleoutPortIndex = 0;
+        for (uint16_t logical_port_idx = 0; logical_port_idx < maxScaleoutPorts; logical_port_idx++)
+        {
+            // find next scaleout port position from right
+            while ((scaleoutPortIndex < MAX_NICS_GEN2ARCH) &&
+                   !input.serverConnectivity.isScaleoutPort(scaleoutPortIndex))
+            {
+                scaleoutPortIndex++;
+            }
+            if (logicalScaleoutPortsMaskBits[logical_port_idx])  // logical bit set, set correct scaleout port bit
+            {
+                logicalScaleoutPortsMask.set(scaleoutPortIndex);
+            }
+            scaleoutPortIndex++;
+        }
+        LOG_DEBUG(HCL,
+                  "m_hclCommId={}, Logical scaleout ports mask logicalScaleoutPortsMask={}",
+                  input.comm,
+                  logicalScaleoutPortsMask.to_str());
+        scaleOutPortsMask &= logicalScaleoutPortsMask;
+    }
+    output.enabledExternalPortsMask = input.serverConnectivity.getLkdEnabledScaleoutPorts() & scaleOutPortsMask;
+    output.scaleOutPortsMask        = scaleOutPortsMask;
+
+    VERIFY(output.enabledExternalPortsMask != INVALID_PORTS_MASK, "External ports mask was not defined.");
+    LOG_INFO(HCL,
+             "m_hclCommId={}, initialized full ports mask {} external ports mask {}, "
+             "user requested "
+             "external ports mask {:024b}",
+             input.comm,
+             input.serverConnectivity.getEnabledPortsMask().to_str(),
+             output.enabledExternalPortsMask.to_str(),
+             scaleOutPortsMask);
+
+    return output;
+}
+
+}  // namespace RuntimePortsMasksUtils

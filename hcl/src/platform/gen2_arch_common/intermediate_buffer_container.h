@@ -5,8 +5,6 @@
 #include <vector>
 #include <map>
 
-namespace hcl
-{
 constexpr unsigned MAX_NUM_POOLS = 20;
 struct IntermediateBuffersAmount
 {
@@ -47,12 +45,15 @@ struct BufferContainerParams
 class IntermediateBufferContainer
 {
 public:
-    explicit IntermediateBufferContainer(const uint32_t numberOfStreams);
-    ~IntermediateBufferContainer();
-    IntermediateBufferContainer(IntermediateBufferContainer&&)                 = delete;
-    IntermediateBufferContainer(const IntermediateBufferContainer&)            = delete;
-    IntermediateBufferContainer& operator=(IntermediateBufferContainer&&)      = delete;
-    IntermediateBufferContainer& operator=(const IntermediateBufferContainer&) = delete;
+    IntermediateBufferContainer(uint64_t numberOfStreams);
+    virtual ~IntermediateBufferContainer() = default;
+
+    void init();
+    void destroy();
+
+    virtual bool allocateDeviceMemory(const uint64_t size, uint64_t* buffer) = 0;
+    virtual void freeDeviceMemory(uint64_t buffer)                           = 0;
+    virtual void allocateFwIntermediateBuffer()                              = 0;
 
     uint64_t              getBufferSize() const;
     DeviceBufferManager&  getSIB(uint32_t streamIndex);
@@ -77,13 +78,15 @@ public:
                             const std::vector<e_devicePoolID>& pools,
                             BufferContainerParams&             bufferContainerParams);
 
+protected:
+    uint64_t m_fwBaseAddr = 0;
+    uint64_t m_fwImbSize  = 0;
+
 private:
     std::vector<DeviceBufferManager>                      m_sibBuffers;
-    uint64_t                                              m_fwBaseAddr      = 0;
-    uint32_t                                              m_numberOfStreams = 0;
+    uint64_t                                              m_numberOfStreams = 0;
     std::array<BufferContainerParams, MAX_NUM_POOL_SIZES> m_bufferContainerParams;
     e_devicePoolID                                        m_firstPool = NO_POOL;
     e_devicePoolID                                        m_lastPool  = NO_POOL;
     uint64_t                                              m_imbSize;
 };
-}  // namespace hcl

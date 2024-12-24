@@ -195,7 +195,6 @@ struct hcclInternalHandle
 struct hcclOfiHandle
 {
     ofi_req_t* req {nullptr};
-    ofiComm_t* ofiComm {nullptr};
     void*      recvBuffer {nullptr};
     int        size {0};
 };
@@ -204,7 +203,6 @@ struct hcclHandle
 {
     hcclHandle() {};
 
-    bool  isOfiReq {false};
     void* buffer {nullptr};
 
     union

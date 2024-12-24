@@ -47,12 +47,14 @@ SignalsManager::SignalWaitEvent::SignalWaitEvent(WaitEvent                      
                                                  llvm_vecsmall::SmallVector<SignalDescription, 8> signalDescs,
                                                  WaitMethod                                       waitMethod,
                                                  WaitPhase                                        waitPhase,
-                                                 unsigned                                         longtermSyncObjIdx)
+                                                 unsigned                                         longtermSyncObjIdx,
+                                                 bool                                             accSignals)
 : event(waitEvent),
   signals(signalDescs),
   method(waitMethod),
   currentPhase(waitPhase),
   longtermIdx(longtermSyncObjIdx),
+  accumulateSignals(accSignals),
   numSignals(0),
   numExecutedFences(0),
   numExpectedFences(1),
@@ -124,7 +126,7 @@ SignalsManager::SignalsManager(HclGraphSyncGen2Arch& graphSync,
   m_commonState(nullptr)
 {
     m_completionTracker.resize(hcl::ScalStream::getCcbSize() / MIN_SIZE_OF_FW_CMD);  // sizeofCCB/MinimumSizeOfCommand
-    m_cuidTracker.resize(hcl::ScalStream::getCcbSize() / MIN_SIZE_OF_FW_CMD);
+    m_allowGraphCaching = GCFG_HCL_ALLOW_GRAPH_CACHING.value();
 }
 
 SignalsManager::Graph::Graph()
@@ -144,7 +146,7 @@ SignalsManager::Graph::Graph()
 
 bool SignalsManager::isCachingRequired(CommonState& commonState)
 {
-    return GCFG_HCL_ALLOW_GRAPH_CACHING.value() && commonState.m_collectiveOp != eHCLNoCollective &&
+    return m_allowGraphCaching && commonState.m_collectiveOp != eHCLNoCollective &&
            commonState.m_collectiveOp != eHCLAll2All && commonState.m_collectiveOp != eHCLBroadcast &&
            commonState.m_collectiveOp != eHCLSimpleBroadcast;
 }
@@ -180,7 +182,7 @@ void SignalsManager::initialize(CommonState* commonState, uint64_t cuid)
 bool SignalsManager::updateGraph(uint64_t cuid, CommonState* commonState)
 {
     bool isCreated = false;
-    m_usingCache   = isCachingRequired(*commonState);
+    m_usingCache   = isCachingRequired(*commonState) && cuid != 0;
     if (m_usingCache)
     {
         if (unlikely(m_cache.count(cuid) == 0))
@@ -371,7 +373,7 @@ void SignalsManager::resetGraph()
 
     for (size_t i = 0; i < m_graph->m_methods.size(); i++)
     {
-        WaitPhase        lastPhaseForMethod = getLastPhase((WaitMethod)i, *m_graph);
+        WaitPhase        lastPhaseForMethod = getLastPhase((WaitMethod)i);
         SignalWaitEvent* lastPhase          = m_graph->m_methods[i][(unsigned)lastPhaseForMethod].waitEvent;
 
         if (!isLongTerm((WaitMethod)i) || (lastPhase != nullptr && lastPhase->wasCompleted()))
@@ -413,7 +415,8 @@ void SignalsManager::enqueueWait(WaitEvent                                      
                                  WaitMethod                                         waitMethod,
                                  WaitPhase                                          waitPhase,
                                  unsigned                                           numExpectedFences,
-                                 unsigned                                           longtermIdx)
+                                 unsigned                                           longtermIdx,
+                                 bool                                               accSignals)
 {
     if (likely((!m_graph->m_firstUse && !isReusableEvent(waitEvent)) ||
                (isReusableEvent(waitEvent) && !m_graph->m_firstCollective)))
@@ -423,6 +426,13 @@ void SignalsManager::enqueueWait(WaitEvent                                      
     }
 
     const WaitMethod effectiveMethod = (WaitMethod)(((unsigned)waitMethod) + longtermIdx);
+
+    LOG_HCL_DEBUG(HCL,
+                  "trying to enqueue event {} on method {} phase {} fence={}",
+                  waitEvent,
+                  waitMethod,
+                  waitPhase,
+                  numExpectedFences);
 
     if (m_graph->m_methods[(unsigned)effectiveMethod][waitPhase].waitEvent != nullptr)
     {
@@ -436,7 +446,7 @@ void SignalsManager::enqueueWait(WaitEvent                                      
     // Retrieve the SignalWaitEvent instance associated with waitEvent. If one doesn't exist - create one.
     if (!hasWaitEvent(waitEvent))
     {
-        m_graph->m_events[(unsigned)waitEvent] = {waitEvent, {}, effectiveMethod, waitPhase, longtermIdx};
+        m_graph->m_events[(unsigned)waitEvent] = {waitEvent, {}, effectiveMethod, waitPhase, longtermIdx, accSignals};
     }
     else if (isLongTerm(effectiveMethod))
     {
@@ -516,7 +526,7 @@ void SignalsManager::allocateResources()
     {
         unsigned   numSignals         = 0;
         WaitMethod waitMethod         = (WaitMethod)i;
-        WaitPhase  lastPhaseForMethod = getLastPhase(waitMethod, *m_graph);
+        WaitPhase  lastPhaseForMethod = getLastPhase(waitMethod);
 
         std::array<WaitPhaseEntry, WAIT_PHASE_MAX>& phases = m_graph->m_methods[i];
         if (isLongTerm(waitMethod) && lastPhaseForMethod != WAIT_PHASE_MAX)
@@ -541,7 +551,7 @@ void SignalsManager::allocateResources()
 
             if (!isReusableEvent(desc->event) || (isReusableEvent(desc->event) && phases[j].signalsPerPhase == 0))
             {
-                numSignals += calculateNumSignals(desc->event);
+                numSignals = desc->accumulateSignals ? numSignals + calculateNumSignals(desc->event) : numSignals;
                 phases[j].signalsPerPhase = numSignals;
             }
             desc->numSignals = numSignals;
@@ -551,26 +561,44 @@ void SignalsManager::allocateResources()
 
 void SignalsManager::updateCompletionTracker(uint64_t targetValue, uint64_t cuid)
 {
-    static const uint32_t             mask  = m_cgSize - 1;
-    static const SyncObjectDescriptor empty = {{0, 0, 0}, 0};
+    static const uint32_t                                           mask  = m_cgSize - 1;
+    static const SignalsManager::CompletionTracker::CompletionEntry empty = {{{0, 0, 0}, 0}, {}};
 
-    auto& tracker = m_completionTracker[targetValue & mask];
-    std::fill(tracker.begin(), tracker.end(), empty);
+    SignalsManager::CompletionTracker& tracker = m_completionTracker[targetValue & mask];
+    std::fill(tracker.entries.begin(), tracker.entries.end(), empty);
+    tracker.cuid = cuid;
 
-    for (size_t i = 0; i < m_graph->m_methods.size(); i++)
+    for (std::array<WaitPhaseEntry, WAIT_PHASE_MAX>& phases : m_graph->m_methods)
     {
-        std::array<WaitPhaseEntry, WAIT_PHASE_MAX>& phases             = m_graph->m_methods[i];
-        WaitPhase                                   lastPhaseForMethod = getLastPhase((WaitMethod)i, *m_graph);
-        if (lastPhaseForMethod != WAIT_PHASE_MAX)
+        int phase = 0;
+        for (WaitPhaseEntry& entry : phases)
         {
-            SignalWaitEvent* desc = phases[(int)lastPhaseForMethod].waitEvent;
+            SignalWaitEvent* desc = entry.waitEvent;
+            if (!desc || desc->event == WaitEvent::WAIT_EVENT_MAX)
+            {
+                break;
+            }
 
-            m_completionTracker[targetValue & mask][(unsigned)desc->method] = {
-                m_utils->getSOBInfo(getSoAddress(desc->method, desc->longtermIdx)),
-                desc->numSignals};
+            if (phase == 0)
+            {
+                tracker.entries[(unsigned)desc->method] = {
+                    {m_utils->getSOBInfo(getSoAddress(desc->method, desc->longtermIdx)), desc->numSignals},
+                    {}};
+            }
+            else
+            {
+                tracker.entries[(unsigned)desc->method].value = desc->numSignals;
+            }
+
+            for (SignalDescription& signalDesc : desc->signals)
+            {
+                tracker.entries[(unsigned)desc->method].signals.push_back(
+                    {signalDesc.event, calculateNumSignals(signalDesc)});
+            }
+
+            phase++;
         }
     }
-    m_cuidTracker[targetValue & mask] = cuid;
 }
 
 void SignalsManager::printGraph()
@@ -759,21 +787,20 @@ void SignalsManager::DFA(uint64_t deviceTargetValue)
     {
         return;
     }
-    auto&    arr  = m_completionTracker[(deviceTargetValue + 1) & (m_cgSize - 1)];
-    uint64_t cuid = m_cuidTracker[(deviceTargetValue + 1) & (m_cgSize - 1)];
+    SignalsManager::CompletionTracker& tracker = m_completionTracker[(deviceTargetValue + 1) & (m_cgSize - 1)];
     LOG_HCL_CONTEXT_CRITICAL(HCL,
-                             "ArchStream {} is stuck on Long So value {} (0x{:x}), CUID 0x{:x}",
+                             "ArchStream {} is stuck on Long So value {} (0x{:x}), {}",
                              m_archStream,
                              deviceTargetValue,
                              deviceTargetValue,
-                             cuid);
+                             cuid_t(tracker.cuid));
 
-    for (unsigned i = 0; i < arr.size(); i++)
+    for (unsigned i = 0; i < tracker.entries.size(); i++)
     {
-        SyncObjectDescriptor& desc = arr[i];
-        if (desc.sob.dcore == 0) continue;
+        SignalsManager::CompletionTracker::CompletionEntry& entry = tracker.entries[i];
+        if (entry.sob.dcore == 0) continue;
 
-        uint64_t addr = m_utils->calculateSoAddressFromIdxAndSM(desc.sob.dcore, desc.sob.sobId);
+        uint64_t addr = m_utils->calculateSoAddressFromIdxAndSM(entry.sob.dcore, entry.sob.sobId);
         uint32_t val;
         int rc = hlthunk_device_memory_read_block_experimental(hccl_device()->getFd(), &val, addr, sizeof(uint32_t), 0);
         VERIFY(rc == 0);
@@ -784,11 +811,11 @@ void SignalsManager::DFA(uint64_t deviceTargetValue)
             case WaitMethod::EXTERNAL_CG_SO:
                 LOG_HCL_CRITICAL(HCL,
                                  "expecting resource {} ({}) to reach value CMAX (0x{:x}) by incrementing {} signals. "
-                                 "current value: 0x{:x} (missing {} signals)",
+                                 "current value: 0x{:x} -- missing {} signals:",
                                  waitMethod,
-                                 m_utils->printSOBInfo(desc.sob),
+                                 m_utils->printSOBInfo(entry.sob),
                                  m_utils->getCMaxTargetValue(),
-                                 desc.value,
+                                 entry.value,
                                  val,
                                  m_utils->getCMaxTargetValue() - val);
                 break;
@@ -803,33 +830,45 @@ void SignalsManager::DFA(uint64_t deviceTargetValue)
             case WaitMethod::GPSO_LONGTERM_6:
             case WaitMethod::GPSO_LONGTERM_7:
             case WaitMethod::GPSO_LONGTERM_8:
-                LOG_HCL_CRITICAL(HCL,
-                                 "expecting resource {} ({}) to reach value {}. current value: {}"
-                                 " (missing {} signals)",
-                                 waitMethod,
-                                 m_utils->printSOBInfo(desc.sob),
-                                 desc.value,
-                                 val,
-                                 desc.value - val);
+                LOG_HCL_CRITICAL(
+                    HCL,
+                    "expecting resource {} ({}) to reach value {}. current value: {} -- missing {} signals:",
+                    waitMethod,
+                    m_utils->printSOBInfo(entry.sob),
+                    entry.value,
+                    val,
+                    entry.value - val);
                 break;
             default:
                 VERIFY(false);
         }
+
+        LOG_CONTEXT_INIT(HCL);  // manually open log context to indent by 4
+        for (CompletionTracker::CompletionEntry::Signal& signal : entry.signals)
+        {
+            LOG_HCL_CRITICAL(HCL, "signal {} (signaling {} times)", signal.event, signal.numSignals);
+        }
     }
 }
 
-WaitPhase SignalsManager::getLastPhase(WaitMethod waitMethod, Graph& graph) const
+WaitPhase SignalsManager::getLastPhase(WaitMethod waitMethod, bool ignoreSignals) const
 {
     WaitPhase ret = WAIT_PHASE_MAX;
 
-    const std::array<WaitPhaseEntry, WAIT_PHASE_MAX>& phases = graph.m_methods[(unsigned)waitMethod];
-    for (unsigned i = 0; i < graph.m_maxPhases && phases[i].waitEvent != nullptr; i++)
+    const std::array<WaitPhaseEntry, WAIT_PHASE_MAX>& phases = m_graph->m_methods[(unsigned)waitMethod];
+    for (unsigned i = 0; i < m_graph->m_maxPhases && phases[i].waitEvent != nullptr; i++)
     {
-        if (phases[i].waitEvent->numSignals > 0)
+        if (phases[i].waitEvent->numSignals > 0 || ignoreSignals)
         {
             ret = i;
         }
     }
 
     return ret;
+}
+
+WaitPhase SignalsManager::getNextPhase(WaitMethod waitMethod) const
+{
+    WaitPhase lastPhase = getLastPhase(waitMethod, true);
+    return lastPhase == WAIT_PHASE_MAX ? 0 : lastPhase + 1;
 }

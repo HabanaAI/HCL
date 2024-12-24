@@ -2,11 +2,6 @@
 
 namespace hcl
 {
-uint64_t Gaudi2Hal::getFlushPCIeReg() const
-{
-    return m_flushReg;
-}
-
 uint32_t Gaudi2Hal::getMaxQpPerInternalNic() const
 {
     return m_maxQpPerInternalNic;

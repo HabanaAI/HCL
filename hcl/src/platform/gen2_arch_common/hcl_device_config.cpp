@@ -145,10 +145,13 @@ bool HclDeviceConfig::parseGaudinet()
                           gatewayMac);
             m_gaudiNet.insert({nicMac, netInfo});
         }
+        LOG_INFO_F(HCL, "L3 Gaudi Net config file was found at {}. Using L3 configuration", gaudinetFileCStr);
+
+        m_L3 = true;
     }
     else
     {
-        LOG_HCL_INFO(HCL, "No L3 Gaudi Net config file was found at {}. Assuming L2 configuration", gaudinetFileCStr);
+        LOG_INFO_F(HCL, "No L3 Gaudi Net config file was found at {}. Assuming L2 configuration", gaudinetFileCStr);
     }
 
     return true;
@@ -197,7 +200,7 @@ void HclDeviceConfig::initHostName()
         LOG_HCL_ERR(HCL, "hostname size is bigger than HOSTNAME_MAX_LENGTH ({})", HOSTNAME_MAX_LENGTH);
         memset(m_hostname, 0, HOSTNAME_MAX_LENGTH);
     }
-    else if (GCFG_HCL_GEN_UNIQUE_SERVER_ID.value())
+    else
     {
         // Read boot_id
         std::ifstream boot_id_file(BOOT_ID_FILE);
@@ -232,6 +235,8 @@ void HclDeviceConfig::initHostName()
 void HclDeviceConfig::fillDeviceInfo(RankInfoHeader& dest)
 {
     dest.hwModuleID = getHwModuleId();
+    dest.L3         = m_L3;
+
     if (!isLoopbackMode())
     {
         std::string hostname = getHostName();

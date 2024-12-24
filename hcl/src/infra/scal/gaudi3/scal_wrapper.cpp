@@ -5,7 +5,7 @@
 #include "infra/scal/gen2_arch_common/scal_utils.h"  // for Gen2ArchScalUtils
 
 #include "gaudi3/asic_reg_structs/arc_acp_eng_regs.h"  // block_arc_acp_eng
-#include "sched_pkts.h"                                // for g3fw
+#include "gaudi3/asic_reg/gaudi3_blocks.h"             // arc blocks
 
 namespace hcl
 {
@@ -13,12 +13,6 @@ class ScalJsonNames;
 }
 
 using namespace hcl;
-
-Gaudi3ScalWrapper::Gaudi3ScalWrapper(scal_handle_t deviceHandle, ScalJsonNames& scalNames)
-: Gen2ArchScalWrapper(deviceHandle, scalNames)
-{
-    m_utils = new Gaudi3HclScalUtils();
-}
 
 Gaudi3ScalWrapper::Gaudi3ScalWrapper(int fd, ScalJsonNames& scalNames) : Gen2ArchScalWrapper(fd, scalNames)
 {
@@ -28,6 +22,7 @@ Gaudi3ScalWrapper::Gaudi3ScalWrapper(int fd, ScalJsonNames& scalNames) : Gen2Arc
 Gaudi3ScalWrapper::~Gaudi3ScalWrapper()
 {
     if (m_utils) delete m_utils;
+    m_utils = nullptr;
 }
 
 uint64_t Gaudi3ScalWrapper::getArcAcpEng(unsigned smIndex) const

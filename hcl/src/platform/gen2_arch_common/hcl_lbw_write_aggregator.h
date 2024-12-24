@@ -17,7 +17,7 @@ public:
     virtual ~HclLbwWriteAggregator();
 
 private:
-    LBWBurstDestData_t   m_burstContainer;
+    LBWBurstData_t       m_burstContainer;
     hcl::ScalStream*     m_scalStream;
     unsigned             m_schedIdx;
     HclCommandsGen2Arch& m_commands;

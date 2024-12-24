@@ -30,7 +30,7 @@ HclCollectiveRoutinesGaudi2::HclCollectiveRoutinesGaudi2(HclDeviceGaudi2* device
   m_gaudi2Commands((HclCommandsGaudi2&)m_commands)
 {
     LOG_HCL_TRACE(HCL, "Initializing collective routines");
-    m_addressGenerator    = std::make_unique<HclAddressGeneratorGaudi2>(m_commands);
+    m_addressGenerator    = std::make_unique<HclAddressGeneratorGaudi2>();
     m_memHandler          = std::make_unique<HclCollectiveMemHandlerGaudi2>(m_streamId,
                                                                    *m_addressGenerator,
                                                                    m_intermediateBufferManager,
@@ -44,6 +44,7 @@ HclCollectiveRoutinesGaudi2::HclCollectiveRoutinesGaudi2(HclDeviceGaudi2* device
 HclCollectiveRoutinesGaudi2::~HclCollectiveRoutinesGaudi2()
 {
     if (m_utils) delete m_utils;
+    m_utils = nullptr;
     if (m_remainderCalculator) delete m_remainderCalculator;
 }
 
@@ -148,7 +149,7 @@ void HclCollectiveRoutinesGaudi2::memsetIMBsIfNeeded(SliceState&      sendSliceS
 {
     for (auto buffer_pool : m_memset_buffers)
     {
-        m_memHandler->memsetIMBs(m_device->m_sibContainer,
+        m_memHandler->memsetIMBs(m_device->m_sibContainer.get(),
                                  m_signalsManager,
                                  sendSliceState,
                                  recvSliceState,

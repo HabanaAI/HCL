@@ -9,6 +9,7 @@
 #include "platform/gaudi2/hcl_count_descriptor.h"            // for CountDescriptor
 #include "platform/gen2_arch_common/send_recv_aggregator.h"  // for SendRecvEntry
 #include "platform/gen2_arch_common/server_connectivity.h"   // for Gen2ArchServerConnectivity
+#include "hcl_types.h"                                       // for NUM_SCALEUP_PORTS_PER_CONNECTION
 
 class HclCommandsGen2Arch;
 namespace hcl

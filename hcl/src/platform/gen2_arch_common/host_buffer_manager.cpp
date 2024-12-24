@@ -7,7 +7,9 @@ HostBufferManager::HostBufferManager(const uint64_t               mappedBaseAddr
                                      const uint64_t               hostBaseAddr,
                                      const std::vector<unsigned>& sizes,
                                      const uint64_t               singleBufferSize)
-: BufferManagerBase({mappedBaseAddr, singleBufferSize, 0, 2}, sizes), m_hostBaseAddr(hostBaseAddr)
+: BufferManagerBase(std::array<BufferParams, 1> {{{mappedBaseAddr, singleBufferSize, 0, 2}}}, sizes),
+  m_hostBaseAddr(hostBaseAddr)
+
 {
     m_bufferParams[0].m_totalPoolsAmount = 0;
     for (unsigned i = 0; i < m_poolSizes.size(); ++i)

@@ -286,6 +286,11 @@ enum mcid_wr64_base_ids_t {
 #define QMAN_ENGINE_GROUP_TYPE_COUNT		16
 
 /**
+ * Total number of Dcores
+ */
+#define SCHED_ARC_MAX_DCORE				4
+
+/**
  * Total number of HDcores
  */
 #define SCHED_ARC_MAX_HDCORE			8

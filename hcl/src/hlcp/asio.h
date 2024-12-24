@@ -32,11 +32,11 @@ class asio_client_t
     {
         added = 0,
         armed = 1
-    }; //bits in mode
+    };  // bits in mode
 
 protected:
-    asio_t* asio = nullptr;
-    bits_t mode_ = 0;
+    asio_t* asio  = nullptr;
+    bits_t  mode_ = 0;
 
 public:
     asio_client_t() = default;
@@ -76,6 +76,7 @@ public:
     bool add_workers(uint32_t io_threads);
     bool stop();
 
+    using asio_client_t::arm_monitor;  // to avoid compiler "hides overloaded virtual function" error
     bool arm_monitor(asio_client_t& ioc);
     bool remove(asio_client_t& ioc);
 

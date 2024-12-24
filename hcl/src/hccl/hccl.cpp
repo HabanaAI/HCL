@@ -19,6 +19,9 @@
 #include <cstring>                 // for strcmp
 #include <memory>                  // for shared_ptr
 #include <string>                  // for string
+#include <mutex>                   // for mutx, unique_lock
+#include <atomic>
+#include <condition_variable>
 
 #include "common/shim_types.h"       // for SHIM_API_HCCL, SHIM...
 #include "dfa_defines.hpp"           // for DfaErrorCode, DfaEr...
@@ -31,10 +34,11 @@
 #include "hcl_public_streams.h"      // for tdrDetectionFlag
 #include "hcl_types.h"               // for HclConfigType, LOOP...
 #include "hcl_utils.h"               // for HCL_API_LOG_ENTRY
+#include "hccl_api_inc.h"            // for HCCL_TRY
 #include "internal/hccl_internal.h"  // for hcclDFA, hcclDestro...
-#include "network_utils.h"           // for get_global_comm_id
 #include "hcl_log_manager.h"         // for LOG_ERR, LOG_DEBUG
 #include "hccl_gen2_impl.h"          // for Gen2 hccl impl under HclGen2
+#include "hccl_wrapper.h"            // for hccl*_Wrapper
 
 struct HCL_Request;
 
@@ -45,8 +49,16 @@ struct HCL_Request;
 #define HCCL_API_CALL __attribute__((visibility("default")))
 
 hccl_context hccl_ctx;
-DfaPhase     g_dfaPhase = DfaPhase::NONE;
-std::mutex   g_dfaMutex;
+
+// DFA vars
+DfaPhase   g_dfaPhase = DfaPhase::NONE;
+std::mutex g_dfaMutex;
+
+// Fault tolerance vars
+std::atomic<bool> g_faultsCheckStopApi {false};  // To check conditions for faults API stop handling only when necessary
+std::atomic<bool> g_faultsStopAllApi {false};    // To track stop API request
+std::condition_variable g_faultsStopAllApiCv;    // CV to block user API threads
+std::mutex              g_faultsStopAllApiMutex;  // Mutex for condition variable
 
 static hcclResult_t syncHCLStreamHandle(synStreamHandle stream_handle)
 {
@@ -59,64 +71,27 @@ static hcclResult_t syncHCLStreamHandle(synStreamHandle stream_handle)
 
 hcclResult_t HCCL_API_CALL hcclGetVersion_Original(int* version)
 {
-    HCCL_TRY
-    RETURN_ON_NULL_ARG(version);
-
-    *version = HCCL_VERSION_CODE;
-    LOG_DEBUG(HCL_API, "HCCL Version is: {}", *version);
-    HCCL_API_EXIT(hcclSuccess)
+    return hcclGetVersion_Wrapper(version);
 }
 
 hcclResult_t HCCL_API_CALL hcclGetUniqueId_Original(hcclUniqueId* uniqueId)
 {
-    HCCL_TRY
-    hcclResult_t status = hccl_ctx.get_unique_id(uniqueId);
-    HCCL_API_EXIT(status)
-}
-
-bool use_global_comm_id()
-{
-    return (g_hccl_first_comm_was_initialized == false && !get_global_comm_id().empty());
+    return hcclGetUniqueId_Wrapper(uniqueId);
 }
 
 hcclResult_t HCCL_API_CALL hcclCommInitRank_Original(hcclComm_t* comm, int nranks, hcclUniqueId& commId, int rank)
 {
-    HCCL_TRY
-
-    if (use_global_comm_id())
-    {
-        hccl_ctx.generateGlobalUniqueId(commId);
-    }
-
-    std::string comm_id_str = hccl_ctx.unique_id_to_string(commId);
-    HCL_API_LOG_ENTRY("(nranks={}, commId={}, rank={})", nranks, comm_id_str, rank);
-    hcclResult_t res = hccl_ctx.comm_init_rank(comm, nranks, commId, rank);
-    if (res == hcclSuccess)
-    {
-        HCL_API_LOG_ENTRY("(comm={})", *comm);
-    }
-    else
-    {
-        LOG_ERR(HCL_API, "hcclCommInitRank_Original failed({})", res);
-    }
-
-    HCCL_API_EXIT(res)
+    return hcclCommInitRank_Wrapper(comm, nranks, commId, rank);
 }
 
 hcclResult_t HCCL_API_CALL hcclCommInitAll_Original(hcclComm_t* comm, int ndev, const int* devlist)
 {
-    HCCL_TRY
-    LOG_ERR(HCL_API, "hcclCommInitAll not implemented!");
-    hcclResult_t status = hcclInvalidUsage;
-    HCCL_API_EXIT(status)
+    return hcclCommInitAll_Wrapper(comm, ndev, devlist);
 }
 
 hcclResult_t HCCL_API_CALL hcclCommFinalize_Original(hcclComm_t comm)
 {
-    HCCL_TRY
-    auto* hcclComm = hccl_ctx.communicator(comm);
-    hcclComm->finalize();
-    HCCL_API_EXIT(hcclResult_t::hcclSuccess)
+    return hcclCommFinalize_Wrapper(comm);
 }
 
 static bool hcclIsACcbHalfFull_Original(const unsigned archStreamIdx)
@@ -133,66 +108,42 @@ static void hcclSetTraceMarker_Original(const synStreamHandle stream_handle, uin
 
 hcclResult_t HCCL_API_CALL hcclCommDestroy_Original(hcclComm_t comm)
 {
-    HCCL_TRY
-    hcclResult_t status = hccl_ctx.comm_destroy(comm);
-    HCCL_API_EXIT(status)
+    return hcclCommDestroy_Wrapper(comm);
 }
 
 hcclResult_t HCCL_API_CALL hcclCommAbort_Original(hcclComm_t comm)
 {
-    HCCL_TRY
-    hcclResult_t status = hcclCommDestroy(comm);
-    HCCL_API_EXIT(status)
+    return hcclCommAbort_Wrapper(comm);
 }
 
 HCCL_API_CALL const char* hcclGetErrorString_Original(hcclResult_t result)
 {
-    return get_error_string(result);
+    return hcclGetErrorString_Wrapper(result);
 }
 
 hcclResult_t HCCL_API_CALL hcclCommGetAsyncError_Original(hcclComm_t comm, hcclResult_t* asyncError)
 {
-    HCCL_TRY
-    auto* hccl_comm = hccl_ctx.communicator(comm);
-    RETURN_ON_INVALID_HCCL_COMM(hccl_comm);
-    hcclResult_t status = hccl_comm->get_async_error(asyncError);
-    HCCL_API_EXIT(status)
+    return hcclCommGetAsyncError_Wrapper(comm, asyncError);
 }
 
 hcclResult_t HCCL_API_CALL hcclCommCount_Original(hcclComm_t comm, int* count)
 {
-    HCCL_TRY
-    auto* hccl_comm = hccl_ctx.communicator(comm);
-    RETURN_ON_INVALID_HCCL_COMM(hccl_comm);
-    hcclResult_t status = hccl_comm->comm_count(count);
-    HCCL_API_EXIT(status)
+    return hcclCommCount_Wrapper(comm, count);
 }
 
 hcclResult_t HCCL_API_CALL hcclCommSynDevice_Original(hcclComm_t comm, int* device)
 {
-    HCCL_TRY
-    auto* hccl_comm = hccl_ctx.communicator(comm);
-    RETURN_ON_INVALID_HCCL_COMM(hccl_comm);
-    HCCL_API_EXIT(hcclSuccess)
+    return hcclCommSynDevice_Wrapper(comm, device);
 }
 
 hcclResult_t HCCL_API_CALL hcclCommUserRank_Original(hcclComm_t comm, int* rank)
 {
-    HCCL_TRY
-    auto* hccl_comm = hccl_ctx.communicator(comm);
-    RETURN_ON_INVALID_HCCL_COMM(hccl_comm);
-    hcclResult_t status = hccl_comm->comm_user_rank(rank);
-    HCCL_API_EXIT(status)
+    return hcclCommUserRank_Wrapper(comm, rank);
 }
 
 int HCCL_API_CALL hcclLookupDMABuff_Original(uint64_t addr, uint64_t size, int* fd)
 {
-    HCCL_TRY
-    RETURN_ON_INVALID_FD(fd);
-    int retval = hccl_ctx.hccl_lookup_dma_buff_ctx(addr, size);
-    if (retval < 0) return retval;
-    *fd = retval;
-    HCCL_API_EXIT(0)
+    return hcclLookupDMABuff_Wrapper(addr, size, fd);
 }
 
 hcclResult_t HCCL_API_CALL hcclReduceScatter_Original(const void*     sendbuff,
@@ -203,24 +154,7 @@ hcclResult_t HCCL_API_CALL hcclReduceScatter_Original(const void*     sendbuff,
                                                       hcclComm_t      comm,
                                                       synStreamHandle stream_handle)
 {
-    HCCL_TRY
-    auto* hccl_comm = hccl_ctx.communicator(comm);
-    // Data validation
-    RETURN_ON_INVALID_ADDR(sendbuff);
-    RETURN_ON_INVALID_ADDR(recvbuff);
-    RETURN_ON_INVALID_DATA_TYPE(datatype);
-    RETURN_ON_INVALID_REDUCTION_OP(reduceOp);
-    RETURN_ON_INVALID_STREAM(stream_handle);
-
-    uint8_t apiId = hccl_ctx.generateApiId();
-
-    // report collective log
-    HCL_COLLECTIVE_LOG(eHCLReduceScatter, recvcount, datatype, reduceOp, -1, -1);
-
-    hcclResult_t status =
-        hccl_comm
-            ->reduce_scatter(sendbuff, recvbuff, recvcount, datatype, reduceOp, stream_handle, eHCCLAPICall, apiId);
-    HCCL_API_EXIT(status)
+    return hcclReduceScatter_Wrapper(sendbuff, recvbuff, recvcount, datatype, reduceOp, comm, stream_handle);
 }
 
 hcclResult_t HCCL_API_CALL hcclAllReduce_Original(const void*     sendbuff,
@@ -231,22 +165,7 @@ hcclResult_t HCCL_API_CALL hcclAllReduce_Original(const void*     sendbuff,
                                                   hcclComm_t      comm,
                                                   synStreamHandle stream_handle)
 {
-    HCCL_TRY
-    auto* hccl_comm = hccl_ctx.communicator(comm);
-    RETURN_ON_INVALID_ADDR(sendbuff);
-    RETURN_ON_INVALID_ADDR(recvbuff);
-    RETURN_ON_INVALID_DATA_TYPE(datatype);
-    RETURN_ON_INVALID_REDUCTION_OP(reduceOp);
-    RETURN_ON_INVALID_STREAM(stream_handle);
-
-    uint8_t apiId = hccl_ctx.generateApiId();
-
-    // report collective log
-    HCL_COLLECTIVE_LOG(eHCLAllReduce, count, datatype, reduceOp, -1, -1);
-
-    hcclResult_t status =
-        hccl_comm->allreduce(sendbuff, recvbuff, count, datatype, reduceOp, stream_handle, eHCCLAPICall, apiId);
-    HCCL_API_EXIT(status)
+    return hcclAllReduce_Wrapper(sendbuff, recvbuff, count, datatype, reduceOp, comm, stream_handle);
 }
 
 hcclResult_t HCCL_API_CALL hcclReduce_Original(const void*     sendbuff,
@@ -258,26 +177,7 @@ hcclResult_t HCCL_API_CALL hcclReduce_Original(const void*     sendbuff,
                                                hcclComm_t      comm,
                                                synStreamHandle stream_handle)
 {
-    HCCL_TRY
-    auto* hccl_comm = hccl_ctx.communicator(comm);
-    RETURN_ON_INVALID_ADDR(sendbuff);
-    if (hccl_comm->user_rank() == root)  // recvbuff may be NULL on all calls except for root device
-    {
-        RETURN_ON_INVALID_ADDR(recvbuff);
-    }
-    RETURN_ON_INVALID_DATA_TYPE(datatype);
-    RETURN_ON_INVALID_REDUCTION_OP(reduceOp);
-    RETURN_ON_INVALID_RANK(root, hccl_comm->getCommSize());
-    RETURN_ON_INVALID_STREAM(stream_handle);
-
-    uint8_t apiId = hccl_ctx.generateApiId();
-
-    // report collective log
-    HCL_COLLECTIVE_LOG(eHCLReduce, count, datatype, reduceOp, -1, root);
-
-    hcclResult_t status =
-        hccl_comm->reduce(sendbuff, recvbuff, count, datatype, reduceOp, root, stream_handle, eHCCLAPICall, apiId);
-    HCCL_API_EXIT(status)
+    return hcclReduce_Wrapper(sendbuff, recvbuff, count, datatype, reduceOp, root, comm, stream_handle);
 }
 
 hcclResult_t HCCL_API_CALL hcclBcast_Original(void*           buff,
@@ -298,22 +198,7 @@ hcclResult_t HCCL_API_CALL hcclBroadcast_Original(const void*     sendbuff,
                                                   hcclComm_t      comm,
                                                   synStreamHandle stream_handle)
 {
-    HCCL_TRY
-    auto* hccl_comm = hccl_ctx.communicator(comm);
-    RETURN_ON_INVALID_ADDR(sendbuff);
-    RETURN_ON_INVALID_ADDR(recvbuff);
-    RETURN_ON_INVALID_DATA_TYPE(datatype);
-    RETURN_ON_INVALID_RANK(root, hccl_comm->getCommSize());
-    RETURN_ON_INVALID_STREAM(stream_handle);
-
-    uint8_t apiId = hccl_ctx.generateApiId();
-
-    // report collective log
-    HCL_COLLECTIVE_LOG(eHCLBroadcast, count, datatype, hcclOpNone, -1, root);
-
-    hcclResult_t status =
-        hccl_comm->broadcast(sendbuff, recvbuff, count, datatype, root, stream_handle, eHCCLAPICall, apiId);
-    HCCL_API_EXIT(status)
+    return hcclBroadcast_Wrapper(sendbuff, recvbuff, count, datatype, root, comm, stream_handle);
 }
 
 hcclResult_t HCCL_API_CALL hcclAllGather_Original(const void*     sendbuff,
@@ -323,34 +208,7 @@ hcclResult_t HCCL_API_CALL hcclAllGather_Original(const void*     sendbuff,
                                                   hcclComm_t      comm,
                                                   synStreamHandle stream_handle)
 {
-    HCCL_TRY
-    auto* hccl_comm = hccl_ctx.communicator(comm);
-    RETURN_ON_INVALID_ADDR(sendbuff);
-    RETURN_ON_INVALID_ADDR(recvbuff);
-    RETURN_ON_INVALID_DATA_TYPE(datatype);
-    RETURN_ON_INVALID_STREAM(stream_handle);
-
-    uint8_t apiId = hccl_ctx.generateApiId();
-
-    // report collective log
-    HCL_COLLECTIVE_LOG(eHCLAllGather, sendcount, datatype, hcclOpNone, -1, -1);
-
-    uint64_t sendSizePerRank = sendcount * hccl_data_type_elem_size(datatype);
-
-    // overlapping buffers
-    if (!((uint64_t)sendbuff + sendSizePerRank <= (uint64_t)recvbuff ||
-          (uint64_t)sendbuff >= (uint64_t)recvbuff + sendSizePerRank * hccl_comm->getCommSize()))
-    {
-        if ((uint64_t)sendbuff != (uint64_t)recvbuff + sendSizePerRank * hccl_comm->user_rank())
-        {
-            LOG_ERR(HCL_API, "sendbuff and recvbuff are overlapping but not in place");
-            return hcclInvalidArgument;
-        }
-    }
-
-    hcclResult_t status =
-        hccl_comm->allgather(sendbuff, recvbuff, sendcount, datatype, stream_handle, eHCCLAPICall, apiId);
-    HCCL_API_EXIT(status)
+    return hcclAllGather_Wrapper(sendbuff, recvbuff, sendcount, datatype, comm, stream_handle);
 }
 
 hcclResult_t hcclAlltoAll_Original(const void*     sendbuff,
@@ -360,33 +218,7 @@ hcclResult_t hcclAlltoAll_Original(const void*     sendbuff,
                                    hcclComm_t      comm,
                                    synStreamHandle stream_handle)
 {
-    HCCL_TRY
-    auto* hccl_comm = hccl_ctx.communicator(comm);
-    RETURN_ON_INVALID_ADDR(sendbuff);
-    RETURN_ON_INVALID_ADDR(recvbuff);
-    RETURN_ON_INVALID_DATA_TYPE(datatype);
-    RETURN_ON_INVALID_STREAM(stream_handle);
-
-    uint8_t apiId = hccl_ctx.generateApiId();
-
-    size_t   n_ranks   = hccl_comm->getCommSize();
-    uint64_t remainder = count % n_ranks;
-    if (remainder != 0)
-    {
-        LOG_ERR(HCL_API,
-                "hcclAlltoAll count should equally divide by number of ranks while count is {} and number "
-                "of ranks is {}",
-                count,
-                n_ranks);
-        return hcclInvalidArgument;
-    }
-
-    // report collective log
-    HCL_COLLECTIVE_LOG(eHCLAll2All, count, datatype, hcclOpNone, -1, -1);
-
-    hcclResult_t status = hccl_comm->alltoall(sendbuff, recvbuff, count, datatype, stream_handle, eHCCLAPICall, apiId);
-
-    HCCL_API_EXIT(status)
+    return hcclAlltoAll_Wrapper(sendbuff, recvbuff, count, datatype, comm, stream_handle);
 }
 
 hcclResult_t HCCL_API_CALL hcclBarrier_Original(hcclComm_t comm_handle, synStreamHandle stream_handle)
@@ -403,20 +235,7 @@ hcclResult_t HCCL_API_CALL hcclSend_Original(const void*     sendbuff,
                                              hcclComm_t      comm,
                                              synStreamHandle stream_handle)
 {
-    HCCL_TRY
-    auto* hccl_comm = hccl_ctx.communicator(comm);
-    RETURN_ON_INVALID_ADDR(sendbuff);
-    RETURN_ON_INVALID_DATA_TYPE(datatype);
-    RETURN_ON_INVALID_HCCL_COMM(hccl_comm);
-    RETURN_ON_INVALID_STREAM(stream_handle);
-    RETURN_ON_RANK_CHECK(peer, hccl_comm);
-
-    // report collective log
-    HCL_COLLECTIVE_LOG(eHCLNoCollective, count, datatype, hcclOpNone, peer, 0);
-
-    hcclResult_t status = hccl_comm->hccl_send(sendbuff, count, datatype, peer, stream_handle, HCL_DEFAULT_API_ID);
-
-    HCCL_API_EXIT(status)
+    return hcclSend_Wrapper(sendbuff, count, datatype, peer, comm, stream_handle);
 }
 
 hcclResult_t HCCL_API_CALL hcclRecv_Original(void*           recvbuff,
@@ -426,35 +245,17 @@ hcclResult_t HCCL_API_CALL hcclRecv_Original(void*           recvbuff,
                                              hcclComm_t      comm,
                                              synStreamHandle stream_handle)
 {
-    HCCL_TRY
-    auto* hccl_comm = hccl_ctx.communicator(comm);
-    RETURN_ON_INVALID_ADDR(recvbuff);
-    RETURN_ON_INVALID_DATA_TYPE(datatype);
-    RETURN_ON_INVALID_HCCL_COMM(hccl_comm);
-    RETURN_ON_INVALID_STREAM(stream_handle);
-    RETURN_ON_RANK_CHECK(peer, hccl_comm);
-
-    // report collective log
-    HCL_COLLECTIVE_LOG(eHCLNoCollective, count, datatype, hcclOpNone, peer, -1);
-
-    // Receive using HCL will be aggregated on HCL level
-    hcclResult_t status = hccl_comm->hccl_receive(recvbuff, count, datatype, peer, stream_handle, HCL_DEFAULT_API_ID);
-
-    HCCL_API_EXIT(status)
+    return hcclRecv_Wrapper(recvbuff, count, datatype, peer, comm, stream_handle);
 }
 
 hcclResult_t HCCL_API_CALL hcclGroupStart_Original()
 {
-    HCCL_TRY
-    hcclResult_t status = hccl_device().group(true);
-    HCCL_API_EXIT(status)
+    return hcclGroupStart_Wrapper();
 }
 
 hcclResult_t HCCL_API_CALL hcclGroupEnd_Original()
 {
-    HCCL_TRY
-    hcclResult_t status = hccl_device().group(false);
-    HCCL_API_EXIT(status)
+    return hcclGroupEnd_Wrapper();
 }
 
 hcclResult_t hcclInitDevice_Original(const synDeviceId deviceId)
@@ -466,9 +267,7 @@ hcclResult_t hcclInitDevice_Original(const synDeviceId deviceId)
 
 hcclResult_t hcclDestroyDevice_Original(const synDeviceId deviceId)
 {
-    HCCL_TRY
-    hcclResult_t status = hccl_ctx.destroy_device();
-    HCCL_API_EXIT(status)
+    return hcclDestroyDevice_Wrapper(deviceId);
 }
 
 hcclResult_t hcclEventRecord_Original(hcclEventHandle* eventHandle, synStreamHandle streamHandle)
@@ -593,10 +392,7 @@ hcclResult_t hcclGetVersionString_Original(char* pVersion, const unsigned len)
 
 hcclResult_t HCCL_API_CALL hcclDeviceInit_Original(void* device, void* context)
 {
-    HCCL_TRY
-    LOG_ERR(HCL_API, "hcclDeviceInit not implemented!");
-    hcclResult_t status = hcclInvalidUsage;
-    HCCL_API_EXIT(status)
+    return hcclDeviceInit_Wrapper(device, context);
 }
 
 static struct hccl_functions_pointers default_functions_pointers_table = {

@@ -18,14 +18,14 @@
 #include <memory>                                 // for unique_ptr
 #include <utility>                                // for move
 #include <vector>                                 // for vector
-#include "hccl_coordinator_client.h"              // for spHcclCoordinatorCl...
 #include "hccl_types.h"                           // for hcclResult_t, hcclD...
 #include "hcl_api_types.h"                        // for HCL_CollectiveOp
 #include "interfaces/hcl_idevice.h"               // for IHclDevice
 #include "ofi_communicator.h"                     // for host_communicator_h...
 #include "interfaces/hcl_unique_sorted_vector.h"  // for UniqueSortedVector
-#include "synapse_api_types.h"                    // for synStreamHandle
 #include "hcl_dynamic_communicator.h"
+#include "coordinator/qp_migration.h"  // for IMigrationCallback
+#include "coordinator_defs.h"
 
 class ofi_component_t;
 
@@ -35,18 +35,20 @@ struct internal_unique_id_t;
 
 struct RankInfo;
 
-class hccl_communicator
+class hccl_communicator : public IMigrationCallback
 {
 public:
     hccl_communicator(int rank, int comm_size);
 
-    hcclResult_t initialize(const internal_unique_id_t* comm_unique_id);
+    hcclResult_t initialize(const internal_unique_id_t* comm_unique_id,
+                            const nics_mask_t           failedScaleOutPortsMask,
+                            spHcclCoordinatorClient     coordClient = nullptr);
 
     hcclResult_t sendCollectiveLogErr();
 
     bool destroy();
 
-    void finalize();
+    void finalize(bool lockStreams = true);
 
     hcclResult_t comm_count(int* count);
 
@@ -56,74 +58,74 @@ public:
 
     // * * * Collectives * * *
 
-    hcclResult_t allreduce(const void*     sendbuff,
-                           void*           recvbuff,
-                           size_t          count,
-                           hcclDataType_t  datatype,
-                           hcclRedOp_t     reduceOp,
-                           synStreamHandle stream_handle,
-                           const uint32_t  flags,
-                           uint8_t         apiId);
+    hcclResult_t allreduce(const void*    sendbuff,
+                           void*          recvbuff,
+                           size_t         count,
+                           hcclDataType_t datatype,
+                           hcclRedOp_t    reduceOp,
+                           void*          stream_handle,
+                           const uint32_t flags,
+                           uint8_t        apiId);
 
-    hcclResult_t reduce(const void*     sendbuff,
-                        void*           recvbuff,
-                        size_t          count,
-                        hcclDataType_t  datatype,
-                        hcclRedOp_t     reduceOp,
-                        int             root,
-                        synStreamHandle stream_handle,
-                        const uint32_t  flags,
-                        uint8_t         apiId);
+    hcclResult_t reduce(const void*    sendbuff,
+                        void*          recvbuff,
+                        size_t         count,
+                        hcclDataType_t datatype,
+                        hcclRedOp_t    reduceOp,
+                        int            root,
+                        void*          stream_handle,
+                        const uint32_t flags,
+                        uint8_t        apiId);
 
-    hcclResult_t reduce_scatter(const void*     sendbuff,
-                                void*           recvbuff,
-                                size_t          recvcount,
-                                hcclDataType_t  datatype,
-                                hcclRedOp_t     reduceOp,
-                                synStreamHandle stream_handle,
-                                const uint32_t  flags,
-                                uint8_t         apiId);
+    hcclResult_t reduce_scatter(const void*    sendbuff,
+                                void*          recvbuff,
+                                size_t         recvcount,
+                                hcclDataType_t datatype,
+                                hcclRedOp_t    reduceOp,
+                                void*          stream_handle,
+                                const uint32_t flags,
+                                uint8_t        apiId);
 
-    hcclResult_t broadcast(const void*     sendbuff,
-                           void*           recvbuff,
-                           size_t          count,
-                           hcclDataType_t  datatype,
-                           int             root,
-                           synStreamHandle stream_handle,
-                           const uint32_t  flags,
-                           uint8_t         apiId);
+    hcclResult_t broadcast(const void*    sendbuff,
+                           void*          recvbuff,
+                           size_t         count,
+                           hcclDataType_t datatype,
+                           int            root,
+                           void*          stream_handle,
+                           const uint32_t flags,
+                           uint8_t        apiId);
 
-    hcclResult_t allgather(const void*     sendbuff,
-                           void*           recvbuff,
-                           size_t          sendcount,
-                           hcclDataType_t  datatype,
-                           synStreamHandle stream_handle,
-                           const uint32_t  flags,
-                           uint8_t         apiId);
+    hcclResult_t allgather(const void*    sendbuff,
+                           void*          recvbuff,
+                           size_t         sendcount,
+                           hcclDataType_t datatype,
+                           void*          stream_handle,
+                           const uint32_t flags,
+                           uint8_t        apiId);
 
-    hcclResult_t alltoall(const void*     sendbuff,
-                          void*           recvbuff,
-                          size_t          count,
-                          hcclDataType_t  datatype,
-                          synStreamHandle streamHandle,
-                          const uint32_t  flags,
-                          uint8_t         apiId);
+    hcclResult_t alltoall(const void*    sendbuff,
+                          void*          recvbuff,
+                          size_t         count,
+                          hcclDataType_t datatype,
+                          void*          streamHandle,
+                          const uint32_t flags,
+                          uint8_t        apiId);
 
     // * * * Point-to-point
 
-    hcclResult_t hccl_receive(void*           recvbuff,
-                              size_t          count,
-                              hcclDataType_t  datatype,
-                              int             peer,
-                              synStreamHandle stream_handle,
-                              uint8_t         apiId);
+    hcclResult_t hccl_receive(void*          recvbuff,
+                              size_t         count,
+                              hcclDataType_t datatype,
+                              int            peer,
+                              void*          stream_handle,
+                              uint8_t        apiId);
 
-    hcclResult_t hccl_send(const void*     sendbuff,
-                           size_t          count,
-                           hcclDataType_t  datatype,
-                           int             peer,
-                           synStreamHandle stream_handle,
-                           uint8_t         apiId);
+    hcclResult_t hccl_send(const void*    sendbuff,
+                           size_t         count,
+                           hcclDataType_t datatype,
+                           int            peer,
+                           void*          stream_handle,
+                           uint8_t        apiId);
 
     size_t            getCommSize() const;
     const std::string getCommUniqueId();
@@ -139,6 +141,16 @@ public:
     const uint64_t incSendCtr(int peer);
     const uint64_t getRecvCtr(int peer);
     const uint64_t incRecvCtr(int peer);
+
+    void          deleteCommConnections();
+    hcclComm_t*   getCommHandle();
+    hcclUniqueId* getCommId();
+    void          setIDs(hcclComm_t* commHandle, hcclUniqueId* commId);
+
+    HclDynamicCommunicator*       getDynamicComm();
+    const HclDynamicCommunicator& getDynamicCommConst() const;
+
+    virtual void mcNicStateChange(const NicState& nicState) override;
 
 private:
     hcclResult_t openConnections(bool isLoopbackModeOrNullSubmission);
@@ -157,14 +169,16 @@ private:
     hcclResult_t finalizeInitialization(std::vector<RemoteDeviceConnectionInfo>& hcclRemoteDevices,
                                         bool                                     isLoopbackModeOrNullSubmission);
 
-    void buildSecondHandShakeRemoteInfoBuffer(RankInfoBuffer& rankInfoBuffer);
+    void buildSecondHandShakeRemoteInfoBuffer(RankInfoBuffer& rankInfoBuffer) const;
+    void prepareSendRecvCountersRemoteInfoBuffer(RankInfoBuffer& rankInfoBuffer) const;
 
-    bool syncBetweenRanks();
+    bool rendezvous();
 
     HCL_Rank m_rank;
 
-    void updateRemoteDevices(std::vector<RankInfoHeader>& hcclRankInfo);
-    void updateRemoteDevices(std::vector<RemoteDeviceConnectionInfo>& hcclRemoteDevices);
+    void     updateRemoteDevices(std::vector<RankInfoHeader>& hcclRankInfo);
+    void     updateRemoteDevices(std::vector<RemoteDeviceConnectionInfo>& hcclRemoteDevices);
+    uint64_t getAccumulatedMask(const std::vector<RankInfoHeader>& hcclRankInfoHeaders) const;
 
     spHcclCoordinatorClient m_coordClient;
     int                     m_boxSize;
@@ -172,4 +186,7 @@ private:
     bool                    m_scaleout_available;
 
     HclDynamicCommunicator* m_comm = nullptr;
+
+    hcclComm_t*  m_commHandle = nullptr;
+    hcclUniqueId m_commId;
 };

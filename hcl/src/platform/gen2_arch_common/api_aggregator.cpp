@@ -9,6 +9,7 @@
 #include "platform/gen2_arch_common/collective_states.h"
 #include "platform/gen2_arch_common/hcl_device.h"
 #include "hccl_context.h"
+#include "collective_interface/graph_collectives.h"
 
 ApiAggregatorGen2Arch::ApiAggregatorGen2Arch(HclCollectiveRoutinesGen2Arch* collectiveRoutines)
 : m_collectiveRoutines(collectiveRoutines)
@@ -95,7 +96,7 @@ uint64_t ApiAggregatorGen2Arch::checkGroupCollectiveDependency()
             device->getScaleOutProvider()->isGaudiDirect(),
             device->getEdmaEngineWorkDistributionSize(),
             device->getServerConnectivity().getMaxNumScaleUpPortsPerConnection(params.m_dynamicComm),
-            device->getServerConnectivity().getNumScaleOutPorts(params.m_dynamicComm),
+            params.m_dynamicComm.getCommConnectivity().getNumScaleOutPorts(),
             device->getSignalsCalculator(),
             m_collectiveRoutines->m_remainderCalculator};
         tempTargetVal = m_collectiveRoutines->checkCollectiveDependency(commonState, nextTargetVal, false);
@@ -246,7 +247,16 @@ hcclResult_t ApiAggregatorGen2Arch::addSendRecvApiCall(HCL_Rank myRank, const Se
 hcclResult_t ApiAggregatorGen2Arch::addCollectiveApiCall(HclCollectiveParams& params)
 {
     if (m_counter == 0)  // no group mode
-        return m_collectiveRoutines->hclCollectiveCall(params);
+    {
+        if (CHECK_PRIM_IMPL(params.m_collectiveOp))
+        {
+            return run(m_collectiveRoutines, params);
+        }
+        else
+        {
+            return m_collectiveRoutines->hclCollectiveCall(params);
+        }
+    }
 
     if (!checkCallsCounter()) return hcclInvalidUsage;
 

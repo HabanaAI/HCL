@@ -9,8 +9,7 @@
 #include "hcl_api_types.h"                                           // for HCL_Comm
 #include "platform/gaudi2/types.h"                                   // for HLS2_BOX_SIZE
 #include "platform/gen2_arch_common/types.h"                         // for MAX_NICS_GEN2ARCH, GEN2ARCH_HLS_BOX_SIZE
-#include "sched_pkts.h"                                              // for g2fw
-#include "gaudi2_arc_sched_packets.h"                                // for g2fw::nic_passthro...
+#include "g2_sched_pkts.h"                                           // for g2fw
 #include "platform/gen2_arch_common/nic_passthrough_handler_base.h"  // for NicPassthroughHandlerBase
 
 class HclCommandsGen2Arch;

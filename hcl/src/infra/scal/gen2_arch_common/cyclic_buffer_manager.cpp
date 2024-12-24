@@ -41,9 +41,10 @@ CyclicBufferManager::CyclicBufferManager(ScalStreamBase*       scalStream,
   m_scalWrapper(scalWrapper),
   m_schedIdx(schedIdx),
   m_commands(commands),
-  m_logOfBufferSize((uint64_t)std::log2(m_bufferSize))
+  m_logOfBufferSize((uint64_t)std::log2(m_bufferSize)),
+  m_pi_mask((1 << m_logOfBufferSize) - 1)
 {
-    VERIFY((bufferSize & ((1 << m_logOfBufferSize) - 1)) == 0, "bufferSize {} must be a power of two", bufferSize);
+    VERIFY((bufferSize & m_pi_mask) == 0, "bufferSize {} must be a power of two", bufferSize);
 
     for (unsigned i = 0; i < m_numberOfDivisions; ++i)
     {

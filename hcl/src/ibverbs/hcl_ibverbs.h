@@ -30,7 +30,7 @@ public:
     void create_cq(uint32_t nic, int num_cqes = 4);
 
     uint32_t create_qp(bool sender, uint32_t nic, uint32_t qpHint = 0);
-    uint32_t create_collective_qp(bool is_scale_out);
+    uint32_t reserve_collective_qp(bool is_scale_out);
 
     void destroy_qp(uint32_t nic, uint32_t qpn);
     void set_qp_ctx(uint32_t qpn,
@@ -51,7 +51,8 @@ public:
 
     void set_hcl_device(IHclDevice* device);
 
-    operator ibv_context*() { return ibctx_; }
+    ibv_context* get_ibv_context() const { return ibctx_; }
+    void*        get_lib_handle() const { return ibv_.lib_handle(); }
 
 private:
     class ibvqp_map_t : public std::unordered_map<uint64_t, ibv_qp*>
@@ -97,6 +98,7 @@ private:
     bool dram_enabled_ = true;
 
     bool parse_ib_eqe(ibv_async_event* event);
+    void report_nic_status(const ibv_event_type& event, const uint32_t nic);
 
     int     sgid_index(uint32_t dst_ip, uint32_t src_ip, uint64_t src_mac, uint32_t nic);
     ibv_gid dgid(uint32_t dst_ip, uint64_t dst_mac);

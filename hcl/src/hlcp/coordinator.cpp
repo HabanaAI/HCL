@@ -31,7 +31,7 @@ void coordinator_t::on_error(socket_base_t& s)
     on_disconnect(s);
 }
 
-#define hlcp2sock(c) (static_cast<xsocket_t&>((socket_io_t&)(c)))
+#define hlcp2sock(c) (static_cast<xsocket_t&>(static_cast<socket_io_t&>(c)))
 
 void coordinator_t::close_connection(hlcp_t& c)
 {
@@ -46,7 +46,7 @@ void coordinator_t::close_connection(hlcp_t& c)
 void coordinator_t::drop_connection(hlcp_t& c)
 {
     xsocket_t& xs = hlcp2sock(c);
-    xs.marked = true;
+    xs.marked     = true;
 
     on_disconnect(xs);
 }
@@ -57,7 +57,7 @@ void coordinator_t::on_disconnect(socket_base_t& s)
 
     xsocket_t& xs = static_cast<xsocket_t&>(s);
 
-    hlcp_t& connection = (hlcp_t&)xs;
+    hlcp_t& connection = static_cast<hlcp_t&>(xs);
 
     if (!xs.marked)
     {
@@ -68,13 +68,12 @@ void coordinator_t::on_disconnect(socket_base_t& s)
     xs.close();
 
     delete &xs;
-
     destroy_connection(connection);
 }
 
 void coordinator_t::on_accept(socket_base_t& s, int new_socket_fd)
 {
-    HLCP_LOG("accepted({})-->{}", s.fd, new_socket_fd);
+    HLCP_LOG("accepted({})<--{}", s.fd, new_socket_fd);
 
     xsocket_t& xs = *new xsocket_t(new_socket_fd, *this, &asio_);
 
@@ -85,4 +84,21 @@ void coordinator_t::on_accept(socket_base_t& s, int new_socket_fd)
     HLCP_LOG("{}", xs.str());
 
     conn.notify_->on_connect(conn);
+}
+
+void coordinator_t::on_error(hlcp_command_t*      cmd,
+                             const hlcp_packet_t& packet,
+                             hlcp_t&              connection,
+                             const std::string&   reason)
+{
+    if (cmd)
+    {
+        HLCP_ERR("expected {} .{} : [{}]. {}", *cmd, packet, connection->str(), reason);
+    }
+    else
+    {
+        HLCP_ERR("{} : [{}]. {}", packet, connection->str(), reason);
+    }
+
+    drop_connection(connection);
 }

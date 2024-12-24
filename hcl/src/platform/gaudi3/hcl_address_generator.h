@@ -6,8 +6,7 @@ class CommonState;
 class HclAddressGeneratorGaudi3 : public HclAddressGenerator
 {
 public:
-    HclAddressGeneratorGaudi3() = delete;
-    HclAddressGeneratorGaudi3(HclCommandsGen2Arch& commands) : HclAddressGenerator(commands) {};
+    HclAddressGeneratorGaudi3() : HclAddressGenerator() {};
     virtual ~HclAddressGeneratorGaudi3() = default;
 
     virtual uint64_t recalcAddressForDisregardRank(const HCL_CollectiveOp currentOp,

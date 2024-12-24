@@ -1,13 +1,14 @@
 #pragma once
 
-#include <cstdint>           // for uint64_t
-#include <cstring>           // for NULL, memset, size_t
-#include <vector>            // for vector
-#include <optional>          // for optional
-#include <utility>           // for forward
-#include <memory>            // for shared_ptr
-#include "rdma/fabric.h"     // for fi_addr_t, fi_context
-#include <rdma/fi_domain.h>  // for fi_hmem_iface
+#include <cstdint>                    // for uint64_t
+#include <cstring>                    // for NULL, memset, size_t
+#include <vector>                     // for vector
+#include <optional>                   // for optional
+#include <utility>                    // for forward
+#include <memory>                     // for shared_ptr
+#include "libfabric/memory_region.h"  // for MemoryRegion
+#include "rdma/fabric.h"              // for fi_addr_t, fi_context
+#include <rdma/fi_domain.h>           // for fi_hmem_iface
 #include "platform/gen2_arch_common/host_scheduler.h"
 
 #define OFI_EXIT_ON_ERROR(fn) OFI_EXIT_ON_ERROR_VALUE(fn, 0)
@@ -46,6 +47,7 @@ struct listenComm_t
     bool     accepted;
 
     struct fid_ep* local_ep;
+    struct fid_cq* cq;
     fi_addr_t      local_ep_addr;
 };
 
@@ -58,6 +60,7 @@ struct ofiComm_t
     fi_addr_t      remote_ep_addr;
     fi_addr_t      local_ep_addr;
     struct fid_ep* local_ep;
+    struct fid_cq* cq;
 };
 
 struct allConnectionComm_t
@@ -156,6 +159,13 @@ private:
 template<typename T>
 using FiObjectPtr = std::shared_ptr<FiObject<T>>;
 
+enum class DomainType : uint8_t
+{
+    DATA = 0,  // General purpose for data transfer
+    SINGLE,    // Single EP domain used for small sizes
+    FLUSH      // Flush mechanism
+};
+
 //
 // Structure of an OFI network component
 //
@@ -169,7 +179,7 @@ class ofi_component_t
 {
 public:
     ofi_component_t(int ofiDeviceId, int hw_module_id, struct fi_info* prov, int cpuid, enum fi_cq_format cq_format);
-    virtual ~ofi_component_t();
+    virtual ~ofi_component_t() = default;
 
     int inc_refcnt() { return ++m_refcnt; }
     int dec_refcnt() { return --m_refcnt; }
@@ -199,21 +209,25 @@ public:
     virtual int close(listenComm_t* listenComm)                                                                  = 0;
 
     int test(ofi_req_t* req, int* done, size_t* size);
-    int _flush(ofiComm_t* ofiComm, uint64_t data, struct fid_mr* mrHandle, ofi_req_t& request);
 
-    int        register_mr(void*           data,
-                           size_t          size,
-                           fi_hmem_iface   fi_hmem_iface,
-                           int             dmabuf_fd,
-                           struct fid_mr** mHandle,
-                           bool            isFlush = false);
-    static int deregister_mr(struct fid_mr* mHandle);
+    int                           register_mr(void*           data,
+                                              size_t          size,
+                                              fi_hmem_iface   fi_hmem_iface,
+                                              int             dmabuf_fd,
+                                              struct fid_mr** mHandle,
+                                              DomainType      domainType);
+    static int                    deregister_mr(struct fid_mr* mHandle);
+    void                          create_mr(MRParams& params);
+    std::shared_ptr<MemoryRegion> get_mr() { return m_mr; }
 
 protected:
-    int         ofi_progress();
-    int         ofi_flush_progress();
-    virtual int process_completions(void* cq_buf, uint64_t num_cqes) = 0;
-    int         process_first_recv_completion(ofi_req_t* req);
+    int                ofi_progress(struct fid_cq* cq);
+    int                ofi_flush_progress();
+    virtual int        process_completions(void* cq_buf, uint64_t num_cqes) = 0;
+    int                process_first_recv_completion(ofi_req_t* req);
+    int                _flush(ofiComm_t* ofiComm, ofi_req_t& request);
+    struct fid_domain* getDomainByType(DomainType domainType) const;
+    static std::string getDomainNameByType(DomainType domainType);
 
 protected:
     static FiObject<struct fid_fabric*> create_fabric(const struct fi_info* provider);
@@ -234,7 +248,9 @@ protected:
     struct fi_info*                    m_prov;
     const FiObject<struct fid_fabric*> m_fabric;
     const FiObject<struct fid_domain*> m_domain;
-    const FiObject<struct fid_cq*>     m_cq;
+    const FiObject<struct fid_fabric*> m_fabric_single;
+    const FiObject<struct fid_domain*> m_domain_single;
+    struct fid_ep*                     m_ep_single = nullptr;
 
 private:
     std::optional<struct fi_info* const>              m_flush_provider;
@@ -244,4 +260,6 @@ private:
     const std::optional<FiObject<struct fid_av*>>     m_flush_av;
     const std::optional<FiObject<struct fid_ep*>>     m_flush_ep;
     const std::optional<fi_addr_t>                    m_flush_addr;
+    // Note: MemoryRegion must be here because of construction and destruction order
+    std::shared_ptr<MemoryRegion> m_mr;
 };

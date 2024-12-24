@@ -4,7 +4,6 @@
 #include <cstddef>  // for offsetof
 #include "asic_reg/gaudi3_blocks.h"
 #include "asic_reg_structs/sob_objs_regs.h"
-#include "sched_pkts.h"  // for g2fw
 #include "hcl_utils.h"
 #include "infra/scal/gen2_arch_common/scal_utils.h"  // for varoffsetof
 #include "infra/scal/gaudi3/scal_utils.h"
@@ -21,6 +20,13 @@ class HclCommandsGen2Arch;
 HclGraphSyncGaudi3::HclGraphSyncGaudi3(unsigned smIdx, HclCommandsGen2Arch& commands)
 : HclGraphSyncGen2Arch(smIdx, commands)
 {
+    m_utils = new hcl::Gaudi3HclScalUtils();
+}
+
+HclGraphSyncGaudi3::~HclGraphSyncGaudi3()
+{
+    if (m_utils) delete m_utils;
+    m_utils = nullptr;
 }
 
 uint64_t HclGraphSyncGaudi3::getSyncManagerBase(unsigned smIdx)

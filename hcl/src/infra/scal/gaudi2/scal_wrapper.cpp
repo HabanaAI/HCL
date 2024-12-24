@@ -10,12 +10,6 @@ class ScalJsonNames;
 
 using namespace hcl;
 
-Gaudi2ScalWrapper::Gaudi2ScalWrapper(scal_handle_t deviceHandle, ScalJsonNames& scalNames)
-: Gen2ArchScalWrapper(deviceHandle, scalNames)
-{
-    m_utils = new Gaudi2HclScalUtils();
-}
-
 Gaudi2ScalWrapper::Gaudi2ScalWrapper(int fd, ScalJsonNames& scalNames) : Gen2ArchScalWrapper(fd, scalNames)
 {
     m_utils = new Gaudi2HclScalUtils();

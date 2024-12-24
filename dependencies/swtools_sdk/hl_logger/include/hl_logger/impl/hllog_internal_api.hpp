@@ -30,24 +30,30 @@ do {                                                                            
 using TimePoint = std::chrono::system_clock::time_point;
 
 HLLOG_API TimePoint tscToRt(uint64_t tsc);
+}
 
+inline namespace v1_1 {
 struct FormattedLazyLogItem
 {
     TimePoint   timePoint{};
     int         logLevel{HLLOG_LEVEL_OFF};
     uint64_t    tid{};
-    std::string msg{};
+    string_wrapper msg{};
 };
 using FormattedLazyLogItemOptional = std::optional<FormattedLazyLogItem>;
+
 struct LazyLogInfo
 {
-    std::string loggerName;
+    std::string_view loggerName;
     std::function<FormattedLazyLogItemOptional ()> getNextLogItemFunc;
 };
 using LazyLogInfoVector = std::vector<LazyLogInfo>;
 using LazyLogsHandler   = std::function<LazyLogInfoVector ()>;
 
 HLLOG_API ResourceGuard registerLazyLogsHandler(LazyLogsHandler lazyLogsHandler, std::string_view moduleName);
+}
+
+inline namespace v1_0 {
 [[deprecated("use an overload with moduleName")]]HLLOG_API ResourceGuard registerLazyLogsHandler(LazyLogsHandler lazyLogsHandler);
 
 struct IFormatter

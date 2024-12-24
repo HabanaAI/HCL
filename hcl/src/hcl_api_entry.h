@@ -1,7 +1,6 @@
 #pragma once
 #include <cstdint>
 #include <array>
-#include "synapse_api_types.h"
 #include "hcl_api_types.h"
 #include "hccl_types.h"
 
@@ -16,7 +15,7 @@ struct SendRecvApiEntry
 {
     ApiType         apiType;
     uint8_t         apiId;
-    synStreamHandle streamHandle;
+    void*           streamHandle;
     uint64_t        address;
     uint64_t        count;
     hcclDataType_t  dataType;

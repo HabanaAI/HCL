@@ -44,7 +44,7 @@ public:
     int close(ofiComm_t* ofiComm) override;
     int close(listenComm_t* listenComm) override;
 
-    using EpAv = std::tuple<FiObjectPtr<struct fid_ep*>, FiObjectPtr<struct fid_av*>>;
+    using EpAv = std::tuple<FiObjectPtr<struct fid_ep*>, FiObjectPtr<struct fid_av*>, FiObjectPtr<struct fid_cq*>>;
 
     /**
      * @brief Retrieve an existing endpoint associated with the given parameters or create if needed.
@@ -80,4 +80,6 @@ private:
     std::map<std::tuple<unsigned /*hostConnIdx*/, EndpointRole, uint16_t /*qpSetIndex*/>, EpAv> m_eps;
     using Addr = std::vector<uint8_t>;
     std::map<FiObjectPtr<struct fid_av*>, std::map<Addr, fi_addr_t>> m_av_addr;
+    FiObjectPtr<struct fid_cq*>                                      m_cq;
+    FiObjectPtr<struct fid_cq*>                                      m_cq_single;
 };

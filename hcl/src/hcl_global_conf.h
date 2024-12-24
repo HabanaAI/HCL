@@ -68,7 +68,8 @@ extern GlobalConfString GCFG_HCL_RDMA_DEFAULT_PATH;
 extern GlobalConfBool   GCFG_HCL_IBV_GID_SYSFS;
 extern GlobalConfBool   GCFG_HCL_USE_NIC_COMPRESSION;
 
-extern GlobalConfBool GCFG_HCL_NULL_SUBMIT;
+extern GlobalConfBool   GCFG_HCL_NULL_SUBMIT;
+extern GlobalConfUint64 GCFG_HCCL_PRIM_COLLECTIVE_MASK;
 
 extern GlobalConfBool   GCFG_HCL_COLLECTIVE_LOG;
 extern GlobalConfInt64  GCFG_OP_DRIFT_THRESHOLD_MS;
@@ -92,11 +93,14 @@ extern GlobalConfBool   GCFG_HCL_ENABLE_G3_SR_AGG;
 extern GlobalConfBool   GCFG_ENABLE_HNIC_MICRO_STREAMS;
 extern GlobalConfBool   GCFG_HCL_REDUCE_NON_PEER_QPS;
 extern GlobalConfBool   GCFG_HCCL_GET_MACS_FROM_DRIVER;
-extern GlobalConfBool   GCFG_HCL_ENABLE_HLCP;
 extern GlobalConfUint64 GCFG_HCL_HLCP_CLIENT_IO_THREADS;
 extern GlobalConfUint64 GCFG_HCL_HLCP_SERVER_IO_THREADS;
 extern GlobalConfUint64 GCFG_HCL_HLCP_SERVER_SEND_THREAD_RANKS;
 extern GlobalConfUint64 GCFG_HCL_HLCP_OPS_TIMEOUT;
 extern GlobalConfBool   GCFG_HCL_SINGLE_QP_PER_SET;
 extern GlobalConfBool   GCFG_HCL_PROFILER_DEBUG_MODE;
-extern GlobalConfBool   GCFG_HCL_GEN_UNIQUE_SERVER_ID;
+extern GlobalConfString GCFG_HCL_HNIC_TCP_EXCLUDE_IF;
+extern GlobalConfBool   GCFG_HCL_DFA_DUMP_WQE;
+extern GlobalConfUint64 GCFG_HCL_FAULT_INJECT_LISTENER_PORT;
+extern GlobalConfUint64 GCFG_HCL_DBG_DYNAMIC_LAG_DROPPED_PORT_NUM;
+extern GlobalConfUint64 GCFG_HCL_DBG_DYNAMIC_LAG_NUM_ITERATIONS;

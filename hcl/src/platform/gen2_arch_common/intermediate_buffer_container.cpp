@@ -3,16 +3,16 @@
 #include <cstdint>
 #include <cstddef>
 #include "hcl_utils.h"             // for VERIFY
-#include "synapse_api.h"           // for synDeviceFree, synDeviceMalloc
 #include "synapse_common_types.h"  // for synStatus
 #include "hcl_types.h"             // for SYN_VALID_DEVICE_ID
 
-using namespace hcl;
-
 // struct IntermediateBuffersAmount Moved to header file since its used by external cpp modules for G2 Hnics send/recv
 
-IntermediateBufferContainer::IntermediateBufferContainer(const uint32_t numberOfStreams)
-: m_numberOfStreams(numberOfStreams)
+IntermediateBufferContainer::IntermediateBufferContainer(uint64_t numberOfStreams) : m_numberOfStreams(numberOfStreams)
+{
+}
+
+void IntermediateBufferContainer::init()
 {
     if (GCFG_HCCL_GAUDI_DIRECT.value() && !GCFG_HCL_IMB_SIZE.isSetFromUserConfig())
     {
@@ -48,11 +48,8 @@ IntermediateBufferContainer::IntermediateBufferContainer(const uint32_t numberOf
                       m_bufferContainerParams[poolSizeIndex].sizeOfSIB,
                       m_bufferContainerParams[poolSizeIndex].sizeOfAllBuffers);
 
-        VERIFY(synSuccess == synDeviceMalloc(SYN_VALID_DEVICE_ID,
-                                             m_bufferContainerParams[poolSizeIndex].sizeOfAllBuffers,
-                                             0,
-                                             0,
-                                             &m_bufferContainerParams[poolSizeIndex].allBufferBaseAddr),
+        VERIFY(allocateDeviceMemory(m_bufferContainerParams[poolSizeIndex].sizeOfAllBuffers,
+                                    &m_bufferContainerParams[poolSizeIndex].allBufferBaseAddr),
                "Failed to allocate device memory. Size: {:g}MB",
                B2MB(m_bufferContainerParams[poolSizeIndex].sizeOfAllBuffers));
         LOG_HCL_INFO(HCL,
@@ -78,26 +75,19 @@ IntermediateBufferContainer::IntermediateBufferContainer(const uint32_t numberOf
         m_sibBuffers.emplace_back(DeviceBufferManager(m_bufferParams, getSIBVector()));
     }
 
-    // For Gaudi2 we are using reduction on SRAM (SRAM size != 0)
-    // For Gaudi3 we are using reduction on HBM and must allocate memory on device for FW. (SRAM size == 0)
-    if (GCFG_FW_IMB_SIZE.value() && GCFG_HCL_SRAM_SIZE_RESERVED_FOR_HCL.value() == 0)
-    {
-        uint64_t sizeOfFwBuffers = GCFG_FW_IMB_SIZE.value();
-        VERIFY(synSuccess == synDeviceMalloc(SYN_VALID_DEVICE_ID, sizeOfFwBuffers, 0, 0, &m_fwBaseAddr),
-               "Failed to allocate device memory for FW");
-    }
+    allocateFwIntermediateBuffer();
 }
 
-IntermediateBufferContainer::~IntermediateBufferContainer()
+void IntermediateBufferContainer::destroy()
 {
     for (unsigned poolSizeIndex = 0; poolSizeIndex < m_bufferContainerParams.size(); poolSizeIndex++)
     {
-        synDeviceFree(SYN_VALID_DEVICE_ID, m_bufferContainerParams[poolSizeIndex].allBufferBaseAddr, 0);
+        freeDeviceMemory(m_bufferContainerParams[poolSizeIndex].allBufferBaseAddr);
     }
 
-    if (GCFG_FW_IMB_SIZE.value())
+    if (m_fwBaseAddr)
     {
-        synDeviceFree(SYN_VALID_DEVICE_ID, m_fwBaseAddr, 0);
+        freeDeviceMemory(m_fwBaseAddr);
     }
 }
 
@@ -106,7 +96,7 @@ void IntermediateBufferContainer::generatePoolParams(unsigned                   
                                                      BufferContainerParams&             bufferContainerParams)
 {
     bufferContainerParams.sliceSize        = sliceSize;
-    bufferContainerParams.countOfSIB       = hcl::IntermediateBufferContainer::getSIBCount(pools);
+    bufferContainerParams.countOfSIB       = IntermediateBufferContainer::getSIBCount(pools);
     bufferContainerParams.sizeOfSIB        = sliceSize * bufferContainerParams.countOfSIB;
     bufferContainerParams.sizeOfAllBuffers = bufferContainerParams.sizeOfSIB * m_numberOfStreams;
 
@@ -114,12 +104,12 @@ void IntermediateBufferContainer::generatePoolParams(unsigned                   
     VERIFY(verifySIBPoolSizes(pools));
 }
 
-uint32_t hcl::IntermediateBufferContainer::getSizeOfAllBuffers(unsigned poolSizeIndex) const
+uint32_t IntermediateBufferContainer::getSizeOfAllBuffers(unsigned poolSizeIndex) const
 {
     return m_bufferContainerParams[poolSizeIndex].sizeOfAllBuffers;
 }
 
-uint64_t hcl::IntermediateBufferContainer::getBufferSize() const
+uint64_t IntermediateBufferContainer::getBufferSize() const
 {
     return m_imbSize;
 }
@@ -146,7 +136,7 @@ unsigned IntermediateBufferContainer::getSliceSize(unsigned poolSizeIndex) const
 
 unsigned IntermediateBufferContainer::getFwSliceSize()
 {
-    return GCFG_FW_IMB_SIZE.value();
+    return m_fwImbSize;
 }
 
 unsigned IntermediateBufferContainer::getSIBCount(const std::vector<e_devicePoolID>& pools)
@@ -154,7 +144,7 @@ unsigned IntermediateBufferContainer::getSIBCount(const std::vector<e_devicePool
     unsigned count = 0;
     for (const auto& pool : pools)
     {
-        count += hcl::IntermediateBuffersAmount::getBufferCount(pool);
+        count += IntermediateBuffersAmount::getBufferCount(pool);
     }
     return count;
 }
@@ -164,7 +154,7 @@ std::vector<unsigned> IntermediateBufferContainer::getSIBVector()
     std::vector<unsigned> SIBVector = {};
     for (int i = m_firstPool; i < m_lastPool + 1; i++)
     {
-        SIBVector.push_back(hcl::IntermediateBuffersAmount::getBufferCount(static_cast<e_devicePoolID>(i)));
+        SIBVector.push_back(IntermediateBuffersAmount::getBufferCount(static_cast<e_devicePoolID>(i)));
     }
     return SIBVector;
 }
@@ -174,7 +164,7 @@ bool IntermediateBufferContainer::verifySIBPoolSizes(const std::vector<e_deviceP
     for (const e_devicePoolID& pool : pools)
     {
         unsigned factor = DeviceBufferManager::getFactor(pool);
-        if ((hcl::IntermediateBuffersAmount::getBufferCount(pool) % factor) != 0)
+        if ((IntermediateBuffersAmount::getBufferCount(pool) % factor) != 0)
         {
             return false;
         }

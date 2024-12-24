@@ -21,16 +21,13 @@
 #include "platform/gen2_arch_common/hccl_device.h"
 #include "interfaces/hcl_idevice.h"                       // for IHclDevice
 #include "synapse_api_types.h"                            // for synDeviceId
-#include "hccl_coordinator.h"                             // for hccl_coordinator
 #include "platform/gen2_arch_common/hcl_device_config.h"  // for HclDeviceConfig
+#include "coordinator_defs.h"                             // for spHcclCoordinatorClient
 
 class IHclDevice;
 struct hcclOpParams;
 struct internal_unique_id_t;
 class hccl_communicator;
-
-extern bool g_hccl_first_comm_was_initialized;
-extern bool g_hccl_first_comm_coordinator_launched;
 
 class hccl_context
 {
@@ -38,23 +35,42 @@ public:
     hccl_context()  = default;
     ~hccl_context() = default;
 
-    hcclResult_t init_device(const uint8_t apiId);
+    hcclResult_t init_device(const uint8_t apiId, void* device = nullptr, void* context = nullptr);
     hcclResult_t destroy_device();
 
     hcclResult_t get_unique_id(hcclUniqueId* unique_id);
-    hcclResult_t comm_init_rank(hcclComm_t* comm, unsigned int nranks, hcclUniqueId& comm_id, int rank);
-    hcclResult_t comm_destroy(hcclComm_t unique_id);
+    hcclResult_t comm_init_rank(hcclComm_t*   comm,
+                                unsigned int  nranks,
+                                hcclUniqueId& comm_id,
+                                int           rank,
+                                hcclComm_t    reInitCommHandle = nullptr);
+    hcclResult_t comm_destroy(hcclComm_t unique_id, bool destroyCoord = true);
 
     hccl_communicator* communicator(hcclComm_t comm_handle);
 
     uint8_t generateApiId();
 
+    void dbgCheckDrop();
+    void dbgCheckRestore();
+    void reCreateComms();
+    void portDown(uint16_t portNum);
+    void portUp(uint16_t portNum);
+    void updatePortsAndComms();
+
     void        generateGlobalUniqueId(hcclUniqueId& unique_id);
     std::string unique_id_to_string(const hcclUniqueId& id);
-    int         hccl_lookup_dma_buff_ctx(uint64_t addr, uint64_t size);
+    int         hccl_lookup_dma_buff_ctx();
     void        dfaLog(hl_logger::LoggerSPtr logger);
+    void        dfaLogHnicSummary(hl_logger::LoggerSPtr& logger);
+
+    void faultHandleScaleoutPortUp(const uint16_t port);
+    void faultHandleScaleoutPortShutdown(const uint16_t port);
+
+    bool first_comm_init = false;
 
 private:
+    bool first_coordinator_launched = false;
+
     const internal_unique_id_t* get_internal_id(const hcclUniqueId& unique_id) const;
 
     // relationship between communicator and coordinator is defined by the unique ID
@@ -72,6 +88,10 @@ private:
     bool m_deviceAcquired = false;
 
     std::unique_ptr<HclDeviceConfig> m_hclDeviceConfig = nullptr;
+
+    bool        m_portDropped             = false;
+    unsigned    m_numAGIterations         = 0;
+    nics_mask_t m_failedScaleOutPortsMask = 0;
 };
 
 extern hccl_context hccl_ctx;

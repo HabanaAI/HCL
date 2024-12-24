@@ -13,16 +13,12 @@ public:
     Gaudi2Hal(const Gaudi2Hal&)            = delete;
     Gaudi2Hal& operator=(const Gaudi2Hal&) = delete;
 
-    uint64_t         getFlushPCIeReg() const override;
     virtual uint32_t getMaxQpPerInternalNic() const override;
     virtual uint32_t getMaxQpPerExternalNic() const override;
     virtual uint32_t getCollectiveContextsCount() const;
     uint64_t         getMaxQPsPerNicNonPeer() const;
 
 private:
-    const uint64_t m_flushReg =
-        mmPCIE_WRAP_BASE + mmPCIE_WRAP_SPECIAL_GLBL_SPARE_0;  // Register close to PCIe to be used for flush
-
     // The number of QPs per NIC is limited because each QP holds a WQE table, and the total number of
     // WQEs per NIC is 420520
     const uint32_t m_maxQpPerInternalNic = 100;

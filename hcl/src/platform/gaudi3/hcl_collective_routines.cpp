@@ -38,7 +38,7 @@ HclCollectiveRoutinesGaudi3::HclCollectiveRoutinesGaudi3(HclDeviceGaudi3* device
              device->getServerDef().getHwModules(),
              m_gaudi3Commands)
 {
-    m_addressGenerator    = std::make_unique<HclAddressGeneratorGaudi3>(m_commands);
+    m_addressGenerator    = std::make_unique<HclAddressGeneratorGaudi3>();
     m_memHandler          = std::make_unique<HclCollectiveMemHandlerGaudi3>(m_streamId,
                                                                    *m_addressGenerator,
                                                                    m_intermediateBufferManager,
@@ -52,6 +52,7 @@ HclCollectiveRoutinesGaudi3::HclCollectiveRoutinesGaudi3(HclDeviceGaudi3* device
 HclCollectiveRoutinesGaudi3::~HclCollectiveRoutinesGaudi3()
 {
     if (m_utils) delete m_utils;
+    m_utils = nullptr;
     if (m_remainderCalculator) delete m_remainderCalculator;
 }
 
@@ -80,7 +81,7 @@ void HclCollectiveRoutinesGaudi3::createScaleUpSendRecvOp(hcl::ScalStreamBase& s
                                                 INVALID_COUNT,
                                                 m_boxType);
 
-    sob_info sobInfo = ((hcl::Gaudi3HclScalUtils*)(m_utils))->getSOBInfo(soAddress);
+    SobInfo sobInfo = ((hcl::Gaudi3HclScalUtils*)(m_utils))->getSOBInfo(soAddress);
 
     for (const SendRecvEntry& entry : sendRecvArray)
     {
@@ -139,8 +140,8 @@ void HclCollectiveRoutinesGaudi3::createScaleUpCollectiveOp(hcl::ScalStreamBase&
                                                 scaleUpOp.m_complexCollective,
                                                 scaleUpOp.m_isRoot);
 
-    sob_info sobInfo        = ((hcl::Gaudi3HclScalUtils*)(m_utils))->getSOBInfo(scaleUpOp.m_soAddress);
-    bool     doPortMaskCalc = (scaleUpOp.m_collectiveOp == eHCLSimpleBroadcast && !scaleUpOp.m_isSend) ||
+    SobInfo sobInfo        = ((hcl::Gaudi3HclScalUtils*)(m_utils))->getSOBInfo(scaleUpOp.m_soAddress);
+    bool    doPortMaskCalc = (scaleUpOp.m_collectiveOp == eHCLSimpleBroadcast && !scaleUpOp.m_isSend) ||
                           (scaleUpOp.m_collectiveOp == eHCLScatter && !scaleUpOp.m_isSend) ||
                           (scaleUpOp.m_collectiveOp == eHCLGather && scaleUpOp.m_isSend);
 
@@ -179,7 +180,7 @@ void HclCollectiveRoutinesGaudi3::createScaleOutCollectiveOp(hcl::ScalStreamBase
 {
     ScaleOutCollectiveOpG3 scaleOutOpG3 {scaleOutCollectiveOp};
 
-    sob_info         sobInfo       = ((hcl::Gaudi3HclScalUtils*)(m_utils))->getSOBInfo(scaleOutOpG3.m_soAddress);
+    SobInfo          sobInfo       = ((hcl::Gaudi3HclScalUtils*)(m_utils))->getSOBInfo(scaleOutOpG3.m_soAddress);
     auto&            m_dynamicComm = m_device->getComm(scaleOutOpG3.m_comm);
     HclDeviceGaudi3* device        = dynamic_cast<HclDeviceGaudi3*>(m_device);
     VERIFY(device != nullptr);
@@ -203,8 +204,8 @@ void HclCollectiveRoutinesGaudi3::createScaleOutCollectiveOp(hcl::ScalStreamBase
     scaleOutOpG3.m_ScaleupGroupSize = m_dynamicComm.getScaleupGroupSize();
     scaleOutOpG3.m_qpn              = qpUsage.qpn;
     scaleOutOpG3.m_disregardRank    = qpUsage.disregardRank;
-    scaleOutOpG3.m_ports_mask       = m_serverConnectivity.getExternalPortsMask(m_dynamicComm);
-    scaleOutOpG3.m_lagSize          = m_serverConnectivity.getNumScaleOutPorts(m_dynamicComm);
+    scaleOutOpG3.m_ports_mask       = m_dynamicComm.getCommConnectivity().getExternalPortsMask();
+    scaleOutOpG3.m_lagSize          = m_dynamicComm.getCommConnectivity().getNumScaleOutPorts();
 
     m_gaudi3Commands.serializeScaleOutCollectiveOp(scalStream, scaleOutOpG3);
 }

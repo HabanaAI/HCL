@@ -6,17 +6,25 @@
 #include "hcl_utils.h"                                        // for VERIFY
 #include "infra/scal/gen2_arch_common/scal_stream.h"          // for ScalStream
 #include "infra/scal/gen2_arch_common/scal_utils.h"           // for varoffs...
+#include "infra/scal/gaudi2/scal_utils.h"                     // for Gaudi2HclScalU...
 #include "platform/gen2_arch_common/commands/hcl_commands.h"  // for HclComm...
-#include "sched_pkts.h"                                       // for g2fw
+#include "g2_sched_pkts.h"                                    // for g2fw
 
 HclGraphSyncGaudi2::HclGraphSyncGaudi2(unsigned syncSmIdx, HclCommandsGen2Arch& commands)
 : HclGraphSyncGen2Arch(syncSmIdx, commands)
 {
+    m_utils = new hcl::Gaudi2HclScalUtils();
 }
 
-uint64_t HclGraphSyncGaudi2::getSyncManagerBase(unsigned id)
+HclGraphSyncGaudi2::~HclGraphSyncGaudi2()
 {
-    switch (id)
+    if (m_utils) delete m_utils;
+    m_utils = nullptr;
+}
+
+uint64_t HclGraphSyncGaudi2::getSyncManagerBase(unsigned smIdx)
+{
+    switch (smIdx)
     {
         case 0:
             return mmDCORE0_SYNC_MNGR_OBJS_BASE;
@@ -135,7 +143,7 @@ void HclGraphSyncGaudi2::createSetupMonMessages(hcl::ScalStream& scalStream,
     unsigned schedIdx = scalStream.getSchedIdx();
     if (isLong)
     {
-        LBWBurstDestData_t destData;
+        LBWBurstData_t destData;
         // 2nd dummy message to DCORE0_SYNC_MNGR_OBJS SOB_OBJ_8184
         uint64_t address2 = offsetof(gaudi2::block_sob_objs, sob_obj[8184]) + smBase;
         // Setup to payload address (of dummy SOB)

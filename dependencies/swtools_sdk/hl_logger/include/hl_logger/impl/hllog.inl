@@ -308,7 +308,7 @@ template<class TLoggerEnum>
 inline ModuleLoggerData<TLoggerEnum>::ModuleLoggerData(std::string_view moduleName)
 : moduleName(moduleName)
 {
-    HLLOG_INTERNAL_INFO("initialization of module: {}. logging dir: {} logging dir from env: {}", moduleName, hl_logger::getLogsFolderPath(), hl_logger::getLogsFolderPathFromEnv());
+    HLLOG_INTERNAL_INFO("initialization of module: {}. logging dir: {} logging dir from env: {}", moduleName, hl_logger::getLogsFolderPathAN(), hl_logger::getLogsFolderPathFromEnvAN());
     const LogLevelInfo levelsOff{HLLOG_LEVEL_OFF, HLLOG_LEVEL_OFF};
     levels.fill(levelsOff);
     registered.fill(false);
@@ -476,7 +476,7 @@ inline void createLogger(TLoggerEnum loggerEnumItem, hl_logger::LoggerCreatePara
         moduleLoggerData<TLoggerEnum>.lazyQueueSizes[loggerIdx] = getLazyQueueSize(getLoggerEnumItemName(loggerEnumItem), params_.defaultLazyQueueSize);
         return;
     }
-    hl_logger::LoggerCreateParams params = params_;
+    hl_logger::LoggerCreateParams params(params_);
     if (params_.loggerNameLength == 0)
     {
         auto it = moduleLoggerData<TLoggerEnum>.maxLoggerNameLenPerFile.find(params_.logFileName);
@@ -493,7 +493,7 @@ inline void createLogger(TLoggerEnum loggerEnumItem, hl_logger::LoggerCreatePara
     {
         moduleLoggerData<TLoggerEnum>.registered[loggerIdx] = true;
     }
-    hl_logger::LoggerSPtr newLogger = hl_logger::createLogger(hl_logger::getLoggerEnumItemName(loggerEnumItem), params);
+    hl_logger::LoggerSPtr newLogger = hl_logger::createLogger(hl_logger::getLoggerEnumItemName(loggerEnumItem), convertLoggerCreateParamsToAN(params));
     moduleLoggerData<TLoggerEnum>.loggers[loggerIdx].logger = newLogger;
     moduleLoggerData<TLoggerEnum>.loggers[loggerIdx].initialized.store(true, std::memory_order_release);
     if (params.defaultLoggingLevel != HLLOG_LEVEL_INVALID)

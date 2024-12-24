@@ -44,7 +44,7 @@ GaudiNicQPs::NicQPs& GaudiNicQPs::operator[](uint8_t nic)
         }
     }
 
-    // called with invalid nic, assuming allocateConnection is called only for connected nics
+    // called with invalid nic, assuming allocateQp is called only for connected nics
     VERIFY(false, "access invalid nic({})", nic);
 
     // never get here
@@ -53,13 +53,19 @@ GaudiNicQPs::NicQPs& GaudiNicQPs::operator[](uint8_t nic)
 
 namespace std
 {
-std::ostream& operator<<(std::ostream& os, const DevicesSet& devices)
+std::ostream& operator<<(std::ostream& os, const std::vector<uint32_t>& uint32Vec)
 {
-    std::stringstream              ss;
-    const std::set<HCL_HwModuleId> orderedDevices(devices.begin(), devices.end());
-    std::copy(orderedDevices.begin(),
-              orderedDevices.end(),
-              std::ostream_iterator<decltype(*orderedDevices.begin())>(ss, ","));
+    std::stringstream ss;
+    std::copy(uint32Vec.begin(), uint32Vec.end(), std::ostream_iterator<decltype(*uint32Vec.begin())>(ss, ","));
+    os << ss.str();
+    return os;
+}
+
+std::ostream& operator<<(std::ostream& os, const std::unordered_set<uint32_t>& uint32UnorderedSet)
+{
+    std::stringstream        ss;
+    const std::set<uint32_t> orderedSet(uint32UnorderedSet.begin(), uint32UnorderedSet.end());
+    std::copy(orderedSet.begin(), orderedSet.end(), std::ostream_iterator<decltype(*orderedSet.begin())>(ss, ","));
     os << ss.str();
     return os;
 }

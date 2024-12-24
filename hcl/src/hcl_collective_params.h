@@ -11,7 +11,7 @@
 struct HclCollectiveParams
 {
     explicit HclCollectiveParams(HCL_CollectiveOp        collectiveOp,
-                                 synStreamHandle         streamHandle,
+                                 void*                   streamHandle,
                                  uint64_t                sendBufferAddr,
                                  uint64_t                recvBufferAddr,
                                  uint64_t                count,
@@ -61,8 +61,8 @@ struct HclCollectiveParams
     virtual ~HclCollectiveParams() = default;
 
     HCL_CollectiveOp m_collectiveOp           = eHCLReduce;
-    HCL_CollectiveOp m_currentOp              = eHCLReduce;
-    synStreamHandle  m_streamHandle           = 0;
+    HCL_CollectiveOp m_currentOp              = eHCLNoCollective;
+    void*            m_streamHandle           = 0;
     uint64_t         m_sendBufferAddr         = 0;
     uint64_t         m_recvBufferAddr         = 0;
     uint64_t         m_count                  = 0;

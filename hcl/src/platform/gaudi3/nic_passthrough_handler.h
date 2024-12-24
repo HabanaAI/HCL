@@ -7,8 +7,7 @@
 #include <memory>   // for shared_ptr
 
 #include "hcl_api_types.h"                                           // for HCL_Comm
-#include "sched_pkts.h"                                              // for g3fw
-#include "gaudi3/gaudi3_arc_sched_packets.h"                         // for g3fw::sched_arc_cmd_nic_passthrough_v2_t
+#include "g3_sched_pkts.h"                                           // for g3fw
 #include "platform/gen2_arch_common/nic_passthrough_handler_base.h"  // for NicPassthroughHandlerBase
 #include "gaudi3/nic_patcher_cmds.h"  // for direct_coll_desc_send_receive, coll_desc_consume_space
 #include "platform/gen2_arch_common/server_connectivity_types.h"  // for DEFAULT_COMM_ID

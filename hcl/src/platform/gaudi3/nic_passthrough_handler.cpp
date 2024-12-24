@@ -5,7 +5,6 @@
 #include <memory>   // for shared_ptr
 #include <utility>  // for pair, make_pair
 
-#include "sched_pkts.h"                                       // for g3fw
 #include "hcl_utils.h"                                        // for VERIFY
 #include "hcl_log_manager.h"                                  // for LOG_*
 #include "platform/gaudi3/commands/hcl_commands.h"            // for HclCommandsGaudi3

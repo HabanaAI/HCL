@@ -17,6 +17,7 @@ class SignalsManager
 private:
     struct SignalWaitEvent;
 
+public:
     struct SignalDescription
     {
         SignalEvent event;
@@ -31,6 +32,7 @@ private:
         bool wasSignalled() const;
     };
 
+private:
     struct FenceCheckResult
     {
         bool      isFenced;
@@ -45,6 +47,7 @@ private:
         WaitPhase                                        currentPhase = 0;
         unsigned                                         longtermIdx  = 0;
 
+        bool     accumulateSignals = true;
         unsigned numSignals;
 
         unsigned numExecutedFences;
@@ -57,7 +60,8 @@ private:
                         llvm_vecsmall::SmallVector<SignalDescription, 8> signalDescs,
                         WaitMethod                                       waitMethod,
                         WaitPhase                                        waitPhase,
-                        unsigned                                         longtermSyncObjIdx);
+                        unsigned                                         longtermSyncObjIdx,
+                        bool                                             accSignals);
 
         SignalWaitEvent& operator=(const SignalWaitEvent& other);
         SignalWaitEvent& operator=(SignalWaitEvent&& other) = default;
@@ -89,7 +93,8 @@ public:
                      WaitMethod                                         waitMethod,
                      WaitPhase                                          waitPhase         = 0,
                      unsigned                                           numExpectedFences = 1,
-                     unsigned                                           longtermIdx       = 0);
+                     unsigned                                           longtermIdx       = 0,
+                     bool                                               accSignals        = true);
 
     uint32_t enqueueInternalCompletion(SignalEvent signalEvent);
 
@@ -113,6 +118,8 @@ public:
     const std::array<bool, (unsigned)WaitMethod::WAIT_METHOD_MAX>& getMethodsToClean() const;
 
     void DFA(uint64_t deviceTargetValue);
+
+    WaitPhase getNextPhase(WaitMethod waitMethod) const;
 
 private:
     struct Graph
@@ -149,14 +156,28 @@ private:
     Graph                               m_nonCachedGraph;
     bool                                m_usingCache = false;
 
-    std::vector<std::array<SyncObjectDescriptor, (unsigned)WaitMethod::WAIT_METHOD_MAX>> m_completionTracker;
-    std::vector<uint64_t>                                                                m_cuidTracker;
+    struct CompletionTracker
+    {
+        struct CompletionEntry : public SyncObjectDescriptor
+        {
+            struct Signal
+            {
+                SignalEvent event;
+                unsigned    numSignals;
+            };
+            llvm_vecsmall::SmallVector<Signal, 8> signals;
+        };
+        uint64_t                                                           cuid;
+        std::array<CompletionEntry, (unsigned)WaitMethod::WAIT_METHOD_MAX> entries;
+    };
+    std::vector<CompletionTracker> m_completionTracker;
 
     HclGraphSyncGen2Arch& m_graphSync;
     Gen2ArchScalUtils*    m_utils;
 
     const unsigned m_cgSize;
     unsigned       m_archStream;
+    bool           m_allowGraphCaching = false;
 
     CommonState* m_commonState   = nullptr;
     int          m_prevIteration = -1;
@@ -169,5 +190,5 @@ private:
     unsigned calculateNumSignals(const SignalDescription& desc) const;
     unsigned calculateNumSignals(WaitEvent waitEvent) const;
 
-    WaitPhase getLastPhase(WaitMethod waitMethod, Graph& graph) const;
+    WaitPhase getLastPhase(WaitMethod waitMethod, bool ignoreSignals = false) const;
 };

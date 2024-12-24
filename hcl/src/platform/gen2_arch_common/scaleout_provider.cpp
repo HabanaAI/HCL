@@ -11,6 +11,7 @@
 #include "hcl_global_conf.h"
 #include "interfaces/hcl_remote_device.h"
 #include "hcl_utils.h"
+#include "infra/scal/gen2_arch_common/scal_manager.h"  // for
 #include "interfaces/hcl_hal.h"
 #include "interfaces/hcl_unique_sorted_vector.h"
 #include "platform/gen2_arch_common/collective_states.h"
@@ -25,7 +26,6 @@
 #include "hcl_log_manager.h"                             // for LOG_*
 #include "hcl_types.h"                                   // for HostNicConnectInfo
 #include "hcl_math_utils.h"
-#include "libfabric/mr_mapping.h"
 #include "platform/gen2_arch_common/server_connectivity.h"  // for Gen2ArchServerConnectivity
 
 ScaleoutProvider::ScaleoutProvider(HclDeviceGen2Arch* device) : m_device(device) {}
@@ -63,6 +63,31 @@ bool Gen2ArchScaleoutProvider::isHostNic() const
 bool Gen2ArchScaleoutProvider::isGaudiDirect() const
 {
     return false;
+}
+
+SignalEvent Gen2ArchScaleoutProvider::getScaleoutSendSignal()
+{
+    return SignalEvent::SCALEOUT_SEND;
+}
+
+SignalEvent Gen2ArchScaleoutProvider::getScaleoutRecvSignal()
+{
+    return SignalEvent::SCALEOUT_RECV;
+}
+
+int Gen2ArchScaleoutProvider::getInternalScaleoutFences()
+{
+    return 0;
+}
+
+void Gen2ArchScaleoutProvider::validateSize(uint64_t size)
+{
+    return;
+}
+
+int Gen2ArchScaleoutProvider::setInternalScaleoutRecvWait(WaitMethod method, SignalsManager& signalsManager)
+{
+    return 0;  // no internal waits
 }
 
 void Gen2ArchScaleoutProvider::requestScaleoutResources(SliceState& sliceState, SignalsManager& signalsManager)
@@ -206,7 +231,7 @@ void Gen2ArchScaleoutProvider::calculateScaleoutRecvResources(SliceState& sliceS
 void Gen2ArchScaleoutProvider::openConnectionsOuterRanks(const HCL_Comm comm, const UniqueSortedVector& outerRanks)
 {
     LOG_HCL_TRACE(HCL, "comm={}, outerRanks=[ {} ]", comm, outerRanks);
-    m_device->openQpsHlsScaleOut(comm, outerRanks);
+    m_device->openQpsScaleOut(comm, outerRanks);
 }
 
 void Gen2ArchScaleoutProvider::verifyConnections(HCL_Comm comm)
@@ -215,7 +240,7 @@ void Gen2ArchScaleoutProvider::verifyConnections(HCL_Comm comm)
     m_device->getOuterRanks(comm, outerRanks);
     for (auto& rank : outerRanks)
     {
-        m_device->updateRankQps(comm, rank);
+        m_device->connectRankQps(comm, rank);
     }
 }
 
@@ -226,7 +251,7 @@ void Gen2ArchScaleoutProvider::updateConnectionsNonPeer(const HCL_Comm          
     LOG_HCL_TRACE(HCL, "comm={}, nonPeerRemoteRanks.size={}", comm, nonPeerRemoteRanks.size());
     for (const HCL_Rank remoteRank : nonPeerRemoteRanks)
     {
-        m_device->updateRankQps(comm, remoteRank);
+        m_device->connectRankQps(comm, remoteRank);
     }
 }
 
@@ -238,11 +263,11 @@ void Gen2ArchScaleoutProvider::closeConnections(HCL_Comm comm)
 
 unsigned Gen2ArchScaleoutProvider::getNumOfNicsPerDevice(const HCL_Comm comm) const
 {
-    return m_device->getServerConnectivity().getNumScaleOutPorts(comm);
+    return m_device->getComm(comm).getCommConnectivity().getNumScaleOutPorts();
 }
 
 LibfabricScaleoutProvider::LibfabricScaleoutProvider(HclDeviceGen2Arch* device)
-: ScaleoutProvider(device), m_numArchStreams(device->getHal()->getMaxStreams())
+: ScaleoutProvider(device), m_numArchStreams(device->getHal().getMaxStreams())
 {
     LOG_HCL_INFO(HCL, "Scale-Out provider - libfabric");
     VERIFY(mod(m_numArchStreams, GCFG_HOST_SCHEDULER_THREADS.value()) == 0, "Invalid Number of Host Scheduler threads");
@@ -250,30 +275,47 @@ LibfabricScaleoutProvider::LibfabricScaleoutProvider(HclDeviceGen2Arch* device)
     m_hostStreamVec.resize(m_numArchStreams);
     uint64_t sizeOfHostBufferPool = 0;
     m_isGaudiDirect               = ofi_t::isGaudiDirect();
-    if (!isGaudiDirect())
+
+    MRParams mrParams;
+    if (m_isGaudiDirect)
+    {
+        uint64_t scalBase, hbmPoolStart, allocatedSize;
+        device->getScalManager().getHBMInfoForExport(scalBase, hbmPoolStart, allocatedSize);
+        uint64_t offset = hbmPoolStart - scalBase;
+        LOG_HCL_DEBUG(HCL,
+                      "Mapping device memory: base addr 0x{:x} offset 0x{:x} size {:g}MB",
+                      scalBase,
+                      offset,
+                      B2MB(allocatedSize));
+
+        mrParams.m_fd     = device->getFd();
+        mrParams.m_addr   = scalBase;
+        mrParams.m_size   = allocatedSize;
+        mrParams.m_offset = offset;
+
+        VERIFY(mrParams.m_fd != 0, "HCL_GetDeviceFD returned 0 for device FD");
+    }
+    else
     {
         sizeOfHostBufferPool = device->getSIBBufferSize() * (HostBuffersAmount::getBufferCount(HNIC_SEND_POOL) +
                                                              HostBuffersAmount::getBufferCount(HNIC_RECV_POOL));
         uint64_t sizeOfAllHostBuffers = m_numArchStreams * sizeOfHostBufferPool;
 
-        m_hostAddress            = alloc_and_map_to_device(sizeOfAllHostBuffers,
+        m_hostAddress = alloc_and_map_to_device(sizeOfAllHostBuffers,
                                                 m_deviceHandle,
-                                                m_device->getDeviceConfig().getFd(),
+                                                device->getDeviceConfig().getFd(),
                                                 nullptr,
                                                 PROT_READ | PROT_WRITE,
                                                 MAP_SHARED | MAP_ANONYMOUS);
-        struct fid_mr* mr_handle = nullptr;
-        if (ofi_t::isMRLocal())
-        {
-            MRMapping::get_instance().mapHostMem(reinterpret_cast<uint64_t>(m_hostAddress),
-                                                 sizeOfAllHostBuffers,
-                                                 m_device->getOfiComponent(),
-                                                 mr_handle);
-            VERIFY(mr_handle != NULL,
-                   "MR handle not available for addr 0x{:x} size: 0x{:x}",
-                   reinterpret_cast<uint64_t>(m_hostAddress),
-                   sizeOfAllHostBuffers);
-        }
+
+        mrParams.m_addr = reinterpret_cast<uint64_t>(m_hostAddress);
+        mrParams.m_size = sizeOfAllHostBuffers;
+    }
+
+    if (ofi_t::isMRLocal())
+    {
+        // create MemoryRegion.
+        device->getOfiComponent()->create_mr(mrParams);
     }
 
     for (unsigned archStream = 0; archStream < m_numArchStreams; archStream++)
@@ -424,7 +466,8 @@ void LibfabricScaleoutProvider::openConnectionsOuterRanks(const HCL_Comm comm, c
     HclDynamicCommunicator& dynamicComm = m_device->getComm(comm);
     if (nullptr == dynamicComm.m_hostNicBridge)
     {
-        dynamicComm.m_hostNicBridge = std::unique_ptr<ofi_communicator>(new ofi_communicator());
+        dynamicComm.m_hostNicBridge =
+            std::unique_ptr<ofi_communicator>(new ofi_communicator(m_device->getOfiComponent()->get_mr()));
     }
 
     VERIFY(dynamicComm.initializeHostNicBridge(outerRanks));
@@ -450,6 +493,28 @@ void LibfabricScaleoutProvider::verifyConnections(HCL_Comm comm)
                                                            dynamicComm.m_remoteDevices[rank]->remoteInfo.hostNicConns);
         VERIFY(res == true, "Failed to update connection to rank {}", rank);
     }
+}
+
+SignalEvent LibfabricScaleoutProvider::getScaleoutSendSignal()
+{
+    return SignalEvent::HNIC_SCALEOUT_SEND;
+}
+
+SignalEvent LibfabricScaleoutProvider::getScaleoutRecvSignal()
+{
+    return isGaudiDirect() ? SignalEvent::HNIC_SCALEOUT_RECV : SignalEvent::HNIC_PDMA;
+}
+
+int LibfabricScaleoutProvider::getInternalScaleoutFences()
+{
+    return 1;
+}
+
+void LibfabricScaleoutProvider::validateSize(uint64_t size)
+{
+    VERIFY(!(!isGaudiDirect() && size > m_device->getSIBBufferSize()),
+           "Maximal Transaction size in Host NIC (non GDR) is defined by HCL_IMB_SIZE ({}B)",
+           m_device->getSIBBufferSize());
 }
 
 void LibfabricScaleoutProvider::updateConnectionsNonPeer(const HCL_Comm                         comm,
@@ -478,6 +543,20 @@ void LibfabricScaleoutProvider::closeConnections(HCL_Comm comm)
 {
     HclDynamicCommunicator& dynamicComm = m_device->getComm(comm);
     dynamicComm.m_hostNicBridge->destroy();
+}
+
+int LibfabricScaleoutProvider::setInternalScaleoutRecvWait(WaitMethod method, SignalsManager& signalsManager)
+{
+    if (!isGaudiDirect())
+    {
+        signalsManager.enqueueWait(WaitEvent::HNIC_SCALEOUT_RECV_PDMA_WAIT_FOR_RECV,
+                                   {SignalEvent::HNIC_SCALEOUT_RECV},
+                                   method,
+                                   signalsManager.getNextPhase(method));
+        return 1;  // single internal wait
+    }
+
+    return 0;
 }
 
 void LibfabricScaleoutProvider::requestScaleoutResources(SliceState& sliceState, SignalsManager& signalsManager)

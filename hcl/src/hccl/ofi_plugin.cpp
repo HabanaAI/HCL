@@ -54,7 +54,7 @@ bool OfiPlugin::initialize_ofi_plugin()
         {
             if (version >= get_wrapper_required_version())
             {
-                LOG_INFO(HCL, "OFI wrapper version is: {}", version);
+                LOG_INFO_F(HCL, "OFI wrapper version is: {}", version);
             }
             else
             {

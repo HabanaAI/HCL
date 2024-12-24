@@ -191,7 +191,20 @@ private:
 
     static void dfaLogCommInfo(IHclDevice* iDev, DfaLoggersV3& dfaLoggers);
     static void dfaLogHostFences(IHclDevice* iDev, hl_logger::LoggerSPtr logger);
+    static void dfaLogCmdBuff(IHclDevice* iDev, hl_logger::LoggerSPtr logger);
     static bool dfaLogCcb(hl_logger::LoggerSPtr logger);
+    static void printStreamQueuesDFALog(unsigned              archStream,
+                                        size_t                uarchStream,
+                                        void*                 inner_queue,
+                                        void*                 outer_queue,
+                                        void*                 send_wait_outer_queue,
+                                        hl_logger::LoggerSPtr logger,
+                                        const std::string     stream_name);
+    static void printQueueDFALog(unsigned              archStream,
+                                 size_t                uarchStream,
+                                 void*                 queue,
+                                 hl_logger::LoggerSPtr logger,
+                                 const std::string     stream_name);
 
     bool logDfaMain(DfaStatus& dfaStatus, void (*logFunc)(int, const char*), DfaLoggersV3& dfaLoggers);
 

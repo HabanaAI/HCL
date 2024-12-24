@@ -1,6 +1,5 @@
 #pragma once
 
-#include "scal_types.h"
 #include "scal.h"
 #include <cstdint>
 

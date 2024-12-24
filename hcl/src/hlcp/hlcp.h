@@ -17,7 +17,10 @@ public:
     virtual void on_connect(hlcp_t& connection) _DEF_IMPL_;
 
     // protocol errors
-    virtual void on_error(bool send, hlcp_command_t* cmd, const hlcp_packet_t& packet, hlcp_t& connection) _DEF_IMPL_;
+    virtual void on_error(hlcp_command_t*      cmd,
+                          const hlcp_packet_t& packet,
+                          hlcp_t&              connection,
+                          const std::string&   reason = "") _DEF_IMPL_;
 };
 
 // hlcp protocol endpoint. will fire notify events on network packet parsing.
@@ -34,9 +37,9 @@ protected:
         ack
     };
 
-    struct hlcp_op_t  // hlcp operation (tx/rx) descriptor
+    struct hlcp_operation_descriptor  // hlcp operation (tx/rx) descriptor
     {
-        hlcp_state_e    state;  // what we are expecting/sending (header - payload)
+        hlcp_state_e    state;  // what we are expecting/sending (header - payload - ack)
         hlcp_command_t* cmd;    // user supplied command descriptor (for command with payload must exist until send
                                 // operation is completed)
         hlcp_packet_t packet;   // packet being sent/received
@@ -44,7 +47,7 @@ protected:
         operator void*() { return &packet; }
     };
 
-    struct : public hlcp_op_t  // current transmit data
+    struct : public hlcp_operation_descriptor  // TX current transmit data
     {
         bool  completed = false;
         auto& operator=(const hlcp_command_t& _cmd)
@@ -54,7 +57,7 @@ protected:
 
             if (_cmd.payload_size() > 0)
             {
-                cmd = (hlcp_command_t*)&_cmd;
+                cmd = const_cast<hlcp_command_t*>(&_cmd);
             }
             else
             {
@@ -65,7 +68,7 @@ protected:
         }
     } tx_;
 
-    struct : public hlcp_op_t  // current receive data
+    struct : public hlcp_operation_descriptor  // RX current receive data
     {
         auto& operator=(hlcp_command_t& _cmd)
         {
@@ -88,7 +91,7 @@ public:
 protected:
     void set_transport(socket_io_t& s);
 
-    bool inspect_header(const hlcp_packet_t& packet);
+    bool inspect_header();
 
     bool send_header();
     bool send_payload();
@@ -105,12 +108,6 @@ public:
     hlcp_t(socket_io_t& s, hlcp_notify_t& n) : notify_(&n) { set_transport(s); }
 
     virtual ~hlcp_t() = default;
-
-    auto& operator=(socket_io_t& s)
-    {
-        set_transport(s);
-        return (*this);
-    }
 
     bool send_command(const hlcp_command_t& cmd);
     bool send_command(const hlcp_command_t& cmd, uint32_t timeout_sec);

@@ -82,3 +82,4 @@ size_t         hccl_data_type_elem_size(hcclDataType_t data_type);
 hcclDataType_t from_hccl_data_type_for_emulation(hcclDataType_t data_type);
 
 std::ostream& operator<<(std::ostream& os, const hcclRedOp_t& reduceOp);
+HLLOG_DEFINE_OSTREAM_FORMATTER(hcclRedOp_t);

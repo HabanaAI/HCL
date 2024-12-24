@@ -24,15 +24,16 @@
 class IHcclCoordinatorClient
 {
 public:
-    virtual bool destroy()                                                                                          = 0;
-    virtual bool commInitHandshake1(int nranks, RankInfoHeader& myRankInfo, std::vector<RankInfoHeader>& ranksInfo) = 0;
+    virtual ~IHcclCoordinatorClient() = default;
+    virtual bool
+    exchangeRankInfo(int nranks, const RankInfoHeader& myRankInfo, std::vector<RankInfoHeader>& ranksInfo) = 0;
 
-    virtual bool commInitHandshake2(int                                      nranks,
-                                    void*                                    rankInfoBuffer,
-                                    uint32_t                                 rankInfoBufferSize,
-                                    std::vector<RemoteDeviceConnectionInfo>& remoteDevicesInfo) = 0;
+    virtual bool exchangeQpsInfo(int                                      nranks,
+                                 const RankInfoBuffer&                    rankInfoBuffer,
+                                 uint32_t                                 rankInfoBufferSize,
+                                 std::vector<RemoteDeviceConnectionInfo>& remoteDevicesInfo) = 0;
 
-    virtual bool syncBetweenRanks() = 0;
+    virtual bool rendezvous() = 0;
 
     virtual hcclResult_t sendCollectiveLog(const HCL_CollectiveOp op,
                                            const size_t           count,
@@ -46,21 +47,28 @@ public:
     virtual hcclResult_t sendRecvFromRanks(UniqueSortedVector& nonPeerRemoteRanks,
                                            std::vector<void*>& recvBuffers,
                                            std::vector<void*>& sendBuffers,
-                                           size_t              sendRecvBufSize,
-                                           HCL_Comm            comm) = 0;
+                                           size_t              sendRecvBufSize) = 0;
 
-    virtual void synchronizeRemoteRanks(const HCL_Comm comm, const UniqueSortedVector& remoteRanks) = 0;
+    virtual bool rendezvous(const UniqueSortedVector& remoteRanks) = 0;
+
+    virtual bool sendNicStateChange(const class NicState& nicState)         = 0;
+    virtual bool exchangeMigrationData(int                   nranks,
+                                       const RankInfoBuffer& myInfo,
+                                       uint32_t              rankInfoBufferSize,
+                                       remote_devices_t&     remoteDevicesInfo) = 0;
+
+    class IMigrationCallback* migration_cb_ = nullptr;
 };
 
 using spHcclCoordinatorClient = std::shared_ptr<IHcclCoordinatorClient>;
-using HcclCoordinatorUPtr     = std::unique_ptr<class IHcclCoordinator>;
+
+using HcclCoordinatorUPtr = std::unique_ptr<class IHcclCoordinator>;
 
 class IHcclCoordinator
 {
 public:
     static HcclCoordinatorUPtr create(bool use_global_comm_ip = false);
     virtual ~IHcclCoordinator() = default;
-    virtual hcclResult_t run()  = 0;
 
     size_t next_id()
     {

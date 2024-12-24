@@ -16,11 +16,11 @@ public:
     HclGraphSyncGaudi2(const HclGraphSyncGaudi2&)            = delete;
     HclGraphSyncGaudi2& operator=(HclGraphSyncGaudi2&&)      = delete;
     HclGraphSyncGaudi2& operator=(const HclGraphSyncGaudi2&) = delete;
-    virtual ~HclGraphSyncGaudi2()                            = default;
+    virtual ~HclGraphSyncGaudi2();
     virtual uint32_t getSoConfigValue(unsigned value, bool isReduction) override;
 
 private:
-    virtual uint64_t getSyncManagerBase(unsigned id) override;
+    virtual uint64_t getSyncManagerBase(unsigned smIdx) override;
     virtual uint32_t getAddrMonPayAddrl(uint64_t smBase, unsigned Idx) override;
     virtual uint32_t getAddrMonPayAddrh(uint64_t smBase, unsigned Idx) override;
     virtual uint32_t getAddrMonPayData(uint64_t smBase, unsigned Idx) override;

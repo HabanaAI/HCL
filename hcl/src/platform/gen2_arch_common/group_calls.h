@@ -45,4 +45,7 @@ typedef std::unordered_map<hcl::SchedulersIndex, GroupCalls> GroupCallsBuckets;
 }  // namespace hcl
 
 std::ostream& operator<<(std::ostream& os, const hcl::GroupCallsAggregation& groupCalls);
+HLLOG_DEFINE_OSTREAM_FORMATTER(hcl::GroupCallsAggregation);
+
 std::ostream& operator<<(std::ostream& os, const hcl::SendRecvArraysVector& sendRecvArraysVector);
+HLLOG_DEFINE_OSTREAM_FORMATTER(hcl::SendRecvArraysVector);

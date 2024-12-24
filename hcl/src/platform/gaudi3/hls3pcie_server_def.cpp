@@ -12,7 +12,7 @@
 #include "platform/gen2_arch_common/hcl_device.h"             // for HclDeviceGen2Arch
 #include "platform/gen2_arch_common/hcl_device_config.h"      // for HclDeviceConfig
 #include "platform/gaudi3/hcl_device.h"                       // for HclDeviceGaudi3
-#include "platform/gaudi3/hal_hls3pcie.h"                     // for Gaudi3Hls3PCieHal
+#include "platform/gaudi3/hal.h"                              // for Gaudi3Hal
 #include "platform/gaudi3/hcl_device_controller.h"            // for HclDeviceControllerGaudi3
 #include "interfaces/hcl_hal.h"                               // for HalPtr
 
@@ -41,7 +41,7 @@ void HLS3PCIEServerDef::init()
         std::make_unique<HLS3PCIEServerConnectivity>(m_fd, m_moduleId, false /*useDummyConnectivity*/, m_deviceConfig);
     m_serverConnectivity->init(true);
 
-    m_halShared        = std::make_shared<hcl::Gaudi3Hls3PCieHal>(m_deviceConfig.getHwModuleId());
+    m_halShared        = std::make_shared<hcl::Gaudi3Hal>();
     m_deviceController = std::make_unique<HclDeviceControllerGaudi3>(m_fd, m_halShared->getMaxStreams());
     m_device = m_fd >= 0 ? std::make_unique<HclDeviceGaudi3>(*m_deviceController, m_deviceConfig, m_halShared, *this)
                          : nullptr;

@@ -95,5 +95,6 @@ protected:
 
     bool           m_disableCcb = false;  // used for null submission
     const uint64_t m_logOfBufferSize;     // Cyclic buffer size
+    const uint64_t m_pi_mask;
 };
 }  // namespace hcl

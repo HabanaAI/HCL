@@ -10,7 +10,7 @@
 
 #include "hcl_api_types.h"                    // for HCL_Comm, HCL_Rank
 #include "hcl_types.h"                        // for MAX_QPS_SETS_PER_CONNECTION, NUM_SCALEUP_PORTS_PER_CONNECTION
-#include "sched_pkts.h"                       // for g2fw
+#include "g2_sched_pkts.h"                    // for g2fw
 #include "platform/gen2_arch_common/types.h"  // for MAX_NICS_GEN2ARCH
 #include "hcl_dynamic_communicator.h"         // for HclDynamicCommunicator
 

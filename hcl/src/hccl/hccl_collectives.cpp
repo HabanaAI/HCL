@@ -22,17 +22,16 @@
 #include "hcl_types.h"                              // for HclConfigType, LOOP...
 #include "hcl_utils.h"                              // for LOG_HCL_TRACE
 #include "hcl_log_manager.h"                        // for LOG_TRACE
-#include "synapse_api_types.h"                      // for synStreamHandle
 #include "hcl_dynamic_communicator.h"
 
-hcclResult_t hccl_communicator::allreduce(const void*     sendbuff,
-                                          void*           recvbuff,
-                                          size_t          count,
-                                          hcclDataType_t  dataType,
-                                          hcclRedOp_t     reduceOp,
-                                          synStreamHandle stream_handle,
-                                          const uint32_t  flags,
-                                          uint8_t         apiId)
+hcclResult_t hccl_communicator::allreduce(const void*    sendbuff,
+                                          void*          recvbuff,
+                                          size_t         count,
+                                          hcclDataType_t dataType,
+                                          hcclRedOp_t    reduceOp,
+                                          void*          stream_handle,
+                                          const uint32_t flags,
+                                          uint8_t        apiId)
 {
     HclCollectiveParams params(eHCLAllReduce,
                                stream_handle,
@@ -48,15 +47,15 @@ hcclResult_t hccl_communicator::allreduce(const void*     sendbuff,
     return hccl_device().collective_call(params);
 }
 
-hcclResult_t hccl_communicator::reduce(const void*     sendbuff,
-                                       void*           recvbuff,
-                                       size_t          count,
-                                       hcclDataType_t  dataType,
-                                       hcclRedOp_t     reduceOp,
-                                       int             root,
-                                       synStreamHandle stream_handle,
-                                       const uint32_t  flags,
-                                       uint8_t         apiId)
+hcclResult_t hccl_communicator::reduce(const void*    sendbuff,
+                                       void*          recvbuff,
+                                       size_t         count,
+                                       hcclDataType_t dataType,
+                                       hcclRedOp_t    reduceOp,
+                                       int            root,
+                                       void*          stream_handle,
+                                       const uint32_t flags,
+                                       uint8_t        apiId)
 {
     HclCollectiveParams params(eHCLReduce,
                                stream_handle,
@@ -73,14 +72,14 @@ hcclResult_t hccl_communicator::reduce(const void*     sendbuff,
     return hccl_device().collective_call(params);
 }
 
-hcclResult_t hccl_communicator::reduce_scatter(const void*     sendBuff,
-                                               void*           recvBuff,
-                                               size_t          recvCount,
-                                               hcclDataType_t  dataType,
-                                               hcclRedOp_t     reduceOp,
-                                               synStreamHandle streamHandle,
-                                               const uint32_t  flags,
-                                               uint8_t         apiId)
+hcclResult_t hccl_communicator::reduce_scatter(const void*    sendBuff,
+                                               void*          recvBuff,
+                                               size_t         recvCount,
+                                               hcclDataType_t dataType,
+                                               hcclRedOp_t    reduceOp,
+                                               void*          streamHandle,
+                                               const uint32_t flags,
+                                               uint8_t        apiId)
 {
     size_t communicatorSize = m_commSize;
 
@@ -103,13 +102,13 @@ hcclResult_t hccl_communicator::reduce_scatter(const void*     sendBuff,
     return hccl_device().collective_call(params);
 }
 
-hcclResult_t hccl_communicator::alltoall(const void*     sendbuff,
-                                         void*           recvbuff,
-                                         size_t          count,
-                                         hcclDataType_t  dataType,
-                                         synStreamHandle stream_handle,
-                                         const uint32_t  flags,
-                                         uint8_t         apiId)
+hcclResult_t hccl_communicator::alltoall(const void*    sendbuff,
+                                         void*          recvbuff,
+                                         size_t         count,
+                                         hcclDataType_t dataType,
+                                         void*          stream_handle,
+                                         const uint32_t flags,
+                                         uint8_t        apiId)
 {
     HclCollectiveParams params(eHCLAll2All,
                                stream_handle,
@@ -126,14 +125,14 @@ hcclResult_t hccl_communicator::alltoall(const void*     sendbuff,
     return hcclSuccess;
 }
 
-hcclResult_t hccl_communicator::broadcast(const void*     sendbuff,
-                                          void*           recvbuff,
-                                          size_t          count,
-                                          hcclDataType_t  dataType,
-                                          int             root,
-                                          synStreamHandle stream_handle,
-                                          const uint32_t  flags,
-                                          uint8_t         apiId)
+hcclResult_t hccl_communicator::broadcast(const void*    sendbuff,
+                                          void*          recvbuff,
+                                          size_t         count,
+                                          hcclDataType_t dataType,
+                                          int            root,
+                                          void*          stream_handle,
+                                          const uint32_t flags,
+                                          uint8_t        apiId)
 {
     HclCollectiveParams params(eHCLBroadcast,
                                stream_handle,
@@ -150,13 +149,13 @@ hcclResult_t hccl_communicator::broadcast(const void*     sendbuff,
     return hccl_device().collective_call(params);
 }
 
-hcclResult_t hccl_communicator::allgather(const void*     sendBuff,
-                                          void*           recvBuff,
-                                          size_t          sendCount,
-                                          hcclDataType_t  dataType,
-                                          synStreamHandle streamHandle,
-                                          const uint32_t  flags,
-                                          uint8_t         apiId)
+hcclResult_t hccl_communicator::allgather(const void*    sendBuff,
+                                          void*          recvBuff,
+                                          size_t         sendCount,
+                                          hcclDataType_t dataType,
+                                          void*          streamHandle,
+                                          const uint32_t flags,
+                                          uint8_t        apiId)
 {
     HclCollectiveParams params(eHCLAllGather,
                                streamHandle,

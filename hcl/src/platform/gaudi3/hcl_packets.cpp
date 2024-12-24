@@ -18,7 +18,7 @@
 #include "platform/gen2_arch_common/hcl_packets_utils.h"
 #include "platform/gen2_arch_common/types.h"  // for reduction_datat...
 #include "scal.h"                             // for SCAL_NIC_RECEIV...
-#include "sched_pkts.h"                       // for g3fw
+#include "g3_sched_pkts.h"                    // for g3fw
 #include "synapse_profiler_api.hpp"           // for pdma context id
 #include "hcl_math_utils.h"
 
@@ -804,11 +804,17 @@ void serializeAllocBarrierCommand(hcl::ScalStreamBase&                          
                                   unsigned                                                 schedIdx,
                                   uint32_t                                                 completionGroupIndex,
                                   uint32_t                                                 requiredSobs,
-                                  llvm_vecsmall::SmallVector<uint32_t, MAX_STREAM_TO_INC>* fences)
+                                  llvm_vecsmall::SmallVector<uint32_t, MAX_STREAM_TO_INC>* fences,
+                                  const LBWBurstData_t*                                    destBurstData)
 {
-    uint32_t fenceCnt = fences == nullptr ? 0 : fences->size();
-    uint32_t cmdSize =
-        sizeof(g3fw::sched_arc_cmd_alloc_nic_barrier_t) + (sizeof(uint32_t) * ((fenceCnt > 0) + (fenceCnt > 4)));
+    uint32_t fenceCnt    = fences == nullptr ? 0 : fences->size();
+    uint32_t lbwBurstCnt = destBurstData == nullptr ? 0 : destBurstData->size();
+    uint32_t fenceDwords = (fenceCnt > 0) + (fenceCnt > 4);
+
+    uint32_t cmdSize = sizeof(g3fw::sched_arc_cmd_alloc_nic_barrier_t) +
+                       (sizeof(g3fw::sched_arc_fence_id_arr_t) * fenceDwords) +
+                       (sizeof(g3fw::sched_arc_lbw_write_t) * lbwBurstCnt);
+
     g3fw::sched_arc_cmd_alloc_nic_barrier_t* command =
         reinterpret_cast<g3fw::sched_arc_cmd_alloc_nic_barrier_t*>(scalStream.getNextPtr(cmdSize));
     memset(command, 0, cmdSize);
@@ -830,17 +836,37 @@ void serializeAllocBarrierCommand(hcl::ScalStreamBase&                          
         SET_FIELD(((uint8_t*)command->fence_arr)[i], (*fences)[i]);
     }
 
-    PRINT_PACKET_TRACE_WITH_COUNTS(scalStream,
-                                   fenceCnt,
-                                   "schedIdx:{}, opcode:{}, comp_group_index:{}, required_sobs:{}",
-                                   schedIdx,
-                                   command->opcode,
-                                   (uint32_t)command->comp_group_index,
-                                   (uint32_t)command->required_sobs);
+    SET_FIELD(command->num_lbw_write, lbwBurstCnt);
+    g3fw::sched_arc_lbw_write_t* lbw_addr_data = (g3fw::sched_arc_lbw_write_t*)(command->fence_arr + fenceDwords);
+    for (unsigned i = 0; i < lbwBurstCnt; i++)
+    {
+        SET_FIELD(lbw_addr_data[i].addr, (*destBurstData)[i].addr);
+        SET_FIELD(lbw_addr_data[i].data, (*destBurstData)[i].data);
+    }
+
+    PRINT_PACKET_TRACE_WITH_2_COUNTS(scalStream,
+                                     fenceCnt,
+                                     lbwBurstCnt,
+                                     "schedIdx:{}, opcode:{}, comp_group_index:{}, required_sobs:{}",
+                                     schedIdx,
+                                     command->opcode,
+                                     (uint32_t)command->comp_group_index,
+                                     (uint32_t)command->required_sobs);
 
     for (unsigned i = 0; i < fenceCnt; i++)
     {
         LOG_TRACE(HCL_SUBMIT, "Packets | fenceId{}={}", i, (*fences)[i]);
+    }
+    for (unsigned i = 0; i < lbwBurstCnt; i++)
+    {
+        LOG_TRACE(HCL_SUBMIT,
+                  "Packets | BurstElement burst_size:{}, "
+                  "burst_index:{}, "
+                  "dst_addr:0x{:x}, src_data:0x{:x}",
+                  (uint32_t)command->num_lbw_write,
+                  (uint32_t)i,
+                  (uint64_t)lbw_addr_data[i].addr,
+                  (uint64_t)lbw_addr_data[i].data);
     }
 }
 
@@ -892,11 +918,7 @@ void serializeFenceIncCommand(hcl::ScalStreamBase& scalStream, unsigned schedIdx
                        (uint32_t)command->fence_id);
 }
 
-void serializeLbwWriteCommand(hcl::ScalStreamBase& scalStream,
-                              unsigned             schedIdx,
-                              uint32_t             destination,
-                              uint32_t             data,
-                              bool                 blockUntilCompletion)
+void serializeLbwWriteCommand(hcl::ScalStreamBase& scalStream, unsigned schedIdx, uint32_t destination, uint32_t data)
 {
     g3fw::sched_arc_cmd_lbw_write_t* command = reinterpret_cast<g3fw::sched_arc_cmd_lbw_write_t*>(
         scalStream.getNextPtr(sizeof(g3fw::sched_arc_cmd_lbw_write_t)));
@@ -909,18 +931,15 @@ void serializeLbwWriteCommand(hcl::ScalStreamBase& scalStream,
         g3fw::SCHED_SCALEOUT_SEND_ARC_CMD_LBW_WRITE,
         g3fw::SCHED_SCALEOUT_RECV_ARC_CMD_LBW_WRITE};
     SET_FIELD(command->opcode, opcodes[schedIdx]);
-    SET_FIELD(command->block_next, blockUntilCompletion);
     SET_FIELD(command->dst_addr, destination);
     SET_FIELD(command->src_data, data);
     PRINT_PACKET_TRACE(scalStream,
-                       "schedIdx:{}, command->opcode:{} , command->block_next:{},"
-                       " command->dst_addr:0x{:x}, command->src_data:0x{:x}, command->wait_for_completion:{}",
+                       "schedIdx:{}, command->opcode:{}, "
+                       " command->dst_addr:0x{:x}, command->src_data:0x{:x}",
                        schedIdx,
                        command->opcode,
-                       (uint32_t)command->block_next,
                        (uint64_t)command->dst_addr,
-                       (uint64_t)command->src_data,
-                       (uint32_t)command->wait_for_completion);
+                       (uint64_t)command->src_data);
 }
 
 void serializeLbwWriteWithFenceDecCommand(hcl::ScalStreamBase& scalStream,
@@ -928,8 +947,7 @@ void serializeLbwWriteWithFenceDecCommand(hcl::ScalStreamBase& scalStream,
                                           uint32_t             destination,
                                           uint32_t             data,
                                           uint32_t             fenceIndex,
-                                          uint32_t             fenceTarget,
-                                          bool                 blockUntilCompletion)
+                                          uint32_t             fenceTarget)
 {
     g3fw::sched_arc_cmd_lbw_write_t* command = reinterpret_cast<g3fw::sched_arc_cmd_lbw_write_t*>(
         scalStream.getNextPtr(sizeof(g3fw::sched_arc_cmd_lbw_write_t)));
@@ -942,7 +960,6 @@ void serializeLbwWriteWithFenceDecCommand(hcl::ScalStreamBase& scalStream,
         g3fw::SCHED_SCALEOUT_SEND_ARC_CMD_LBW_WRITE,
         g3fw::SCHED_SCALEOUT_RECV_ARC_CMD_LBW_WRITE};
     SET_FIELD(command->opcode, opcodes[schedIdx]);
-    SET_FIELD(command->block_next, blockUntilCompletion);
     SET_FIELD(command->dst_addr, destination);
     SET_FIELD(command->src_data, data);
     SET_FIELD(command->fence, 1);
@@ -950,25 +967,20 @@ void serializeLbwWriteWithFenceDecCommand(hcl::ScalStreamBase& scalStream,
     SET_FIELD(command->target, fenceTarget);
 
     PRINT_PACKET_TRACE(scalStream,
-                       "schedIdx:{}, opcode:{} , block_next:{}, dst_addr:0x{:x}, "
-                       "src_data:0x{:x}, wait_for_completion:{} fence decrement id:{} to target:{}",
+                       "schedIdx:{}, opcode:{} , dst_addr:0x{:x}, "
+                       "src_data:0x{:x}, fence decrement id:{} to target:{}",
                        schedIdx,
                        command->opcode,
-                       (uint32_t)command->block_next,
                        (uint64_t)command->dst_addr,
                        (uint64_t)command->src_data,
-                       (uint32_t)command->wait_for_completion,
                        (uint32_t)command->fence_id,
                        (uint32_t)command->target);
 }
 
-void serializeLbwBurstWriteCommand(hcl::ScalStreamBase&      scalStream,
-                                   unsigned                  schedIdx,
-                                   const LBWBurstDestData_t& destData,
-                                   bool                      blockUntilCompletion)
+void serializeLbwBurstWriteCommand(hcl::ScalStreamBase& scalStream, unsigned schedIdx, const LBWBurstData_t& destData)
 {
     VERIFY((destData.size() != 0), "vector size [{}] for {}", destData.size(), __func__);
-    size_t size = sizeof(g3fw::sched_arc_cmd_lbw_burst_write_t) + (sizeof(LBWBurstAddressData) * destData.size());
+    size_t size = sizeof(g3fw::sched_arc_cmd_lbw_burst_write_t) + (sizeof(LbwData) * destData.size());
     g3fw::sched_arc_cmd_lbw_burst_write_t* command =
         reinterpret_cast<g3fw::sched_arc_cmd_lbw_burst_write_t*>(scalStream.getNextPtr(size));
     memset(command, 0, size);
@@ -980,27 +992,24 @@ void serializeLbwBurstWriteCommand(hcl::ScalStreamBase&      scalStream,
         g3fw::SCHED_SCALEOUT_SEND_ARC_CMD_LBW_BURST_WRITE,
         g3fw::SCHED_SCALEOUT_RECV_ARC_CMD_LBW_BURST_WRITE};
     SET_FIELD(command->opcode, opcodes[schedIdx]);
-    SET_FIELD(command->block_next, blockUntilCompletion);
     SET_FIELD(command->num_lbw_write, destData.size());
 
     PRINT_PACKET_TRACE_WITH_COUNTS(scalStream, destData.size(), "");
 
     for (unsigned i = 0; i < destData.size(); i++)
     {
-        SET_FIELD(command->addr_data[i].addr, destData[i].address);
+        SET_FIELD(command->addr_data[i].addr, destData[i].addr);
         SET_FIELD(command->addr_data[i].data, destData[i].data);
         LOG_TRACE(HCL_SUBMIT,
-                  "Packets | BurstElement schedIdx:{}, opcode:{} , block_next:{}, burst_size:{}, "
+                  "Packets | BurstElement schedIdx:{}, opcode:{} , burst_size:{}, "
                   "burst_index:{}, "
-                  "dst_addr:0x{:x}, src_data:0x{:x}, wait_for_completion:{}",
+                  "dst_addr:0x{:x}, src_data:0x{:x}",
                   schedIdx,
                   command->opcode,
-                  (uint32_t)command->block_next,
                   (uint32_t)command->num_lbw_write,
                   (uint32_t)i,
                   (uint64_t)command->addr_data[i].addr,
-                  (uint64_t)command->addr_data[i].data,
-                  (uint32_t)command->wait_for_completion);
+                  (uint64_t)command->addr_data[i].data);
     }
 }
 
@@ -1236,7 +1245,7 @@ void serializeDmaCommand(hcl::ScalStreamBase& scalStream,
     {
         const auto                                       firstSoIdxBaseIdx = getSoIdxBaseIdx(soAddressLSB);
         struct g3fw::arc_cmd_nic_edma_lin_memset_v3_2_t* edma_ops =
-            (struct g3fw::arc_cmd_nic_edma_lin_memset_v3_2_t*)&command->lin_memset_v3;
+            (struct g3fw::arc_cmd_nic_edma_lin_memset_v3_2_t*)&command->lin_memset;
         const auto comp_cfg = getCompCfg();
         SET_FIELD(edma_ops->sob_base, firstSoIdxBaseIdx.baseIdx & 0x7);
         SET_FIELD(edma_ops->sob_index, firstSoIdxBaseIdx.soIdx & 0x3ff);

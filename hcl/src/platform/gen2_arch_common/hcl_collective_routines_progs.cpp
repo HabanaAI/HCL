@@ -29,6 +29,10 @@ void HclCollectiveRoutinesGen2Arch::initCollectiveRoutinesGen2Arch()
     LOG_HCL_TRACE(HCL, "Initializing DeviceController");
     m_deviceController.initDeviceForCollectiveRoutine(m_streamId, &m_longSo, &m_longSoNullSubmit);
 
+    // set RecvWqeEntriesNum for wqe tracker after GraphSync::setCgInfo
+    // we divide the recvWqeEntriesNum by 2 to make sure the wqe table won't gets full (then pi==ci)
+    m_wqeTracker->setRecvWqeEntriesNum(m_graphSync.getCgData(false).size >> 1);
+
     m_signalsManager = new SignalsManager(m_graphSync, m_utils, m_graphSync.getCgData(true).size, m_streamId);
 
     m_deviceController.setSignalFinalize(m_streamId, [&]() { m_signalsManager->finalize(false); });
@@ -79,8 +83,8 @@ void HclCollectiveRoutinesGen2Arch::createDmaProgs(SliceState&    sendSliceState
         bool     isLastReduceRoot = (sendSliceState.m_collectiveOp == eHCLReduce &&
                                  !(sendSliceState.m_isMultiScaleupGroup && sendSliceState.m_16BitReduction));
         uint32_t dmaType = (isLastReduceRoot && sendSliceState.m_16BitReduction && sendSliceState.m_isMultiScaleupGroup)
-                               ? m_commands.getDmaTypeCastDown()
-                               : (shouldCastUp ? m_commands.getDmaTypeCastUp() : m_commands.getDmaTypeMemCpy());
+                               ? DmaType::DMA_TYPE_CAST_DOWN
+                               : (shouldCastUp ? DmaType::DMA_TYPE_CAST_UP : DmaType::DMA_TYPE_MEMCPY);
 
         uint32_t soLtuAddress = 0;
         if (isFirstBox && sendSliceState.m_dynamicComm.getScaleupGroupSize() != 1 &&
@@ -95,9 +99,15 @@ void HclCollectiveRoutinesGen2Arch::createDmaProgs(SliceState&    sendSliceState
 
             if (nextVal < lastVal)
             {
-                sob_info             sobInfo = m_utils->getSOBInfo(m_graphSync.getCurrentLtuGpsoAddr(upBufferIdx));
+                SobInfo              sobInfo = m_utils->getSOBInfo(m_graphSync.getCurrentLtuGpsoAddr(upBufferIdx));
                 SyncObjectDescriptor sobDesc = {.sob = sobInfo, .value = 0};
                 LOG_HCL_DEBUG(HCL, "LTU wraparound has been reached, clearing {}", m_utils->printSOBInfo(sobInfo));
+                LOG_TRACE(HCL_CG,
+                          SCAL_PROGRESS_HCL_FMT "clearing LTU due to wraparound, SO: {}",
+                          currentStream->getArchStreamIndex(),
+                          sobInfo.sobId,
+                          0,
+                          m_utils->printSOBInfo(sobInfo));
 
                 // we encountered an overflow, EDMA signals only increment SO value and can't set it.
                 // 1) update the expected LTU SO Value after edma signals
@@ -152,8 +162,8 @@ void HclCollectiveRoutinesGen2Arch::createDmaProgs(SliceState&    sendSliceState
                                             recvSliceState.m_boxNumInfo,
                                             recvSliceState.m_rankScaleOutCount,
                                             *currentStream,
-                                            (sendSliceState.m_16BitReduction) ? m_commands.getDmaTypeCastUp()
-                                                                              : m_commands.getDmaTypeMemCpy(),
+                                            (sendSliceState.m_16BitReduction) ? DmaType::DMA_TYPE_CAST_UP
+                                                                              : DmaType::DMA_TYPE_MEMCPY,
                                             false,
                                             0, /* indexOfSubBuffer */
                                             false,
@@ -162,7 +172,7 @@ void HclCollectiveRoutinesGen2Arch::createDmaProgs(SliceState&    sendSliceState
 
         streamAddSingleWaitIfNeeded(*currentStream, {WaitEvent::HNIC_SIGNAL_SPLIT_WAIT_FOR_GDR_MEMCPY});
 
-        LBWBurstDestData_t destData;
+        LBWBurstData_t destData;
         destData.push_back(
             {m_signalsManager->dequeueSoAddress(SignalEvent::SIGNAL_TO_LONGTERM),
              m_graphSync.getSoConfigValue(sendSliceState.signalToCost(SignalEvent::SIGNAL_TO_LONGTERM), true)});
@@ -177,10 +187,12 @@ void HclCollectiveRoutinesGen2Arch::createDmaProgs(SliceState&    sendSliceState
         m_deviceController.waitForBarrierArm(*currentStream);
 
         // for PDMA flow
-        if (!isFirstBox && m_scaleoutProvider->isHostNic() && !m_scaleoutProvider->isGaudiDirect())
+        if (m_signalsManager->isEventRegistered(SignalEvent::SIGNAL_TO_LONGTERM) &&
+            m_signalsManager->isEventRegistered(SignalEvent::SIGNAL_TO_CG) && !isFirstBox &&
+            m_scaleoutProvider->isHostNic() && !m_scaleoutProvider->isGaudiDirect())
         {
             streamAddSingleWaitIfNeeded(*currentStream, {WaitEvent::HNIC_SIGNAL_SPLIT_WAIT_FOR_PDMA});
-            LBWBurstDestData_t destData;
+            LBWBurstData_t destData;
             destData.push_back(
                 {m_signalsManager->dequeueSoAddress(SignalEvent::SIGNAL_TO_LONGTERM),
                  m_graphSync.getSoConfigValue(sendSliceState.signalToCost(SignalEvent::SIGNAL_TO_LONGTERM), true)});
@@ -192,7 +204,7 @@ void HclCollectiveRoutinesGen2Arch::createDmaProgs(SliceState&    sendSliceState
 
         if (sendSliceState.m_syncUpBufferWithLtu && !isFirstBox)
         {
-            LBWBurstDestData_t destData;
+            LBWBurstData_t destData;
             streamAddSingleWaitIfNeeded(*currentStream, {WaitEvent::LTU_SIGNALING_WAIT_FOR_SCALEOUT_SEND});
 
             unsigned upBufferIdx = m_intermediateBufferManager.getCurrentBufferIdx(SCALEUP_AND_ALL2ALL_POOL);
@@ -228,8 +240,8 @@ void HclCollectiveRoutinesGen2Arch::createDmaProgs(SliceState&    sendSliceState
                                             sendSliceState.m_boxNumInfo,
                                             chunkCountForActivateScaleoutReductionStream,
                                             *currentStream,
-                                            sendSliceState.m_16BitReduction ? m_commands.getDmaTypeCastDown()
-                                                                            : m_commands.getDmaTypeMemCpy(),
+                                            sendSliceState.m_16BitReduction ? DmaType::DMA_TYPE_CAST_DOWN
+                                                                            : DmaType::DMA_TYPE_MEMCPY,
                                             false,
                                             indexOfSubBuffer,
                                             true,
@@ -305,7 +317,7 @@ void HclCollectiveRoutinesGen2Arch::createScaleUpSendProgsNonCollective(
     hcl::ScalStream& arbitratorStream = m_activeStreamManager.getArbitratorStream(hcl::SchedulersIndex::sendScaleUp);
     hcl::ScalStream& currentStream = m_activeStreamManager.getActiveCollectiveStream(hcl::SchedulersIndex::sendScaleUp);
 
-    m_deviceController.addBarrierArm(arbitratorStream, false, requiredCredits, {currentStream.getStreamIndex()});
+    m_deviceController.addBarrierArm(arbitratorStream, false, requiredCredits, {currentStream.getUarchStreamIndex()});
     m_deviceController.waitForBarrierArm(currentStream);
 
     HclCollectiveParams collectiveParams {eHCLNoCollective,
@@ -326,7 +338,7 @@ void HclCollectiveRoutinesGen2Arch::createScaleUpSendProgsNonCollective(
                              m_scaleoutProvider->isGaudiDirect(),
                              m_device->getEdmaEngineWorkDistributionSize(),
                              m_device->getServerConnectivity().getMaxNumScaleUpPortsPerConnection(comm),
-                             m_device->getServerConnectivity().getNumScaleOutPorts(comm),
+                             m_device->getComm(comm).getCommConnectivity().getNumScaleOutPorts(),
                              m_device->getSignalsCalculator(),
                              this->m_remainderCalculator};
 
@@ -387,7 +399,7 @@ void HclCollectiveRoutinesGen2Arch::createScaleUpRecvProgsNonCollective(uint32_t
     hcl::ScalStream& arbitratorStream = m_activeStreamManager.getArbitratorStream(hcl::SchedulersIndex::recvScaleUp);
     hcl::ScalStream& currentStream = m_activeStreamManager.getActiveCollectiveStream(hcl::SchedulersIndex::recvScaleUp);
 
-    m_deviceController.addBarrierArm(arbitratorStream, false, requiredCredits, {currentStream.getStreamIndex()});
+    m_deviceController.addBarrierArm(arbitratorStream, false, requiredCredits, {currentStream.getUarchStreamIndex()});
     m_deviceController.waitForBarrierArm(currentStream);
 
     if (numberOfRecv > 0)
@@ -396,7 +408,7 @@ void HclCollectiveRoutinesGen2Arch::createScaleUpRecvProgsNonCollective(uint32_t
         auto     wraparoundBits = m_wqeTracker->getWqeWraparoundBits(
             comm,
             0,
-            currentStream.getStreamIndex() == 0 ? QpType::ScaleUpReduceScatter : QpType::ScaleUpAllGather);
+            currentStream.getUarchStreamIndex() == 0 ? QpType::ScaleUpReduceScatter : QpType::ScaleUpAllGather);
         this->createScaleUpSendRecvOp(currentStream,
                                       recvVec,
                                       m_device->getComm(comm).m_rankInfo.header.hwModuleID,
@@ -451,7 +463,7 @@ void HclCollectiveRoutinesGen2Arch::createScaleUpSendProgs(SliceState&      send
     hcl::ScalStream& arbitratorStream = m_activeStreamManager.getArbitratorStream(hcl::SchedulersIndex::sendScaleUp);
     hcl::ScalStream& currentStream = m_activeStreamManager.getActiveCollectiveStream(hcl::SchedulersIndex::sendScaleUp);
 
-    m_deviceController.addBarrierArm(arbitratorStream, false, requiredCredits, {currentStream.getStreamIndex()});
+    m_deviceController.addBarrierArm(arbitratorStream, false, requiredCredits, {currentStream.getUarchStreamIndex()});
     m_deviceController.waitForBarrierArm(currentStream);
 
     LOG_HCL_CONTEXT_TRACE(HCL, "Serializing scaleup send scheduler commands");
@@ -495,8 +507,8 @@ void HclCollectiveRoutinesGen2Arch::createScaleUpSendProgs(SliceState&      send
             chunkCount,
             currentStream,
             (sendSliceState.m_16BitReduction && (!sendSliceState.m_isReductionCollective || isPeersOnly))
-                ? m_commands.getDmaTypeCastUp()
-                : m_commands.getDmaTypeMemCpy(),
+                ? DmaType::DMA_TYPE_CAST_UP
+                : DmaType::DMA_TYPE_MEMCPY,
             false,
             0,
             false,
@@ -510,7 +522,8 @@ void HclCollectiveRoutinesGen2Arch::createScaleUpSendProgs(SliceState&      send
         getDeviceToRemoteIndex(sendSliceState, true, deviceToRemoteIndex);
 
         streamAddSingleWaitIfNeeded(currentStream,
-                                    {WaitEvent::SO_FIRST_SU_SEND_WAIT_FOR_SO_RECV,
+                                    {WaitEvent::GRAPH_SCALEUP_WAIT_EVENT,
+                                     WaitEvent::SO_FIRST_SU_SEND_WAIT_FOR_SO_RECV,
                                      WaitEvent::COMPLEX_BCAST_AG_SU_SEND_WAIT_FOR_SCATTER_RECV,
                                      WaitEvent::COMPLEX_BCAST_SO_SEND_WAIT_FOR_SO_RECV,
                                      WaitEvent::COMPLEX_BCAST_SO_SEND_AND_AG_SU_WAIT_FOR_SU_RECV,
@@ -541,7 +554,7 @@ void HclCollectiveRoutinesGen2Arch::createScaleUpSendProgs(SliceState&      send
                                 sendSliceState.m_dynamicComm,
                                 currentOp,
                                 sendSliceState.m_reduceOp,
-                                m_streamId * 2 + currentStream.getStreamIndex(),
+                                m_streamId * 2 + currentStream.getUarchStreamIndex(),
                                 m_signalsManager->dequeueSoAddress(SignalEvent::SCALEUP_SEND),
                                 true /*send*/,
                                 sendSliceState.isComplexImplementation(),
@@ -1088,7 +1101,7 @@ void HclCollectiveRoutinesGen2Arch::createScaleUpRecvProgs(SliceState&      slic
     hcl::ScalStream& arbitratorStream = m_activeStreamManager.getArbitratorStream(hcl::SchedulersIndex::recvScaleUp);
     hcl::ScalStream& currentStream = m_activeStreamManager.getActiveCollectiveStream(hcl::SchedulersIndex::recvScaleUp);
 
-    m_deviceController.addBarrierArm(arbitratorStream, false, requiredCredits, {currentStream.getStreamIndex()});
+    m_deviceController.addBarrierArm(arbitratorStream, false, requiredCredits, {currentStream.getUarchStreamIndex()});
     m_deviceController.waitForBarrierArm(currentStream);
 
     LOG_HCL_CONTEXT_TRACE(HCL, "Serializing scaleup recv scheduler command");
@@ -1096,7 +1109,7 @@ void HclCollectiveRoutinesGen2Arch::createScaleUpRecvProgs(SliceState&      slic
     if (m_signalsManager->isEventRegistered(SignalEvent::SCALEUP_RECV))
     {
         box_devices_t deviceToRemoteIndex;
-        getDeviceToRemoteIndex(sliceState, false, deviceToRemoteIndex, currentStream.getStreamIndex());
+        getDeviceToRemoteIndex(sliceState, false, deviceToRemoteIndex, currentStream.getUarchStreamIndex());
 
         hcclDataType_t dataType = (currentOp != eHCLAllGather && currentOp != eHCLGather &&
                                    sliceState.m_16BitReduction && !sliceState.m_isReductionCollective)
@@ -1126,7 +1139,7 @@ void HclCollectiveRoutinesGen2Arch::createScaleUpRecvProgs(SliceState&      slic
         auto wraparoundBits = m_wqeTracker->getWqeWraparoundBits(
             sliceState.m_dynamicComm,
             0,
-            currentStream.getStreamIndex() == 0 ? QpType::ScaleUpReduceScatter : QpType::ScaleUpAllGather);
+            currentStream.getUarchStreamIndex() == 0 ? QpType::ScaleUpReduceScatter : QpType::ScaleUpAllGather);
 
         LOG_TRACE(HCL_ECR,
                   "Counts for Scaleup Recv: op {}, box {}, slice {}, cell count {}, stride {}, count {}, "
@@ -1148,7 +1161,7 @@ void HclCollectiveRoutinesGen2Arch::createScaleUpRecvProgs(SliceState&      slic
             sliceState.m_dynamicComm,
             currentOp,
             sliceState.m_reduceOp,
-            m_streamId * 2 + currentStream.getStreamIndex(),
+            m_streamId * 2 + currentStream.getUarchStreamIndex(),
             m_signalsManager->dequeueSoAddress(SignalEvent::SCALEUP_RECV),
             false /*receive*/,
             sliceState.isComplexImplementation(),
@@ -1184,7 +1197,7 @@ void HclCollectiveRoutinesGen2Arch::createScaleOutSendProgs(SliceState& sliceSta
                                       currentStream,
                                       arbitratorStream,
                                       m_streamId,
-                                      currentStream.getStreamIndex(),
+                                      currentStream.getUarchStreamIndex(),
                                       currentStream.getSchedIdx(),
                                       requiredCredits,
                                       m_longSo};
@@ -1201,7 +1214,8 @@ void HclCollectiveRoutinesGen2Arch::createScaleOutSendProgs(SliceState& sliceSta
         m_signalsManager->isEventRegistered(SignalEvent::HNIC_SCALEOUT_SEND))
     {
         streamAddSingleWaitIfNeeded(currentStream,
-                                    {WaitEvent::ALL2ALL_SO_SEND_WAIT_FOR_RECV,
+                                    {WaitEvent::GRAPH_SCALEOUT_SEND_WAIT_EVENT,
+                                     WaitEvent::ALL2ALL_SO_SEND_WAIT_FOR_RECV,
                                      WaitEvent::COMPLEX_BCAST_SO_SEND_WAIT_FOR_SO_RECV,
                                      WaitEvent::COMPLEX_BCAST_SO_SEND_AND_AG_SU_WAIT_FOR_SU_RECV,
                                      WaitEvent::COMPLEX_BCAST_SO_SEND_AND_AG_SU_WAIT_FOR_SO_RECV,
@@ -1213,7 +1227,7 @@ void HclCollectiveRoutinesGen2Arch::createScaleOutSendProgs(SliceState& sliceSta
                                                    *m_scaleoutProvider,
                                                    currentStream,
                                                    m_streamId,
-                                                   currentStream.getStreamIndex(),
+                                                   currentStream.getUarchStreamIndex(),
                                                    currentStream.getSchedIdx()};
             scaleoutDesc.run(sliceState);
         }
@@ -1223,7 +1237,7 @@ void HclCollectiveRoutinesGen2Arch::createScaleOutSendProgs(SliceState& sliceSta
                                                         *m_scaleoutProvider,
                                                         currentStream,
                                                         m_streamId,
-                                                        currentStream.getStreamIndex(),
+                                                        currentStream.getUarchStreamIndex(),
                                                         currentStream.getSchedIdx(),
                                                         m_commands};
             scaleoutDesc.run(sliceState);
@@ -1234,7 +1248,7 @@ void HclCollectiveRoutinesGen2Arch::createScaleOutSendProgs(SliceState& sliceSta
                                                       *m_scaleoutProvider,
                                                       currentStream,
                                                       m_streamId,
-                                                      currentStream.getStreamIndex(),
+                                                      currentStream.getUarchStreamIndex(),
                                                       currentStream.getSchedIdx(),
                                                       m_commands};
             scaleoutDesc.run(sliceState);
@@ -1253,7 +1267,7 @@ void HclCollectiveRoutinesGen2Arch::createScaleOutRecvProgs(SliceState& sliceSta
                                       currentStream,
                                       arbitratorStream,
                                       m_streamId,
-                                      currentStream.getStreamIndex(),
+                                      currentStream.getUarchStreamIndex(),
                                       currentStream.getSchedIdx(),
                                       requiredCredits,
                                       m_longSo};
@@ -1280,7 +1294,7 @@ void HclCollectiveRoutinesGen2Arch::createScaleOutRecvProgs(SliceState& sliceSta
                                                    *m_scaleoutProvider,
                                                    currentStream,
                                                    m_streamId,
-                                                   currentStream.getStreamIndex(),
+                                                   currentStream.getUarchStreamIndex(),
                                                    currentStream.getSchedIdx()};
             scaleoutDesc.run(sliceState);
         }
@@ -1290,7 +1304,7 @@ void HclCollectiveRoutinesGen2Arch::createScaleOutRecvProgs(SliceState& sliceSta
                                                         *m_scaleoutProvider,
                                                         currentStream,
                                                         m_streamId,
-                                                        currentStream.getStreamIndex(),
+                                                        currentStream.getUarchStreamIndex(),
                                                         currentStream.getSchedIdx(),
                                                         m_commands};
             scaleoutDesc.run(sliceState);
@@ -1301,7 +1315,7 @@ void HclCollectiveRoutinesGen2Arch::createScaleOutRecvProgs(SliceState& sliceSta
                                                       *m_scaleoutProvider,
                                                       currentStream,
                                                       m_streamId,
-                                                      currentStream.getStreamIndex(),
+                                                      currentStream.getUarchStreamIndex(),
                                                       currentStream.getSchedIdx(),
                                                       m_commands};
             scaleoutDesc.run(sliceState);
@@ -1366,9 +1380,9 @@ void HclCollectiveRoutinesGen2Arch::createScaleOutSendProgsNonCollective(
                                  *m_scaleoutProvider,
                                  currentStream,
                                  arbitratorStream,
-                                 m_streamId,                      // archStreamIdx
-                                 currentStream.getStreamIndex(),  // uarchStreamIdx
-                                 currentStream.getSchedIdx(),     // schedIdx
+                                 m_streamId,
+                                 currentStream.getUarchStreamIndex(),
+                                 currentStream.getSchedIdx(),
                                  requiredCredits,
                                  m_longSo}
         .run(nonCollectiveSliceState);
@@ -1454,7 +1468,7 @@ void HclCollectiveRoutinesGen2Arch::createScaleOutSendProgsNonCollective(
                                                         *m_scaleoutProvider,
                                                         currentStream,
                                                         m_streamId,
-                                                        currentStream.getStreamIndex(),
+                                                        currentStream.getUarchStreamIndex(),
                                                         currentStream.getSchedIdx(),
                                                         wraparoundBits};
             desc.run(sendSliceState);
@@ -1465,7 +1479,7 @@ void HclCollectiveRoutinesGen2Arch::createScaleOutSendProgsNonCollective(
                                                              *m_scaleoutProvider,
                                                              currentStream,
                                                              m_streamId,
-                                                             currentStream.getStreamIndex(),
+                                                             currentStream.getUarchStreamIndex(),
                                                              currentStream.getSchedIdx(),
                                                              m_longSo.targetValue,
                                                              m_commands};
@@ -1477,7 +1491,7 @@ void HclCollectiveRoutinesGen2Arch::createScaleOutSendProgsNonCollective(
                                                            *m_scaleoutProvider,
                                                            currentStream,
                                                            m_streamId,
-                                                           currentStream.getStreamIndex(),
+                                                           currentStream.getUarchStreamIndex(),
                                                            currentStream.getSchedIdx(),
                                                            m_longSo.targetValue,
                                                            m_commands};
@@ -1543,9 +1557,9 @@ void HclCollectiveRoutinesGen2Arch::createScaleOutRecvProgsNonCollective(
                                  *m_scaleoutProvider,
                                  currentStream,
                                  arbitratorStream,
-                                 m_streamId,                      // archStreamIdx
-                                 currentStream.getStreamIndex(),  // uarchStreamIdx
-                                 currentStream.getSchedIdx(),     // currentStream.getSchedIdx()
+                                 m_streamId,
+                                 currentStream.getUarchStreamIndex(),
+                                 currentStream.getSchedIdx(),
                                  requiredCredits,
                                  m_longSo}
         .run(nonCollectiveSliceState);
@@ -1559,8 +1573,8 @@ void HclCollectiveRoutinesGen2Arch::createScaleOutRecvProgsNonCollective(
     {
         m_wqeTracker->incWqe(comm,
                              entry.remoteRank / m_device->getComm(comm).getScaleupGroupSize(),
-                             currentStream.getStreamIndex() == 0 ? QpType::ScaleOutReduceScatter
-                                                                 : QpType::ScaleOutAllGather);
+                             currentStream.getUarchStreamIndex() == 0 ? QpType::ScaleOutReduceScatter
+                                                                      : QpType::ScaleOutAllGather);
     }
 
     unsigned remoteRanksIter = 0;
@@ -1569,7 +1583,7 @@ void HclCollectiveRoutinesGen2Arch::createScaleOutRecvProgsNonCollective(
         const WqeWraparoundBits wraparoundBits = m_wqeTracker->getWqeWraparoundBits(
             comm,
             entry.remoteRank / m_device->getComm(comm).getScaleupGroupSize(),
-            currentStream.getStreamIndex() == 0 ? QpType::ScaleOutReduceScatter : QpType::ScaleOutAllGather);
+            currentStream.getUarchStreamIndex() == 0 ? QpType::ScaleOutReduceScatter : QpType::ScaleOutAllGather);
 
         const HCL_Rank remoteRank = entry.remoteRank;
         LOG_HCL_TRACE(HCL,
@@ -1651,7 +1665,7 @@ void HclCollectiveRoutinesGen2Arch::createScaleOutRecvProgsNonCollective(
                                                         *m_scaleoutProvider,
                                                         currentStream,
                                                         m_streamId,
-                                                        currentStream.getStreamIndex(),
+                                                        currentStream.getUarchStreamIndex(),
                                                         currentStream.getSchedIdx(),
                                                         wraparoundBits};
             desc.run(recvSliceState);
@@ -1662,7 +1676,7 @@ void HclCollectiveRoutinesGen2Arch::createScaleOutRecvProgsNonCollective(
                                                              *m_scaleoutProvider,
                                                              currentStream,
                                                              m_streamId,
-                                                             currentStream.getStreamIndex(),
+                                                             currentStream.getUarchStreamIndex(),
                                                              currentStream.getSchedIdx(),
                                                              m_longSo.targetValue,
                                                              m_commands};
@@ -1674,7 +1688,7 @@ void HclCollectiveRoutinesGen2Arch::createScaleOutRecvProgsNonCollective(
                                                            *m_scaleoutProvider,
                                                            currentStream,
                                                            m_streamId,
-                                                           currentStream.getStreamIndex(),
+                                                           currentStream.getUarchStreamIndex(),
                                                            currentStream.getSchedIdx(),
                                                            m_longSo.targetValue,
                                                            m_commands};

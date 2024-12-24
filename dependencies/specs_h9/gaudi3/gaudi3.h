@@ -138,10 +138,6 @@
 
 #define SRAM_MODE_0_OFFSET	0xA000000ull
 
-/* TODO: remove once these 2 defines are not used (SW-170094) */
-#define SRAM_MODE_0_DOUBLE_DIE_OFFSET	0xA000000ull
-#define SRAM_MODE_0_SINGLE_DIE_OFFSET	0xD000000ull
-
 #define DEVICE_CACHE_LINE_SIZE  256
 
 /* Every engine ARC cpu in the system contains a single DCCM block size 32KB

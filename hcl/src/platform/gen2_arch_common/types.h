@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include "llvm/small_vector.h"  // for SmallVector
 
 #define MAX_NICS_GEN2ARCH     (24)
 #define GEN2ARCH_HLS_BOX_SIZE (8)
@@ -30,7 +31,7 @@ enum reduction_rounding_mode_e
     REDUCTION_ROUND_DOWN                 = 0x3
 };
 
-struct sob_info
+struct SobInfo
 {
     unsigned smIdx;
     unsigned dcore;
@@ -40,20 +41,23 @@ struct sob_info
 
 struct SyncObjectDescriptor
 {
-    sob_info sob;
+    SobInfo  sob;
     unsigned value;
 };
 
-struct MessageAddrToData
+struct LbwData
 {
     uint32_t addr;
     uint32_t data;
+
+    // Constructor to initialize addr and data
+    LbwData(uint32_t address, uint32_t dataValue) : addr(address), data(dataValue) {}
 };
 
-struct fence_info
+struct FenceInfo
 {
-    unsigned          index;
-    MessageAddrToData lbw;
+    unsigned index;
+    LbwData  lbw;
 };
 
 enum reduceOpMemsetValues
@@ -68,3 +72,6 @@ using QpsVector = std::vector<uint32_t>;
 
 #include <array>
 using box_devices_t = std::array<int, GEN2ARCH_HLS_BOX_SIZE>;
+
+constexpr int                                                        maxAddressDataBurstSize = 32;
+typedef llvm_vecsmall::SmallVector<LbwData, maxAddressDataBurstSize> LBWBurstData_t;

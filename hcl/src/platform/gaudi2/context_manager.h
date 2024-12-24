@@ -8,7 +8,7 @@
 #include <utility>                  // for pair
 #include "hcl_api_types.h"          // for HCL_Comm, HCL_Rank
 #include "platform/gaudi2/types.h"  // for eDWords, HLS2_BOX_...
-#include "sched_pkts.h"             // for g2fw
+#include "g2_sched_pkts.h"          // for g2fw
 #include "platform/gaudi2/context_manager_priv.h"
 #include "platform/gaudi2/qp_manager.h"
 #include "platform/gaudi2/hcl_device.h"                           // for HclDeviceGaudi2

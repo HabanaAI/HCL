@@ -26,17 +26,15 @@
 #include "hcl_config.h"                  // for HclConfig
 #include "hcl_dynamic_communicator.h"    // for HclDynamicCommunicator
 #include "hcl_global_conf.h"             // for GlobalConfBool, GCFG_H...
-#include "hcl_types.h"                   // for RankInfo, HclConfigType, SYN_VALID_DEVICE_ID
+#include "hcl_types.h"                   // for RankInfo, HclConfigType
 #include "hcl_utils.h"                   // for LOG_HCL_ERR, VERIFY
 #include "interfaces/hcl_idevice.h"      // for IHclDevice
-#include "libfabric/mr_mapping.h"        // for MRMapping
 #include "libfabric/hl_ofi.h"            // for ofi_t
 #include "libfabric/hl_ofi_component.h"  // for ofi_component_t
 #include "hcl_log_manager.h"             // for LOG_ERR, LOG_DEBUG
 #include "ofi_communicator.h"            // for ofi_communicator
 #include "synapse_common_types.h"        // for synStatus
 #include "hcl_math_utils.h"
-#include "platform/gaudi2/hcl_device.h"            // for HclDeviceGaudi2
 #include "platform/gen2_arch_common/server_def.h"  // for Gen2ArchServerDef
 
 #include "coordinator/hlcp_client.h"
@@ -49,7 +47,7 @@ hcclResult_t hccl_communicator::firstHandShakeAtInit(RankInfoHeader&            
     hcclResult_t rc = hcclSuccess;
     if (!GCFG_HCL_NULL_SUBMIT.value())
     {
-        if (!m_coordClient->commInitHandshake1(m_commSize, header, hcclRankInfoHeaders))
+        if (!m_coordClient->exchangeRankInfo(m_commSize, header, hcclRankInfoHeaders))
         {
             LOG_HCL_ERR(HCL, "Handshake1 with remote ranks failed");
             rc = hcclInternalError;
@@ -67,7 +65,7 @@ hcclResult_t hccl_communicator::firstHandShakeAtInit(RankInfoHeader&            
     return rc;
 }
 
-void hccl_communicator::buildSecondHandShakeRemoteInfoBuffer(RankInfoBuffer& rankInfoBuffer)
+void hccl_communicator::buildSecondHandShakeRemoteInfoBuffer(RankInfoBuffer& rankInfoBuffer) const
 {
     rankInfoBuffer.localInfo.header = m_comm->m_rankInfo.header;
     rankInfoBuffer.localInfo.device = m_comm->m_rankInfo.device;
@@ -92,12 +90,12 @@ hcclResult_t hccl_communicator::secondHandShakeAtInit(std::vector<RemoteDeviceCo
 
     // allocate send buffer and copy data
     std::unique_ptr<uint8_t[]> buffer         = std::make_unique<uint8_t[]>(rankInfoBufferSize);
-    RankInfoBuffer*            rankInfoBuffer = (RankInfoBuffer*)buffer.get();
+    RankInfoBuffer&            rankInfoBuffer = *(RankInfoBuffer*)buffer.get();
 
-    buildSecondHandShakeRemoteInfoBuffer(*rankInfoBuffer);
+    buildSecondHandShakeRemoteInfoBuffer(rankInfoBuffer);
 
     LOG_HCL_INFO(HCL_COORD, "Rank handshake2 sending to coordinator");
-    if (!m_coordClient->commInitHandshake2(m_commSize, (void*)rankInfoBuffer, rankInfoBufferSize, hcclRemoteDevices))
+    if (!m_coordClient->exchangeQpsInfo(m_commSize, rankInfoBuffer, rankInfoBufferSize, hcclRemoteDevices))
     {
         LOG_HCL_ERR(HCL, "Handshake2 - ranks discovery data failed");
         return hcclInternalError;
@@ -111,7 +109,7 @@ hcclResult_t hccl_communicator::secondHandShakeAtInit(std::vector<RemoteDeviceCo
     updateRemoteDevices(hcclRemoteDevices);
 
     LOG_HCL_INFO(HCL_COORD, "Rank handshake2 received data from coordinator, update device QPs");
-    hccl_device()->updateQps(*m_comm);
+    hccl_device()->connectCommQps(*m_comm);
 
     return rc;
 }
@@ -159,10 +157,10 @@ hcclResult_t hccl_communicator::openConnections(bool isLoopbackModeOrNullSubmiss
         m_comm->getConnectedRanks();
     }
 
-    ret = hccl_device()->IHclDevice::openQps(*m_comm);
+    ret = hccl_device()->IHclDevice::openQpToRemoteRanks(*m_comm);
     if (ret != hcclSuccess)
     {
-        LOG_HCL_ERR(HCL, "FAILED - openQps({})", ret);
+        LOG_HCL_ERR(HCL, "FAILED - openQpToRemoteRanks({})", ret);
     }
 
     return ret;
@@ -227,7 +225,7 @@ hcclResult_t hccl_communicator::initializeConnections(bool isLoopbackModeOrNullS
                 return rc;
             }
         }
-        hccl_device()->updateQps(*m_comm);
+        hccl_device()->connectCommQps(*m_comm);
     }
     else
     {
@@ -247,7 +245,7 @@ hcclResult_t hccl_communicator::finalizeInitialization(std::vector<RemoteDeviceC
 
         // Sync ranks on bootstrap end to make sure all data was processed by all ranks data.
         LOG_HCL_DEBUG(HCL, "Sync using bootstrap - finalize comm init rank");
-        if (!syncBetweenRanks())
+        if (!rendezvous())
         {
             LOG_HCL_ERR(HCL, "Hccl comm init rank finalization failed");
             return hcclInternalError;
@@ -256,9 +254,41 @@ hcclResult_t hccl_communicator::finalizeInitialization(std::vector<RemoteDeviceC
     return rc;
 }
 
-hcclResult_t hccl_communicator::initialize(const internal_unique_id_t* internal_unique_id)
+// This function is going over all the ranks and does logical OR on the failure-mask that each
+// one reports.
+uint64_t hccl_communicator::getAccumulatedMask(const std::vector<RankInfoHeader>& hcclRankInfoHeaders) const
 {
-    LOG_HCL_INFO(HCL_COORD, "Rank Communicator init start");
+    uint64_t                                       accumulatedMask = 0;
+    std::unordered_map<uint64_t, std::vector<int>> mask2ranks;  // for logs only
+    for (unsigned rank = 0; rank < m_commSize; rank++)
+    {
+        auto currMask = hcclRankInfoHeaders[rank].failedScaleOutPortsMask;
+        mask2ranks[currMask].push_back(rank);
+        accumulatedMask |= currMask;
+    }
+
+    if (accumulatedMask != 0)
+    {
+        LOG_HCL_DEBUG(HCL_FAILOVER, "Accumulated failed scaleout ports from all ranks: binary {:b}", accumulatedMask);
+        for (auto& x : mask2ranks)
+        {
+            LOG_HCL_DEBUG(HCL_FAILOVER,
+                          "mask binary {:b} ranks {}",
+                          x.first,
+                          fmt::join(x.second.begin(), x.second.end(), ","));
+        }
+    }
+
+    return accumulatedMask;
+}
+
+hcclResult_t hccl_communicator::initialize(const internal_unique_id_t* internal_unique_id,
+                                           const nics_mask_t           failedScaleOutPortsMask,
+                                           spHcclCoordinatorClient     coordClient)
+{
+    LOG_HCL_INFO(HCL_COORD,
+                 "Rank Communicator init start, my failedScaleOutPortsMask {}",
+                 failedScaleOutPortsMask.to_str());
     hcclResult_t rc = hcclSuccess;
 
     std::vector<RankInfoHeader> hcclRankInfoHeaders;
@@ -266,14 +296,15 @@ hcclResult_t hccl_communicator::initialize(const internal_unique_id_t* internal_
     RankInfoHeader header {.hcclRank = m_rank};
 
     hccl_device()->getDeviceConfig().fillDeviceInfo(header);
+    header.failedScaleOutPortsMask = failedScaleOutPortsMask;
 
-    if (GCFG_HCL_ENABLE_HLCP.value())
+    if (coordClient == nullptr)
     {
-        m_coordClient = std::make_shared<hlcp_client_t>(m_commSize, m_rank, internal_unique_id);
+        m_coordClient = std::make_shared<hlcp_client_t>(m_commSize, m_rank, internal_unique_id, (*this));
     }
     else
     {
-        m_coordClient = std::make_shared<HcclCoordinatorClient>(m_commSize, m_rank, internal_unique_id);
+        m_coordClient = coordClient;
     }
 
     // First Handshake
@@ -305,6 +336,24 @@ hcclResult_t hccl_communicator::initialize(const internal_unique_id_t* internal_
     HCL_Comm hclCommId = hccl_device()->allocateNewComm();
     m_comm             = &hccl_device()->getComm(hclCommId);
     m_comm->setUniqueID(internal_unique_id);
+
+    const uint64_t accumulatedFailedMask = getAccumulatedMask(hcclRankInfoHeaders);
+
+    if (hccl_device()->isScaleOutAvailable() &&
+        (accumulatedFailedMask ==
+         hccl_device()->getServerConnectivity().getExternalPortsMaskGlbl()) &&  // bad ports are the same as
+        (accumulatedFailedMask != 0))                                           // for hnic, this mask is always 0
+    {
+        LOG_HCL_ERR(HCL,
+                    "No common scaleout ports between ranks. FailedMask {:24b} External mask {:24b}",
+                    (uint64_t)accumulatedFailedMask,
+                    (uint64_t)hccl_device()->getServerConnectivity().getExternalPortsMaskGlbl());
+        return hcclInternalError;
+    }
+
+    const uint64_t accumulatedGoodMask = ~accumulatedFailedMask;
+    m_comm->getCommConnectivity().updateScaleOutPortsMask(hccl_device()->getServerConnectivity(),
+                                                          nics_mask_t(accumulatedGoodMask));
 
     // handle loopback mode and null submission
     bool isLoopbackModeOrNullSubmission = (isLoopbackMode() || GCFG_HCL_NULL_SUBMIT.value());
@@ -412,14 +461,25 @@ bool hccl_communicator::destroy()
 {
     hccl_device()->destroyComm(*m_comm, false);
 
-    m_coordClient->destroy();
-
     return true;
 }
 
-void hccl_communicator::finalize()
+void hccl_communicator::finalize(bool lockStreams)
 {
     if (GCFG_HCL_NULL_SUBMIT.value()) return;
+
+    std::vector<std::unique_ptr<std::lock_guard<std::mutex>>> guards;
+    if (lockStreams)
+    {
+        for (size_t i = 0; i < m_comm->m_streamLatestLongSo.size(); i++)
+        {
+            // Use make_unique to create lock_guard objects
+            // this is needed because std::vector requires the objects it stores to be copyable or moveable, and
+            // std::lock_guard is neither
+            guards.emplace_back(
+                std::make_unique<std::lock_guard<std::mutex>>(hccl_device()->m_deviceController.getStreamLock(i)));
+        }
+    }
 
     for (size_t i = 0; i < m_comm->m_streamLatestLongSo.size(); i++)
     {
@@ -494,11 +554,111 @@ int hccl_communicator::user_rank() const
 hcclResult_t hccl_communicator::get_async_error(hcclResult_t* async_error)
 {
     RETURN_ON_NULL_ARG(async_error);
-    *async_error = hcclSuccess;
+    getDynamicComm()->getAsyncError(async_error);
     return hcclSuccess;
 }
 
-bool hccl_communicator::syncBetweenRanks()
+bool hccl_communicator::rendezvous()
 {
-    return m_coordClient->syncBetweenRanks();
+    return m_coordClient->rendezvous();
+}
+
+void hccl_communicator::deleteCommConnections()
+{
+    hccl_device()->deleteCommConnections(*m_comm);
+}
+
+hcclComm_t* hccl_communicator::getCommHandle()
+{
+    return m_commHandle;
+}
+
+hcclUniqueId* hccl_communicator::getCommId()
+{
+    return &m_commId;
+}
+
+void hccl_communicator::setIDs(hcclComm_t* commHandle, hcclUniqueId* commId)
+{
+    m_commHandle = commHandle;
+    m_commId     = *commId;
+}
+
+HclDynamicCommunicator* hccl_communicator::getDynamicComm()
+{
+    return m_comm;
+}
+
+const HclDynamicCommunicator& hccl_communicator::getDynamicCommConst() const
+{
+    return *m_comm;
+}
+
+void hccl_communicator::prepareSendRecvCountersRemoteInfoBuffer(RankInfoBuffer& rankInfoBuffer) const
+{
+    const HCL_Comm commId = getDynamicCommConst();
+    memcpy(rankInfoBuffer.remoteInfo, m_comm->m_rankInfo.remoteInfo.data(), sizeof(RemoteInfo) * m_commSize);
+
+    for (HCL_Rank rank = 0; rank < m_commSize; rank++)
+    {
+        RemoteInfo& remoteInfo                  = rankInfoBuffer.remoteInfo[rank];
+        remoteInfo.sendRecvCounters.sendCounter = m_comm->getSendCtr(rank);
+        remoteInfo.sendRecvCounters.recvCounter = m_comm->getRecvCtr(rank);
+        if ((0 != remoteInfo.sendRecvCounters.sendCounter) || (0 != remoteInfo.sendRecvCounters.recvCounter))
+        {
+            LOG_HCL_DEBUG(HCL_FAILOVER,
+                          "comm: {}, Rank={}, send={}, recv={}",
+                          commId,
+                          rank,
+                          remoteInfo.sendRecvCounters.sendCounter,
+                          remoteInfo.sendRecvCounters.recvCounter);
+        }
+    }
+}
+
+void hccl_communicator::mcNicStateChange(const NicState& nicState)
+{
+    const HCL_Comm commId = getDynamicCommConst();
+    LOG_HCL_DEBUG(HCL_FAILOVER,
+                  "In comm: {}, handling rank: {}, nic: {}, state: {}",
+                  commId,
+                  nicState.rank,
+                  nicState.nic,
+                  nicState.state ? "up" : "shutdown");
+
+    if (!nicState.state)  // shutdown
+    {
+        // 1. Stop API
+
+        // 2. create_migration_qps();
+
+        // Allocate send buffer and copy data
+        const uint32_t remoteSize = sizeof(RemoteInfo) * m_commSize;
+        // total size to send - my_data + number of ranks * remote_data
+        const uint32_t             rankInfoBufferSize = sizeof(LocalRankInfo) + remoteSize;
+        std::unique_ptr<uint8_t[]> buffer             = std::make_unique<uint8_t[]>(rankInfoBufferSize);
+        RankInfoBuffer*            rankInfoBuffer     = (RankInfoBuffer*)buffer.get();
+
+        // Prepare API + send/recv counters + qps
+        rankInfoBuffer->localInfo.header            = m_comm->m_rankInfo.header;
+        rankInfoBuffer->localInfo.device            = m_comm->m_rankInfo.device;
+        rankInfoBuffer->localInfo.header.apiCounter = getCollectiveCtr();
+        LOG_HCL_DEBUG(HCL_FAILOVER, "comm: {}, apiCounter={}", commId, rankInfoBuffer->localInfo.header.apiCounter);
+
+        prepareSendRecvCountersRemoteInfoBuffer(*rankInfoBuffer);
+
+        // allocate output response buffer
+        remote_devices_t hcclRemoteDevices(m_commSize);
+        if (!m_coordClient->exchangeMigrationData(m_commSize, *rankInfoBuffer, rankInfoBufferSize, hcclRemoteDevices))
+        {
+            LOG_HCL_ERR(HCL_FAILOVER, "exchangeMigrationData - ranks discovery data failed");
+            LOG_HCL_ERR(HCL, "exchangeMigrationData - ranks discovery data failed");
+            // handle error case - VERIFY abort possibly
+        }
+
+        //     // setup_counters_for_apis(recv_b);
+        //     // setup_rtr_part(recv_b);
+        //     // hlcp_client->commRendezvous();
+        //     // setup_rts_part();
+    }
 }

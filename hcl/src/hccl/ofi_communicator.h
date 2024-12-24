@@ -8,7 +8,6 @@
 #include "hccl_types.h"                  // for hcclResult_t
 #include "interfaces/hcl_idevice.h"      // for IHclDevice
 #include "libfabric/hl_ofi_component.h"  // for allConnectionComm_t, ofi_req_t (p...
-#include "socket_thread.h"               // for SocketThreadsManager
 #include "hcl_utils.h"                   // for VERIFY
 
 class UniqueSortedVector;
@@ -51,7 +50,7 @@ public:
     bool destroy();
 
     ~ofi_communicator() = default;
-    ofi_communicator();
+    ofi_communicator(std::shared_ptr<MemoryRegion> mr);
 
     ofi_communicator(ofi_communicator&)              = delete;
     ofi_communicator(ofi_communicator&&)             = delete;
@@ -65,7 +64,7 @@ private:
     std::vector<std::array<QpSet, MAX_HNIC_CONNECTION_SETS>> m_peerRankToConnectionInfo;
 
     ofi_t*               m_ofi_;
-    SocketThreadsManager threads_manager_;
+
     int                  m_ofiDeviceId;
     IHclDevice*          m_device_;
     struct send_recv_vec
@@ -78,5 +77,6 @@ private:
 
     unsigned getNumConnectionPerRank();
 
-    RankInfo* m_myRankInfo = nullptr;
+    RankInfo*                     m_myRankInfo = nullptr;
+    std::shared_ptr<MemoryRegion> m_mr;
 };
