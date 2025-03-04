@@ -164,7 +164,8 @@ enum hbldv_encap_type {
  * @HBLDV_COLL_SCHED_RSRC_T_NMS_AF_UMR: Resource holding 33 pages mapping the NMS's AF's UMRs.
  * @HBLDV_COLL_SCHED_RSRC_T_NMS_AF: Resource holding 2 pages mapping the NMS's AF's configuration
  *                                  registers.
- * @HBLDV_COLL_SCHED_RSRC_T_NMS_ARC_AUX: Resource holding 1 page mapping the NMS's AUX Registers.
+ * @HBLDV_COLL_SCHED_RSRC_T_NMS_ARC_AUX: Resource holding 2 pages mapping the NMS's AUX Registers
+					 and the NSF GW's registers.
  * @HBLDV_COLL_SCHED_RSRC_T_NMS_ARC_DCCM: Resource holding 16 pages mapping the NMS ARC-DCCM.
  * @HBLDV_COLL_SCHED_RSRC_T_NMS_SDUP: Resource holding 8 pages mapping the NMS sDUP.
  * @HBLDV_COLL_SCHED_RSRC_T_NMS_SM: Resource holding 8 pages mapping of NMS SM.
@@ -529,26 +530,12 @@ struct hbldv_coll_sched_resources {
 /**
  * struct hbldv_device_attr - Device specific attributes.
  * @caps: Capabilities mask.
- * @ports_mask: Mask of IB indexes of the relevant ports for this context (1-based).
- * @ext_ports_mask: Mask of IB indexes of relevant external ports for this context (1-based).
- * @hw_ports_mask: Mask of HW indexes of relevant ports for this context (0-based).
- */
-struct hbldv_device_attr {
-	uint64_t caps;
-	uint64_t ports_mask;
-	uint64_t ext_ports_mask;
-	uint64_t hw_ports_mask;
-};
-
-/**
- * struct hbldv_device_attr_temp - Device specific attributes.
- * @caps: Capabilities mask.
  * @num_ports: Number of available ports.
  * @ext_ports_mask: Mask of IB indexes of relevant external ports for this context (1-based);
  *                  this is subset from all the available ports.
  * @hw_ports_mask: Mask of HW indexes of relevant ports for this context (0-based).
  */
-struct hbldv_device_attr_temp {
+struct hbldv_device_attr {
 	uint64_t caps;
 	uint8_t num_ports;
 	uint64_t ext_ports_mask;
@@ -559,7 +546,6 @@ bool hbldv_is_supported(struct ibv_device *device);
 
 struct ibv_context *hbldv_open_device(struct ibv_device *device, struct hbldv_ucontext_attr *attr);
 int hbldv_query_device(struct ibv_context *context, struct hbldv_device_attr *attr);
-int hbldv_query_device_temp(struct ibv_context *context, struct hbldv_device_attr_temp *attr);
 
 int hbldv_set_port_ex(struct ibv_context *context, struct hbldv_port_ex_attr *attr);
 /* port_num should be 1-based */
@@ -569,7 +555,7 @@ int hbldv_query_port(struct ibv_context *context, uint32_t port_num,
 int hbldv_modify_qp(struct ibv_qp *ibqp, struct ibv_qp_attr *attr, int attr_mask,
 		    struct hbldv_qp_attr *hbl_attr);
 int hbldv_query_qp(struct ibv_qp *ibvqp, struct hbldv_query_qp_attr *qp_attr);
-int hbldv_migrate_qp(struct ibv_qp *ibqp, struct ibv_qp *new_ibqp);
+int hbldv_migrate_qp(struct ibv_qp *ibqp);
 int hbldv_reserve_coll_qps(struct ibv_pd *ibvpd, struct hbldv_coll_qp_attr *coll_qp_attr,
 			   struct hbldv_coll_qp *coll_qp);
 

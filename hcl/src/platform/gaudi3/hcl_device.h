@@ -15,6 +15,7 @@
 #include "platform/gen2_arch_common/hcl_device_config.h"      // for HclDeviceConfig
 #include "interfaces/hcl_hal.h"                               // for HalPtr
 #include "platform/gaudi3/gaudi3_base_server_connectivity.h"  // for Gaudi3BaseServerConnectivity
+#include "hcl_types.h"                                        // for NicLkdEventsEnum, eIbvNicPhysicalState
 
 class Gen2ArchDevicePortMapping;
 class Gen2ArchServerDef;
@@ -93,15 +94,21 @@ public:
         return (const hcl::Gaudi3Hal&)(*(dynamic_cast<const hcl::Gaudi3Hal*>(m_hal.get())));
     }
     // The following functions might be called not from main thread
-    virtual void faultHandleScaleoutNicUp(const uint16_t nic);        // Physical scaleout port number
-    virtual void faultHandleScaleoutNicShutdown(const uint16_t nic);  // Physical scaleout port number
+    virtual void handleScaleoutNicStatusChange(const uint16_t nic, const bool up);  // Physical scaleout port number
     virtual bool supportNicFaultTolerance() const override { return true; }
+    virtual void createMigrationQps(const HCL_Comm commId, const uint16_t nicDown) override;
+
+    virtual void deleteMigrationQPs(const HCL_Comm comm) override;
+    virtual void updateMigrationQpsToRts(const HCL_Comm comm) override;
+
+    virtual void updateNicState(const uint32_t nic, const NicLkdEventsEnum event, const bool atInit) override;
 
 protected:
     using HclDeviceGen2Arch::createQpnInLKD;  // to avoid compiler "hides overloaded virtual function" error
-    uint32_t     createQpnInLKD(const uint32_t nic, const unsigned qpId, uint32_t coll_qpn);
-    uint32_t     requestCollectiveQpnFromLKD(bool isScaleOut);
-    virtual bool isSender(unsigned qpi) override;
+    uint32_t                           createQpnInLKD(const uint32_t nic, const unsigned qpId, uint32_t coll_qpn);
+    uint32_t                           requestCollectiveQpnFromLKD(bool isScaleOut);
+    virtual bool                       isSender(unsigned qpi) override;
+    virtual const eIbvNicPhysicalState getNicPhysicalState(const uint32_t nic) override;
 
 private:
     void          setInitialQpConfiguration(const HCL_Comm comm, const bool isSend);
@@ -121,5 +128,13 @@ private:
     void createRankQpsLoopback(HCL_Comm comm, HCL_Rank rank, QpsVector& qpnArr);
     void createNicQps(HCL_Comm comm, HCL_Rank rank, uint8_t nic, QpsVector& qpnArr, uint8_t qpSets);
 
+    void openScaleOutMigrationQps(const HCL_Comm comm, const uint16_t fromPort, const uint16_t toPort);
+    void reportCommNicStatus(const uint16_t port, const bool up);
+    void setMigrationQPsRTR(const HCL_Comm comm);
+    void setMigrationQPsRTS(const HCL_Comm comm);
+    void migrateQPs(const HCL_Comm comm);
+
     HclConfigType m_boxConfigType = HLS3;
+
+    std::unique_ptr<MigrationScaleOutQpManagerGaudi3> m_migrationQpManager;
 };

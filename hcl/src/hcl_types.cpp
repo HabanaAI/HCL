@@ -33,7 +33,7 @@ std::ostream& operator<<(std::ostream& os, const HCL_CollectiveOp& hclCollective
 /**
  * @brief access QP data of a nic, locate its index
  */
-GaudiNicQPs::NicQPs& GaudiNicQPs::operator[](uint8_t nic)
+NicQPs& GaudiNicQPs::operator[](uint8_t nic)
 {
     // search for nic nic_ap_data entry
     for (size_t i = 0; i < MAX_COMPACT_RANK_INFO_NICS; i++)
@@ -49,6 +49,35 @@ GaudiNicQPs::NicQPs& GaudiNicQPs::operator[](uint8_t nic)
 
     // never get here
     return qp[0];
+}
+
+BackupGaudiNicQPs::BackupGaudiNicQPs()
+{
+    for (unsigned nic = 0; nic < MAX_COMPACT_RANK_BACKUP_NICS; nic++)
+    {
+        qp[nic].nic = INVALID_NIC;
+    }
+}
+
+NicQPs& BackupGaudiNicQPs::operator[](int8_t nic)
+{
+    // search for existing entry with nic of empty entry
+    for (size_t i = 0; i < MAX_COMPACT_RANK_BACKUP_NICS; i++)
+    {
+        // if nic entry exists - return entry
+        if (this->qp[i].nic == nic)
+        {
+            return qp[i];
+        }
+        // if empty entry -> set to nic and return entry
+        if (this->qp[i].nic == INVALID_NIC)
+        {
+            this->qp[i].nic = nic;
+            return qp[i];
+        }
+    }
+    // all entries are full and nic not found - error
+    VERIFY(false, "access invalid nic({})", nic);
 }
 
 namespace std

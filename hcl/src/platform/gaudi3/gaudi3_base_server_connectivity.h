@@ -52,12 +52,13 @@ public:
                                                   const box_devices_t&    deviceToRemoteIndex);
 
 protected:
-    Gaudi3BaseRuntimeConnectivity& getGaudi3BasedRunTimeConnectivity(const HCL_Comm hclCommId)
+    Gaudi3BaseRuntimeConnectivity& getGaudi3BasedRunTimeConnectivity([[maybe_unused]] const HCL_Comm hclCommId)
     {
         return (*(dynamic_cast<Gaudi3BaseRuntimeConnectivity*>(m_commsRuntimeConnectivity[DEFAULT_COMM_ID].get())));
     };
 
-    const Gaudi3BaseRuntimeConnectivity& getGaudi3BasedRunTimeConnectivityConst(const HCL_Comm hclCommId) const
+    const Gaudi3BaseRuntimeConnectivity&
+    getGaudi3BasedRunTimeConnectivityConst([[maybe_unused]] const HCL_Comm hclCommId) const
     {
         return (
             *(dynamic_cast<const Gaudi3BaseRuntimeConnectivity*>(m_commsRuntimeConnectivity[DEFAULT_COMM_ID].get())));

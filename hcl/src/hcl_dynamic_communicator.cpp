@@ -25,16 +25,79 @@
 #include "hcl_math_utils.h"
 #include "hcl_types.h"                             // for HCL_HwModuleId
 #include "platform/gen2_arch_common/server_def.h"  // for Gen2ArchServerDef
+#include "fault_tolerance_inc.h"                   // for HLFT.* macros
 
 class IHclDevice;
 
 static constexpr unsigned MAX_SEND_RECV_PEER_COUNTER = 16;
+
+void RankApiCounters::logDebug(const HCL_Comm          commId,
+                               const std::string_view& prefix,
+                               const std::string_view& varName) const
+{
+    HLFT_DBG("{}:: comm: {}, {}.collectivesCounter=({:#x})", prefix, commId, varName, collectivesCounter);
+
+    if (unlikely(LOG_LEVEL_AT_LEAST_DEBUG(HCL)))
+    {
+        for (HCL_Rank rank = 0; rank < ranksSendRecv.size(); rank++)
+        {
+            const SendRecvApiCounters& remoteInfo = ranksSendRecv[rank];
+            if ((0 != remoteInfo.sendCounter) || (0 != remoteInfo.recvCounter))
+            {
+                HLFT_DBG("{}:: comm: {}, {}[{}].send={}, {}[{}].recv={}",
+                         prefix,
+                         commId,
+                         varName,
+                         rank,
+                         remoteInfo.sendCounter,
+                         varName,
+                         rank,
+                         remoteInfo.recvCounter);
+            }
+        }
+    }
+}
+
+void RankApiCounters::logDebugCompare(const HCL_Comm          commId,
+                                      const std::string_view& prefix,
+                                      const std::string_view& varName,
+                                      const RankApiCounters&  myCounters) const
+{
+    HLFT_DBG("{}:: comm: {}, {}.collectivesCounter={:#x} my {:#x} {}",
+             prefix,
+             commId,
+             varName,
+             collectivesCounter,
+             myCounters.collectivesCounter,
+             collectivesCounter == myCounters.collectivesCounter ? "" : "*");
+
+    if (unlikely(LOG_LEVEL_AT_LEAST_DEBUG(HCL)))
+    {
+        for (HCL_Rank rank = 0; rank < ranksSendRecv.size(); rank++)
+        {
+            const SendRecvApiCounters& remoteInfo = ranksSendRecv[rank];
+            if ((0 != remoteInfo.sendCounter) || (0 != remoteInfo.recvCounter))
+            {
+                HLFT_DBG("{}:: comm: {}, {}[{}].send={}, {}[{}].recv={}",
+                         prefix,
+                         commId,
+                         varName,
+                         rank,
+                         remoteInfo.sendCounter,
+                         varName,
+                         rank,
+                         remoteInfo.recvCounter);
+            }
+        }
+    }
+}
 
 HclDynamicCommunicator::HclDynamicCommunicator(const HCL_Comm comm, Gen2ArchServerDef& serverDef, hcl::HalPtr hal)
 : m_commId(comm), m_commConnectivity(comm, serverDef.getServerConnectivity()), m_serverDef(serverDef), m_hal(hal)
 {
     m_streamLatestLongSo.resize(m_hal->getMaxStreams());
     m_streamLatestLongSo.assign(m_hal->getMaxStreams(), 0);
+    m_faultToleranceTargetCounters.streamLongSo.resize(m_hal->getMaxStreams(), 0);
 }
 
 void HclDynamicCommunicator::setUniqueID(const internal_unique_id_t* internal_unique_id)
@@ -53,18 +116,18 @@ void HclDynamicCommunicator::setUniqueID(const internal_unique_id_t* internal_un
  * @param hcclCommSize - the hccl communicator size, number of communicator ranks
  * @param hclCommSize - the hcl communicator size, number of communicator ranks
  * @param rank - hccl rank
- * @param box_size - #ranks in a box
+ * @param boxSize - #ranks in a box
  * @param internal_unique_id - hccl unique id
  * @return true on success, false on failure (invalid configuration)
  */
-bool HclDynamicCommunicator::init(const uint32_t hcclCommSize, const HCL_Rank rank, const int box_size)
+bool HclDynamicCommunicator::init(const uint32_t hcclCommSize, const HCL_Rank rank, const int boxSize)
 {
     LOG_HCL_DEBUG(HCL,
                   "Init dynamic communicator({}) hccl ({}), rank({}), box({})",
                   m_commId,
                   hcclCommSize,
                   rank,
-                  box_size);
+                  boxSize);
 
     m_commSize = hcclCommSize;
 
@@ -73,7 +136,7 @@ bool HclDynamicCommunicator::init(const uint32_t hcclCommSize, const HCL_Rank ra
     m_scaleupGroupToRankMap.resize(hcclCommSize, HCL_INVALID_RANK);
     m_remoteDevices.resize(hcclCommSize);
     m_rankInfo.remoteInfo.resize(hcclCommSize);
-    m_rankInfo.header.boxSize = box_size;
+    m_rankInfo.header.boxSize = boxSize;
 
     for (size_t i = 0; i < m_remoteDevices.size(); i++)
     {
@@ -82,6 +145,10 @@ bool HclDynamicCommunicator::init(const uint32_t hcclCommSize, const HCL_Rank ra
 
     m_sendCounter.clear();
     m_recvCounter.clear();
+
+    m_apiCounters.resize(hcclCommSize);
+    m_apiPreGroupEndCounters.resize(hcclCommSize);
+    m_faultToleranceTargetCounters.rankApiCountersData.resize(hcclCommSize);
 
     if (GCFG_HCCL_OVER_OFI.value())
     {
@@ -185,6 +252,19 @@ const UniqueSortedVector& HclDynamicCommunicator::getOuterRanksExclusive()
         }
     }
     return m_outerRanksExclusiveCache;
+}
+
+const UniqueSortedVector& HclDynamicCommunicator::getAllOuterRanksExclusive()
+{
+    if (m_allOuterRanksExclusiveCache.size() == 0)
+    {
+        for (auto& remoteRank : getRemoteRanks())
+        {
+            if (remoteRank == m_rankInfo.header.hcclRank) continue;
+            m_allOuterRanksExclusiveCache.insert_sorted(remoteRank);
+        }
+    }
+    return m_allOuterRanksExclusiveCache;
 }
 
 const UniqueSortedVector& HclDynamicCommunicator::getOuterRanksInclusive()
@@ -323,29 +403,29 @@ const uint64_t HclDynamicCommunicator::getCollectiveCtr() const
     return m_collectiveCtr;
 }
 
-const uint64_t HclDynamicCommunicator::incSendCtr(int peer)
+const uint64_t HclDynamicCommunicator::incSendCtr(const HCL_Rank peer)
 {
     return (m_sendCounter.size() < MAX_SEND_RECV_PEER_COUNTER || m_sendCounter.count(peer) > 0) ? ++m_sendCounter[peer]
                                                                                                 : 0;
 }
 
-const uint64_t HclDynamicCommunicator::getSendCtr(int peer)
+const uint64_t HclDynamicCommunicator::getSendCtr(const HCL_Rank peer) const
 {
-    return m_sendCounter.count(peer) > 0 ? m_sendCounter[peer] : 0;
+    return m_sendCounter.count(peer) > 0 ? m_sendCounter.at(peer) : 0;
 }
 
-const uint64_t HclDynamicCommunicator::incRecvCtr(int peer)
+const uint64_t HclDynamicCommunicator::incRecvCtr(const HCL_Rank peer)
 {
     return (m_recvCounter.size() < MAX_SEND_RECV_PEER_COUNTER || m_recvCounter.count(peer) > 0) ? ++m_recvCounter[peer]
                                                                                                 : 0;
 }
 
-const uint64_t HclDynamicCommunicator::getRecvCtr(int peer)
+const uint64_t HclDynamicCommunicator::getRecvCtr(const HCL_Rank peer) const
 {
-    return m_recvCounter.count(peer) > 0 ? m_recvCounter[peer] : 0;
+    return m_recvCounter.count(peer) > 0 ? m_recvCounter.at(peer) : 0;
 }
 
-uint32_t HclDynamicCommunicator::getCommSize()
+uint32_t HclDynamicCommunicator::getCommSize() const
 {
     return getRanks().size();
 }
@@ -616,6 +696,10 @@ CommConnectivity::CommConnectivity(const HCL_Comm hclComm, const Gen2ArchServerC
 void CommConnectivity::updateScaleOutPortsMask(const Gen2ArchServerConnectivity& serverConnectivity,
                                                const nics_mask_t                 operationalScaleOutPortsMask)
 {
+    LOG_HCL_DEBUG(HCL,
+                  "operationalScaleOutPortsMask for comm {}: {:024b}",
+                  m_comm,
+                  (uint64_t)operationalScaleOutPortsMask);
     setPortsMasks(serverConnectivity, operationalScaleOutPortsMask);
     setNumScaleOutPorts(serverConnectivity);
 }
@@ -623,9 +707,14 @@ void CommConnectivity::updateScaleOutPortsMask(const Gen2ArchServerConnectivity&
 void CommConnectivity::setPortsMasks(const Gen2ArchServerConnectivity& m_serverConnectivity,
                                      const nics_mask_t                 operationalScaleOutPortsMask)
 {
-    RuntimePortsMasksUtils::SetPortsMaskInput input {.comm                         = m_comm,
-                                                     .serverConnectivity           = m_serverConnectivity,
-                                                     .operationalScaleOutPortsMask = operationalScaleOutPortsMask};
+    LOG_HCL_DEBUG(HCL,
+                  "operationalScaleOutPortsMask for comm {}: {:024b}",
+                  m_comm,
+                  (uint64_t)operationalScaleOutPortsMask);
+    const RuntimePortsMasksUtils::SetPortsMaskInput input {.comm               = m_comm,
+                                                           .serverConnectivity = m_serverConnectivity,
+                                                           .operationalScaleOutPortsMask =
+                                                               operationalScaleOutPortsMask};
 
     RuntimePortsMasksUtils::SetPortsMaskOutput output = RuntimePortsMasksUtils::setPortsMasksCommon(input);
 
@@ -634,45 +723,47 @@ void CommConnectivity::setPortsMasks(const Gen2ArchServerConnectivity& m_serverC
 
 void CommConnectivity::setNumScaleOutPorts(const Gen2ArchServerConnectivity& serverConnectivity)
 {
-    uint16_t sub_port_index_min = 0;
-    uint16_t sub_port_index_max = serverConnectivity.getMaxNumScaleOutPorts() - 1;  // Includes LKD mask
+    LOG_HCL_DEBUG(HCL, "m_enabledExternalPortsMask for comm {}: {:024b}", m_comm, (uint64_t)m_enabledExternalPortsMask);
+    uint16_t subPortIndexMin = 0;
+    uint16_t subPortIndexMax = serverConnectivity.getMaxNumScaleOutPorts() - 1;  // Includes LKD mask
     m_enabledScaleoutSubPorts.clear();
     m_enabledScaleoutPorts = 0;
     // collect all ports that are pre-defined as scaleout ports and enabled in hl-thunk port mask
-    for (uint16_t port_index = 0; port_index < MAX_NICS_GEN2ARCH; port_index++)
+    for (uint16_t nicIndex = 0; nicIndex < MAX_NICS_GEN2ARCH; nicIndex++)
     {
-        if (serverConnectivity.isScaleoutPort(port_index))
+        if (serverConnectivity.isScaleoutPort(nicIndex))
         {
             // Accordingly to FW implementation, the port with the lowest sub port index
             // will be used for scaleout if some of the ports were disabled.
-            // Example:
+            // Example for HLS2:
             // |         sub port indices      |    number of used ports   |         active ports        |
             // +-------------------------------+---------------------------+-----------------------------+
-            // |        8->2, 22->0, 23->1     |             2             |             22,23           |
+            // |        8->0, 22->1, 23->2     |             2             |             22,23           |
             // +-------------------------------+---------------------------+-----------------------------+
-            // |        8->2, 22->0, 23->1     |             1             |               22            |
+            // |        8->0, 22->1, 23->2     |             1             |               22            |
             // +-------------------------------+---------------------------+-----------------------------+
-            if (m_enabledExternalPortsMask[port_index])
+            if (m_enabledExternalPortsMask[nicIndex])
             {
-                m_enabledScaleoutPorts[port_index] = true;
-                m_enabledScaleoutSubPorts.insert(std::make_pair(port_index, sub_port_index_min));
-                sub_port_index_min++;
+                m_enabledScaleoutPorts[nicIndex] = true;
+                m_enabledScaleoutSubPorts.insert(std::make_pair(nicIndex, subPortIndexMin));
+                subPortIndexMin++;
             }
             else
             {
-                m_enabledScaleoutSubPorts.insert(std::make_pair(port_index, sub_port_index_max));
-                sub_port_index_max--;
+                m_enabledScaleoutSubPorts.insert(std::make_pair(nicIndex, subPortIndexMax));  // may not be needed
+                subPortIndexMax--;
             }
         }
     }
     LOG_HCL_INFO(HCL,
-                 "Enabled number of scaleout ports for comm {} by LKD/user mask is: {} out of {} possible.",
+                 "Enabled number of scaleout ports for comm {} by LKD/user mask (m_enabledScaleoutPorts) is: {} out of "
+                 "{} possible.",
                  m_comm,
                  m_enabledScaleoutPorts.to_str(),
                  serverConnectivity.getAllScaleoutPorts().to_str());
     for (const auto kv : m_enabledScaleoutSubPorts)
     {
-        LOG_HCL_DEBUG(HCL, "m_enabled_scaleout_sub_ports for comm {}: [{}, {}]", m_comm, kv.first, kv.second);
+        LOG_HCL_DEBUG(HCL, "m_enabledScaleoutSubPorts for comm {}: [{}, {}]", m_comm, kv.first, kv.second);
     }
 }
 
@@ -696,4 +787,251 @@ void HclDynamicCommunicator::getAsyncError(hcclResult_t* asyncError)
     }
 
     hccl_device()->getAsyncError(remoteModuleIDs, m_commId, asyncError);
+}
+
+void HclDynamicCommunicator::updateFaultToleranceCollectivesCounters(const HCL_StreamId streamId,
+                                                                     const uint64_t     streamLongSo)
+{
+    // in case of debug print both to FO and HCL logs
+
+    if (unlikely(LOG_LEVEL_AT_LEAST_DEBUG(HCL)))
+    {
+        LOG_HCL_DEBUG(HCL, "comm {}: streamId={}, streamLongSo={}", m_commId, streamId, streamLongSo);
+    }
+    {
+        std::unique_lock<std::mutex> lock(m_faultToleranceTargetCountersMutex);
+        m_faultToleranceTargetCounters.rankApiCountersData.collectivesCounter++;
+        m_faultToleranceTargetCounters.streamLongSo[streamId] = streamLongSo;
+    }
+
+    if (unlikely(LOG_LEVEL_AT_LEAST_DEBUG(HCL)))
+    {
+        LOG_HCL_DEBUG(HCL,
+                      "comm {}: collectiveCounter={:#x}",
+                      m_commId,
+                      m_faultToleranceTargetCounters.rankApiCountersData.collectivesCounter);
+        for (size_t i = 0; i < m_faultToleranceTargetCounters.streamLongSo.size(); i++)
+        {
+            LOG_HCL_DEBUG(HCL,
+                          "comm {}:, streamLongSo[{}]={}",
+                          m_commId,
+                          i,
+                          m_faultToleranceTargetCounters.streamLongSo[i]);
+        }
+    }
+}
+
+void HclDynamicCommunicator::updateFaultToleranceSendRecvCounters(const HCL_StreamId streamId,
+                                                                  const uint64_t     streamLongSo)
+{
+    // in case of debug print both to FO and HCL logs
+    if (unlikely(LOG_LEVEL_AT_LEAST_DEBUG(HCL)))
+    {
+        HLFT_DBG("comm {}: streamId={}, streamLongSo={}", m_commId, streamId, streamLongSo);
+    }
+
+    // Copy counters from API send/recv sparse map to vector
+    {
+        std::unique_lock<std::mutex> lock(m_faultToleranceTargetCountersMutex);
+        VERIFY(streamId < m_faultToleranceTargetCounters.streamLongSo.size());
+
+        // Copy the entire vector of send/recv API counters if not zero
+        for (HCL_Rank rank = 0; rank < m_commSize; rank++)
+        {
+            const auto& rankSr = m_apiCounters.ranksSendRecv[rank];
+            if (rankSr.sendCounter != 0 || rankSr.recvCounter != 0)
+            {
+                m_faultToleranceTargetCounters.rankApiCountersData.ranksSendRecv[rank] = rankSr;
+                if (unlikely(LOG_LEVEL_AT_LEAST_TRACE(HCL)))
+                {
+                    HLFT_TRC("comm {}: sendCounters[{}]={}, recvCounter[{}]={}",
+                             m_commId,
+                             rank,
+                             rankSr.sendCounter,
+                             rank,
+                             rankSr.recvCounter);
+                }
+            }
+        }
+        m_faultToleranceTargetCounters.streamLongSo[streamId] = streamLongSo;
+    }
+
+    if (unlikely(LOG_LEVEL_AT_LEAST_DEBUG(HCL)))
+    {
+        for (size_t i = 0; i < m_faultToleranceTargetCounters.streamLongSo.size(); i++)
+        {
+            HLFT_DBG("comm {}:, streamLongSo[{}]={}", m_commId, i, m_faultToleranceTargetCounters.streamLongSo[i]);
+        }
+    }
+}
+
+void HclDynamicCommunicator::updateApiSendRecvCounters()
+{
+    LOG_HCL_DEBUG(HCL, "comm {}: update started", m_commId);
+
+    m_apiCounters.ranksSendRecv = m_apiPreGroupEndCounters.ranksSendRecv;  // Copy entire array
+
+    // Log only scaleout ranks with data
+    if (unlikely(LOG_LEVEL_AT_LEAST_TRACE(HCL)))
+    {
+        const UniqueSortedVector& outerRanks = getAllOuterRanksExclusive();
+        for (const HCL_Rank rank : outerRanks)
+        {
+            const auto& rankSr = m_apiPreGroupEndCounters.ranksSendRecv[rank];
+            if (rankSr.sendCounter != 0 || rankSr.recvCounter != 0)
+            {
+                LOG_HCL_TRACE(HCL,
+                              "comm {}: sendCounters[{}]={}, recvCounter[{}]={}",
+                              m_commId,
+                              rank,
+                              rankSr.sendCounter,
+                              rank,
+                              rankSr.recvCounter);
+            }
+        }
+    }
+}
+
+bool HclDynamicCommunicator::isDfaNicExists(const uint16_t dfaNic, const HCL_Rank rank)
+{
+    if (m_backupRankQPs.find(rank) != m_backupRankQPs.end())
+    {
+        for (unsigned index = 0; index < MAX_COMPACT_RANK_BACKUP_NICS; index++)
+        {
+            if (m_backupRankQPs[rank].qp[index].nic == dfaNic)
+            {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+FaultToleranceDfaLog::FaultToleranceDfaLog()
+: m_failoverState(FaultToleranceState::FTidle), m_failbackState(FaultToleranceState::FTidle)
+{
+}
+
+void FaultToleranceDfaLog::failoverStart(const uint16_t nic)
+{
+    m_lastFailoverStartTime = std::chrono::high_resolution_clock::now();
+    m_numFailovers++;
+    m_nicDown       = nic;
+    m_failoverState = FaultToleranceState::FTstopApi;
+}
+
+void FaultToleranceDfaLog::failbackStart()
+{
+    m_lastFailbackStartTime = std::chrono::high_resolution_clock::now();
+    m_numFailbacks++;
+    m_failbackState = FaultToleranceState::FTstopApi;
+}
+
+void FaultToleranceDfaLog::updateFailoverStep(const FaultToleranceState newState, RankApiCounters* counters)
+{
+    m_failoverState = newState;
+    if (counters != nullptr)
+    {
+        m_maxCollectiveCounter = counters->collectivesCounter;
+    }
+}
+
+void FaultToleranceDfaLog::updateFailbackStep(const FaultToleranceState newState, RankApiCounters* counters)
+{
+    m_failbackState = newState;
+    if (counters != nullptr)
+    {
+        m_maxCollectiveCounter = counters->collectivesCounter;
+    }
+}
+
+void FaultToleranceDfaLog::failoverEnd()
+{
+    m_lastFailoverEndTime = std::chrono::high_resolution_clock::now();
+    m_failoverState       = FaultToleranceState::FTidle;
+}
+
+void FaultToleranceDfaLog::failbackEnd()
+{
+    m_lastFailbackEndTime = std::chrono::high_resolution_clock::now();
+    m_failbackState       = FaultToleranceState::FTidle;
+}
+
+const bool FaultToleranceDfaLog::isBetweenFailoverAndFailback() const
+{
+    return m_failoverState == FaultToleranceState::FTidle && (m_numFailovers > m_numFailbacks);
+}
+
+const bool FaultToleranceDfaLog::isInsideFailback() const
+{
+    return m_failbackState != FaultToleranceState::FTidle;
+}
+
+const bool FaultToleranceDfaLog::isInsideFailover() const
+{
+    return m_failoverState != FaultToleranceState::FTidle;
+}
+
+const bool FaultToleranceDfaLog::isPastFailoverAndBack() const
+{
+    return m_numFailbacks > 0;
+}
+
+const void FaultToleranceDfaLog::addDfaLog(hl_logger::LoggerSPtr logger, const RankApiCounters& counters) const
+{
+    HLLOG_UNTYPED(logger, HLLOG_LEVEL_INFO, "");
+    HLLOG_UNTYPED(logger,
+                  HLLOG_LEVEL_INFO,
+                  "Fault Tolerance data: {} failovers; {} failbacks",
+                  m_numFailovers,
+                  m_numFailbacks);
+    if (isInsideFailover())
+    {
+        HLLOG_UNTYPED(logger,
+                      HLLOG_LEVEL_INFO,
+                      "inside failover: state {}, started {} on nic {}",
+                      m_failoverState,
+                      m_lastFailoverStartTime,
+                      m_nicDown);
+        HLLOG_UNTYPED(logger,
+                      HLLOG_LEVEL_INFO,
+                      "max collective counter {}, current {}",
+                      m_maxCollectiveCounter,
+                      counters.collectivesCounter);
+    }
+    if (isInsideFailback())
+    {
+        HLLOG_UNTYPED(logger,
+                      HLLOG_LEVEL_INFO,
+                      "inside failback: state {}, started {}",
+                      m_failbackState,
+                      m_lastFailbackStartTime);
+        HLLOG_UNTYPED(logger,
+                      HLLOG_LEVEL_INFO,
+                      "max collective counter {}, current {}",
+                      m_maxCollectiveCounter,
+                      counters.collectivesCounter);
+    }
+    if (isBetweenFailoverAndFailback())
+    {
+        HLLOG_UNTYPED(logger,
+                      HLLOG_LEVEL_INFO,
+                      "failover ended but failback did not start yet: failover started at {} and end at {} on nic {}",
+                      m_lastFailoverStartTime,
+                      m_lastFailoverEndTime,
+                      m_nicDown);
+    }
+    else if (isPastFailoverAndBack())
+    {
+        HLLOG_UNTYPED(logger,
+                      HLLOG_LEVEL_INFO,
+                      "last failover started {}; ended {}",
+                      m_lastFailoverStartTime,
+                      m_lastFailoverEndTime);
+        HLLOG_UNTYPED(logger,
+                      HLLOG_LEVEL_INFO,
+                      "last failback started {}; ended {}",
+                      m_lastFailbackStartTime,
+                      m_lastFailbackEndTime);
+    }
 }

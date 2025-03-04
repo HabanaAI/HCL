@@ -49,6 +49,10 @@ include_directories(
     $ENV{HCL_SRC_PKG_DIR}/hcl/src/hccl/
     $ENV{HCL_SRC_PKG_DIR}/hcl/src/hlcp/
     $ENV{HCL_SRC_PKG_DIR}/hcl/src/infra/
+    $ENV{HCL_SRC_PKG_DIR}/hcl/src/infra/scal/gaudi2/
+    $ENV{HCL_SRC_PKG_DIR}/hcl/src/infra/scal/gaudi3/
+    $ENV{HCL_SRC_PKG_DIR}/hcl/src/infra/scal/gaudi_common/
+    $ENV{HCL_SRC_PKG_DIR}/hcl/src/infra/scal/gen2_arch_common/
 )
 
 # Specify .so .cpp files

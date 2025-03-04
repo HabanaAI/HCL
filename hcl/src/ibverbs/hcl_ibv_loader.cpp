@@ -3,11 +3,11 @@
 #include "hcl_ibv_loader.h"
 #include "hcl_utils.h"
 
-#define _DLSYM_(handle, fname)                                                                                         \
-    fname = (fname##_fn)dlsym(handle, #fname);                                                                         \
+#define LIBFUNC_IMPL(handle, fname, fnameInSo)                                                                         \
+    fname = (fname##_fn)dlsym(handle, fnameInSo);                                                                      \
     if (!fname) return false
 
-#define LIBFUNC(fname) _DLSYM_(hlib_handle, fname)
+#define LIBFUNC(fname) LIBFUNC_IMPL(hlib_handle, fname, #fname)
 
 #define __2str(x) #x
 #define IBVFUNC(fname)                                                                                                 \
@@ -60,6 +60,7 @@ bool ibv_lib_t::load()
     LIBFUNC(hbldv_query_qp);
     LIBFUNC(hbldv_reserve_coll_qps);
     LIBFUNC(hbldv_modify_qp);
+    LIBFUNC(hbldv_migrate_qp);
     LIBFUNC(hbldv_create_usr_fifo);
     LIBFUNC(hbldv_destroy_usr_fifo);
     LIBFUNC(hbldv_query_port);

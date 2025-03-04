@@ -280,7 +280,7 @@ struct mme_virt_sob_id_t {
 			 * two, as there are two MMEs. Each MME updates its own
 			 * SOBs.
 			 */
-			uint16_t sub_soset_id:1;
+			uint16_t :1;
 			/**<
 			 * one SO set of the MME is divided into two, known
 			 * as sub so sets. This field specifies which sub so
@@ -552,13 +552,22 @@ struct rot_wd_ctxt_t {
 } __attribute__ ((aligned(4), __packed__));
 
 /**
+ * \struct  rot_wd_patch_ctxts_t
+ * \brief   ROT engine and sync scheme context
+ * \details ROT engine context and sync scheme context that is patched dynamically
+ */
+struct rot_wd_patch_ctxts_t {
+	struct full_hbm_addr_ctxt_t weight_base_address;
+} __attribute__ ((aligned(4), __packed__));
+
+/**
  * \struct  rot_wd_ctxts_t
  * \brief   Rotator engine and sync scheme context
  * \details Rotator engine context and sync scheme context used for GC
  */
 struct rot_wd_ctxts_t {
 	struct rot_wd_ctxt_t rot_ctxt[WD_CTXT_COUNT];
-	struct full_hbm_addr_ctxt_t weight_base_address_ctxt[WD_CTXT_COUNT];
+	struct rot_wd_patch_ctxts_t patch_ctxt[WD_CTXT_COUNT];
 	uint16_t expert_mapping_ctxt[EXPERT_MAPPING_CTXT_COUNT * EXPERT_MAPPING_ENTRY_COUNT];
 	/**<
 	 * array of contexts for Rotator
@@ -646,6 +655,17 @@ struct mme_wd_ctxt_t {
 	 */
 } __attribute__ ((aligned(4), __packed__));
 
+
+/**
+ * \struct  mme_wd_patch_ctxts_t
+ * \brief   mme wd patch ctxt
+ * \details full hbm addr used for patching and fp8_bias value
+ */
+struct mme_wd_patch_ctxts_t {
+	struct full_hbm_addr_ctxt_t weight_base_address;
+	uint32_t fp8_bias_value;
+} __attribute__ ((aligned(4), __packed__));
+
 /**
  * \struct  mme_wd_ctxts_t
  * \brief   MME engine and sync scheme context
@@ -653,141 +673,10 @@ struct mme_wd_ctxt_t {
  */
 struct mme_wd_ctxts_t {
 	struct mme_wd_ctxt_t mme_ctxt[WD_CTXT_COUNT];
-	struct full_hbm_addr_ctxt_t weight_base_address_ctxt[WD_CTXT_COUNT];
+	struct mme_wd_patch_ctxts_t patch_ctxt[WD_CTXT_COUNT];
 	uint16_t expert_mapping_ctxt[EXPERT_MAPPING_CTXT_COUNT * EXPERT_MAPPING_ENTRY_COUNT];
 	/**<
 	 * array of contexts for MME
-	 */
-
-	/*
-	 * TODO: Add global parameters here
-	 * Global means used in all the contexts
-	 */
-} __attribute__ ((aligned(4), __packed__));
-
-/**
- * \enum    edma_op_type_t
- * \brief   Various EDMA operations
- * \details EDMA enums supported by Firmware
- *          Note: In EDMA_OP_TRANSPOSE and EDMA_OP_NO_WD, FW only does
- *                sync scheme
- */
-enum edma_op_type_t {
-	EDMA_OP_MEMSET_TENSOR = 0,
-	EDMA_OP_MEMSET_LINEAR = 1,
-	EDMA_OP_MEMCPY_TENSOR = 2,
-	EDMA_OP_MEMCPY_LINEAR = 3,
-	EDMA_OP_TRANSPOSE = 4, /* TODO: Remove this later */
-	EDMA_OP_NO_WD = 5,
-	EDMA_OP_COUNT = 6
-};
-
-/**<
- * Total number of EDMA engines involved in compute
- */
-#define ENG_EDMA_COMPUTE_COUNT	5
-
-/**
- * \struct  edma_tensor_t
- * \brief   EDMA tensor data structure
- * \details Data structure to store EDMA tensor related parameters
- */
-struct edma_tensor_t {
-	uint32_t grid_size[MAX_DIMENSIONS];
-	/**<
-	 * Size of the complete tensor
-	 * DIM0 is in Bytes, rest all in elements
-	 */
-	uint32_t box_size[MAX_DIMENSIONS];
-	/**<
-	 * Chunk size of the tensor
-	 * DIM0 is in Bytes, rest all in elements
-	 * Note: Using box size field, firmware programs the tsize registers
-	 * of source and destination tensors
-	 */
-	uint64_t addr_offset;
-	/**<
-	 * address offset of the main tensor,
-	 * for the individual boxes the offsets would
-	 * calculated by FW using this field
-	 * Note: Firmware programs SRC and DST offset registers by using this
-	 * field along with other parameters specified in this structure
-	 */
-	uint32_t box_offset[ENG_EDMA_COMPUTE_COUNT];
-	/**<
-	 * Each Engine processes only one box from the given grid.
-	 * This field provides the offset that should be used by the
-	 * engine to know which box it should process
-	 * Firmware calculates the engine specific box offset as
-	 * Engine Box offset = box_offset[Engine Index]
-	 */
-} __attribute__ ((aligned(4), __packed__));
-
-/**
- * \struct  edma_wd_ctxt_t
- * \brief   EDMA specific work distribution context
- * \details EDMA work distribution context for GC
- */
-struct edma_wd_ctxt_t {
-	uint32_t dma_commit_reg;
-	union {
-		uint32_t word0;
-		struct {
-			/**<
-			 * dma commit register value to be written
-			 */
-			uint32_t dma_op:3;
-			/**<
-			 * DMA operation to be performed from edma_op_type_t
-			 */
-			uint32_t switch_bit:1;
-			/**<
-			 * value of the switch bit to be configured when pushing the
-			 * descriptor into ARC CQ
-			 */
-			uint32_t shuffle_index:3;
-			/**<
-			 * Index of the 1st engine to start with, 3 bits
-			 * Linear number starting from 0 to (num_engines - 1)
-			 */
-			uint32_t reserved:1;
-			/**<
-			 * reserved
-			 */
-			uint32_t sig_inc_value:16;
-			/**<
-			 * Increment value to be added to previous threshold
-			 */
-			uint32_t virtual_sob_bitmap:8;
-			/**<
-			 * Virtual SOB bitmap indicating index which are valid
-			 * in the virtual_sob array
-			 */
-		} __attribute__ ((aligned(4), __packed__));
-	};
-	struct edma_tensor_t dst_tensor;
-	/**<
-	 * Destination tensor configuration
-	 */
-	struct edma_tensor_t src_tensor;
-	/**<
-	 * Source tensor configuration
-	 */
-	struct virt_sob_ids_t virt_sob_ids;
-	/**<
-	 * Virtual SOB array
-	 */
-} __attribute__ ((aligned(4), __packed__));
-
-/**
- * \struct  edma_wd_ctxts_t
- * \brief   EDMA engine and sync scheme context
- * \details EDMA engine context and sync scheme context used for GC
- */
-struct edma_wd_ctxts_t {
-	struct edma_wd_ctxt_t edma_ctxt[WD_CTXT_COUNT];
-	/**<
-	 * array of contexts for EDMA
 	 */
 
 	/*
@@ -894,11 +783,15 @@ struct tpc_wd_ctxt_t {
 	union {
 		uint32_t word2;
 		struct {
-			uint16_t tensor_id: 4;
+			uint16_t tensor_id:4;
 			/**<
 			 * tpc operand to patch (0-15)
 			 */
-			uint16_t reserved1: 12;
+			uint16_t tensor_id2:4;
+			/**<
+			 * tpc operand to patch (0-15)
+			 */
+			uint16_t reserved1:8;
 			/**<
 			 * reserved
 			 */
@@ -919,13 +812,22 @@ struct tpc_wd_ctxt_t {
 } __attribute__ ((aligned(4), __packed__));
 
 /**
+ * \struct  tpc_wd_patch_ctxts_t
+ * \brief   TPC engine and sync scheme context
+ * \details TPC engine context and sync scheme context that is patched dynamically
+ */
+struct tpc_wd_patch_ctxts_t {
+	struct full_hbm_addr_ctxt_t weight_base_address;
+} __attribute__ ((aligned(4), __packed__));
+
+/**
  * \struct  tpc_wd_ctxts_t
  * \brief   TPC engine and sync scheme context
  * \details TPC engine context and sync scheme context used for GC
  */
 struct tpc_wd_ctxts_t {
 	struct tpc_wd_ctxt_t tpc_ctxt[WD_CTXT_COUNT];
-	struct full_hbm_addr_ctxt_t weight_base_address_ctxt[WD_CTXT_COUNT];
+	struct tpc_wd_patch_ctxts_t patch_ctxt[WD_CTXT_COUNT];
 	uint16_t expert_mapping_ctxt[EXPERT_MAPPING_CTXT_COUNT * EXPERT_MAPPING_ENTRY_COUNT];
 	/**<
 	 * Array of contexts for TPC
@@ -1090,7 +992,7 @@ struct eng_arc_cmd_wd_fence_and_exec_t {
 	 */
 	uint32_t patch_address:1;
 	/**<
-	 * Patch address before execution
+	 * Patch address before execution (Tensor ID 1)
 	 */
 	uint32_t signal_arc:1;
 	/**<
@@ -1100,9 +1002,9 @@ struct eng_arc_cmd_wd_fence_and_exec_t {
 	/**<
 	 * conditional_activation
 	 */
-	uint32_t reserved2:1;
+	uint32_t patch_address2:1;
 	/**<
-	 * reserved
+	 * Patch address before execution (Tensor ID 2)
 	 */
 } __attribute__ ((aligned(4), __packed__));
 
@@ -1616,7 +1518,7 @@ enum nic_edma_datasizes_t {
 	NIC_EDMA_8BITS = 0x0,
 	NIC_EDMA_16BITS = 0x1,
 	NIC_EDMA_32BITS = 0x2,
-	NIC_EDMA_DTYPE_MAX = 0x3
+	NIC_EDMA_DSIZE_MAX = 0x3
 };
 
 /**
@@ -1628,7 +1530,8 @@ enum nic_edma_datatypes_t {
 	NIC_EDMA_UNSIGNED = 0x0,
 	NIC_EDMA_SIGNED = 0x1,
 	NIC_EDMA_FP = 0x2,
-	NIC_EDMA_BF = 0x3
+	NIC_EDMA_BF = 0x3,
+	NIC_EDMA_DTYPE_MAX = 0x4
 };
 
 /**
@@ -1761,6 +1664,10 @@ struct arc_cmd_nic_edma_sibo_ops_v3_t {
 		uint32_t reduction_ind:1;
 		/**<
 		 * Reduction indication
+		 * 0 - dest buffer will be overwritten with new data - REDUCTION_OP_OVERWRITE
+		 * 1 - dest buffer will be reduced using reduction_op
+		 * Note: Both EDMA master and slave uses the same reduction_op. So, whatever
+		 *       reduction happens at intermediate buffer, happens at dest buffer as well.
 		 */
 		uint32_t reduction_in_place:1;
 		/**<

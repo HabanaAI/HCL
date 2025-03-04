@@ -67,14 +67,14 @@ struct fmt::formatter<hl_logger::HLLOG_INLINE_API_NAMESPACE::details::EnumPack<T
 HLLOG_BEGIN_NAMESPACE
 namespace details{
 /**
- * spdlog requires to pass all the parameters with perfect forwarding
+ * fmt requires to pass all the parameters with perfect forwarding
  * unfortunately it does not work for bit fields
- * in order to distinguish b/w bit fields and other variables duplicate function is used
+ * in order to distinguish b/w bit fields and other variables - duplicate function is used
  * duplicate has the following options:
  * 1. for integral types (e.i. applicable to bit fields)
  * 2. for not integral types
  * 3. enums - return a EnumPack that will print enum value and its string
- * 4. pointers - return uint64_t (for now)
+ * 4. pointers - return void*
  * overload resolution b/w them is resolved with enable_if<is_integral<T>>
  *
  * @tparam T type of a parameter
@@ -106,8 +106,7 @@ constexpr auto duplicate(T&& v) ->std::conditional_t<std::is_enum_v<remove_cvref
         return std::forward<T>(v);
     }
 }
-// fmt handles pointers ina special way. in our case we wait them to be uint64_t
-// we can convert into a special type that has a output as a hex value
+// fmt handles pointers in a special way. in our case we want them to be void* for hex output
 template<typename T>
 constexpr auto duplicate(T* v)
 {
@@ -120,7 +119,7 @@ constexpr const char* duplicate(const char* v)
     return v;
 }
 
-constexpr char* duplicate(char* v)
+constexpr const char* duplicate(char* v)
 {
     return v;
 }

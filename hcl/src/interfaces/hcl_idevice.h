@@ -13,9 +13,10 @@
 #include "platform/gen2_arch_common/hcl_device_config.h"  // for HclDeviceConfig
 #include "hcl_dynamic_comms_manager.h"                    // for HclDynamicCommsManager
 #include "hcl_hal.h"                                      // for HalPtr
-#include "hcl_types.h"                                    // for HclConfigType
+#include "hcl_types.h"                                    // for HclConfigType, eIbvNicPhysicalState
 #include "synapse_api_types.h"                            // for synDeviceId, synStreamHandle
 #include "synapse_common_types.h"                         // for synDeviceType
+#include "hlthunk.h"                                      // for hlthunk_device_name
 #include "hcl_nic.h"
 #include "infra/hcl_affinity_manager.h"
 #include "libfabric/hl_ofi_component.h"
@@ -124,6 +125,7 @@ public:
      *         false if communicator doesn't exist
      */
     virtual bool isCommExist(HCL_Comm comm);
+    size_t       getMaxCommNum() const;
 
     /**
      * allocate a new communicator. returns allocated comm id.
@@ -143,10 +145,10 @@ public:
      * @brief update a specific nic status - UP or DOWN
      *
      * @param nic    - nic num
-     * @param up     - is state UP
+     * @param event  - NIC state event
      * @param atInit - is this function called at init
      */
-    void updateNicState(const uint32_t nic, const bool up, const bool atInit);
+    virtual void updateNicState(const uint32_t nic, const NicLkdEventsEnum event, const bool atInit);
 
     /**
      * @brief check if a nic is up using hl_thunk
@@ -202,7 +204,10 @@ public:
     int  getHwModuleId();
     bool isScaleOutAvailable() { return m_scaleoutAvailable; }
 
-    virtual spHclNic allocateNic(uint32_t nic, uint32_t max_qps) { return std::make_shared<IHclNic>(this, nic); }
+    virtual spHclNic allocateNic(uint32_t nic, [[maybe_unused]] uint32_t max_qps)
+    {
+        return std::make_shared<IHclNic>(this, nic);
+    }
 
     virtual uint32_t     createQpnInLKD(const uint32_t port, const uint8_t qpId) = 0;
     virtual hcclResult_t establishQpConnectionWithPeerQp(const HCL_Comm comm,
@@ -225,6 +230,8 @@ public:
     virtual Gen2ArchServerDef&       getServerDef()            = 0;
     virtual const Gen2ArchServerDef& getServerDefConst() const = 0;
 
+    const nics_mask_t getFailedScaleOutPortsMask() const { return m_failedScaleOutPortsMask; }
+
 protected:
     virtual uint32_t allocateQp(uint32_t port, HCL_Rank rank, HCL_Comm comm, uint8_t qpId, uint8_t qpSet = 0);
     virtual void     setGaudiDirect() {};
@@ -241,6 +248,19 @@ protected:
     bool readMacInfoFromFile(const char* macAddrInfoFilePath);
     // Until This class is merged with HclDeviceGen2Arch, it is implemented at HclDeviceGen2Arch
     virtual uint16_t getMaxNumScaleUpPortsPerConnection(const HCL_Comm hclCommId = DEFAULT_COMM_ID) const = 0;
+    virtual uint16_t getLogicalScaleoutPortNum(
+        const uint16_t nic) const = 0;  // Translates scaleout physical nic to scaleout logical port number
+
+    /**
+     * @brief get NIC initial physical state via IBV
+     *
+     * @param nic - nic to check
+     * @return eIbvNicPhysicalState - NIC physical state
+     */
+    virtual const eIbvNicPhysicalState getNicPhysicalState([[maybe_unused]] const uint32_t nic)
+    {
+        return eIbvNicPhysicalState::Undefined;
+    }
 
     class macaddr_t
     {
@@ -251,7 +271,7 @@ protected:
         operator uint64_t() const { return addr_; }
         macaddr_t& operator=(void* other)
         {
-            memcpy(&addr_, other, ETH_ALEN);
+            std::memcpy(&addr_, other, ETH_ALEN);
             return *this;
         }
         macaddr_t& operator=(uint64_t other)
@@ -285,4 +305,6 @@ protected:
     std::map<HclConfigType, std::function<hcclResult_t(HCL_Comm)>> m_openQpsCallbacks;
 
     ofi_component_t* m_ofiComponent = nullptr;
+
+    nics_mask_t m_failedScaleOutPortsMask = {};
 };

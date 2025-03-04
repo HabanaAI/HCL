@@ -57,6 +57,12 @@ reduction_datatype_e getReductionDataType(bool isCastUp, hcclDataType_t dataType
         case hcclFloat16:
             res = isCastUp ? REDUCTION_UPSCALING_FP16 : REDUCTION_FP16;
             break;
+        case hcclInt32:
+            res = REDUCTION_INT32;
+            break;
+        case hcclUint32:
+            res = REDUCTION_UINT32;
+            break;
         default:
             break;
     }
@@ -94,4 +100,23 @@ uint8_t getPdmaStreamCtxtId(bool isDownload, unsigned streamIndex)
     return (((((uint8_t)direction) & ContextEncoding::DIR_MASK) << ContextEncoding::DIR_OFFSET) |
             (((uint8_t)streamType) & ContextEncoding::TYPE_MASK) << ContextEncoding::TYPE_OFFSET) |
            ((((uint8_t)streamIndex) & ContextEncoding::STREAM_MASK) << ContextEncoding::STREAM_OFFSET);
+}
+
+nic_edma_datatypes_t get_nic_edma_dtype(hcclDataType_t dataType, bool is16BitMemcpy, bool useCasting, bool isBFloat)
+{
+    nic_edma_datatypes_t nic_edma_dtype = NIC_EDMA_FP;
+    if ((is16BitMemcpy || useCasting) && isBFloat)
+    {
+        nic_edma_dtype = NIC_EDMA_BF;
+    }
+    if (dataType == hcclInt32)
+    {
+        nic_edma_dtype = NIC_EDMA_SIGNED;
+    }
+    else if (dataType == hcclUint32)
+    {
+        nic_edma_dtype = NIC_EDMA_UNSIGNED;
+    }
+
+    return nic_edma_dtype;
 }

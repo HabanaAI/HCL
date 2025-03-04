@@ -1,14 +1,21 @@
 #include "collective_interface/prims/scaleup_prims.h"
 #include "collective_interface/hccl_graph.h"
+#include "hcl_math_utils.h"
 
 HcclScaleupPrim::HcclScaleupPrim(uint64_t sendAddr, uint64_t recvAddr, uint64_t inCnt)
 : m_sendAddr(sendAddr), m_recvAddr(recvAddr), m_inCnt(inCnt)
 {
 }
 
+HcclScaleupPrim::HcclScaleupPrim(uint64_t sendAddr, BufferToken recvHandle, uint64_t inCnt)
+: m_sendAddr(sendAddr), m_recvBufferToken(recvHandle), m_inCnt(inCnt)
+{
+}
+
 void HcclScaleupPrim::init(HcclGraph* graph, int idx)
 {
     HcclPrim::init(graph, idx);
+    m_graph->verifyHandle(getBuffer());
     m_scaleupGroupSize = m_graph->graphParams()->m_dynamicComm.getScaleupGroupSize();
 }
 
@@ -20,16 +27,16 @@ int HcclScaleupPrim::type()
 WaitEvent HcclScaleupPrim::getWaitEvent()
 {
     return WaitEvent::GRAPH_SCALEUP_WAIT_EVENT;
-};
+}
+
+bool HcclScaleupPrim::useBuffer() const
+{
+    return m_recvBufferToken.bufferType != INVALID_BUFFER;
+}
 
 HcclPrimAllGather::HcclPrimAllGather(uint64_t sendAddr, uint64_t recvAddr, uint64_t inCnt, bool inPlace)
 : HcclScaleupPrim(sendAddr, recvAddr, inCnt), m_inPlace(inPlace)
 {
-}
-
-hcclResult_t HcclPrimAllGather::compile()
-{
-    return hcclSuccess;
 }
 
 hcclResult_t HcclPrimAllGather::process(IHcclGraphEngine* engine)
@@ -63,11 +70,6 @@ HcclPrimBroadcast::HcclPrimBroadcast(uint64_t sendAddr, uint64_t recvAddr, uint6
 {
 }
 
-hcclResult_t HcclPrimBroadcast::compile()
-{
-    return hcclSuccess;
-}
-
 hcclResult_t HcclPrimBroadcast::process(IHcclGraphEngine* engine)
 {
     return engine->processBcastPrim(m_graph, this);
@@ -94,4 +96,38 @@ void HcclPrimBroadcast::updateCounts()
     m_graph->sendSlice().m_rankScaleUpCount = m_graph->recvSlice().m_rankScaleUpCount = inputCount();
     m_graph->sendSlice().m_scaleUpStrideCount = m_graph->recvSlice().m_scaleUpStrideCount = inputCount();
     m_graph->sendSlice().m_boxCount = m_graph->recvSlice().m_boxCount = (inputCount() * m_scaleupGroupSize);
+}
+
+HcclPrimReduceScatter::HcclPrimReduceScatter(uint64_t sendAddr, uint64_t recvAddr, uint64_t inCnt)
+: HcclScaleupPrim(sendAddr, recvAddr, inCnt)
+{
+}
+
+HcclPrimReduceScatter::HcclPrimReduceScatter(uint64_t sendAddr, BufferToken recvHandle, uint64_t inCnt)
+: HcclScaleupPrim(sendAddr, recvHandle, inCnt)
+{
+}
+
+hcclResult_t HcclPrimReduceScatter::process(IHcclGraphEngine* engine)
+{
+    return engine->processRsPrim(m_graph, this);
+}
+
+signalEvents_t HcclPrimReduceScatter::getSignalEvents()
+{
+    return {SignalEvent::EDMA_BATCH};
+}
+
+void HcclPrimReduceScatter::init(HcclGraph* graph, int idx)
+{
+    HcclScaleupPrim::init(graph, idx);
+    m_scaleupCountPerRank = div(inputCount(), (uint64_t)m_scaleupGroupSize);
+}
+
+void HcclPrimReduceScatter::updateCounts()
+{
+    m_graph->sendSlice().m_rankScaleOutCount = m_scaleupCountPerRank;  // for edma chunk size
+    m_graph->sendSlice().m_rankScaleUpCount = m_graph->recvSlice().m_rankScaleUpCount = m_scaleupCountPerRank;
+    m_graph->sendSlice().m_scaleUpStrideCount = m_graph->recvSlice().m_scaleUpStrideCount = m_scaleupCountPerRank;
+    m_graph->sendSlice().m_boxCount = m_graph->recvSlice().m_boxCount = inputCount();
 }

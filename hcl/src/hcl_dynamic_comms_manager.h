@@ -16,7 +16,8 @@ public:
 
     HclDynamicCommunicator& getComm(HCL_Comm commId);
     HCL_Comm                createNextComm(hcl::HalPtr hal, Gen2ArchServerDef& serverDef);
-    bool                    isCommExist(HCL_Comm comm);
+    bool                    isCommExist(const HCL_Comm comm) const;
+    size_t                  getMaxCommNum() const;
 
     int getNumOfActiveComms() const;
 

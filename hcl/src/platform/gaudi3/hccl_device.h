@@ -12,5 +12,4 @@ public:
 
 protected:
     virtual uint32_t stream_id(void* streamHandle) override;
-
 };

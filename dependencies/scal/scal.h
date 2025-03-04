@@ -59,7 +59,8 @@ enum ScalNetworkGarbageCollectorAndReductionGroups
 enum ScalNetworkScaleOutReceiveGroups
 {
     SCAL_NIC_RECEIVE_SCALE_OUT_GROUP,
-    SCAL_PDMA_NETWORK_SCALE_OUT_RECV_GROUP
+    SCAL_PDMA_NETWORK_SCALE_OUT_RECV_GROUP,
+    SCAL_EDMA_NETWORK_SCALE_OUT_RECV_GROUP0
 };
 
 enum ScalNetworkScaleOutSendGroups
@@ -358,6 +359,7 @@ int scal_completion_group_get_info(const scal_comp_group_handle_t comp_grp, scal
 int scal_completion_group_get_infoV2(const scal_comp_group_handle_t comp_grp, scal_completion_group_infoV2_t *info);
 int scal_completion_group_get_infoV3(const scal_comp_group_handle_t comp_grp, scal_completion_group_infoV3_t *info);
 int scal_completion_group_set_expected_ctr(scal_comp_group_handle_t comp_grp, uint64_t val);
+int scal_completion_group_get_expected_ctr(scal_comp_group_handle_t comp_grp, uint64_t* val);
 
 
 int scal_get_so_pool_handle_by_name(const scal_handle_t scal, const char *pool_name, scal_so_pool_handle_t *so_pool);

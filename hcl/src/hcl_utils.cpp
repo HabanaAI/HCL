@@ -74,7 +74,7 @@ void getHclVersion(char* pVersion, const unsigned len)
     }
 }
 
-void dumpStack(int s)
+void dumpStack([[maybe_unused]] int s)
 {
     constexpr int numEntries = 128;
 

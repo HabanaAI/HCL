@@ -14,8 +14,9 @@
 #include "hcl_api_types.h"
 #include "hcl_math_utils.h"
 #include "platform/gen2_arch_common/hcl_packets_utils.h"  // for getCompCfg
-class HclCommandsGen2Arch;                                // lines 9-9
-class HclDeviceGen2Arch;                                  // lines 10-10
+
+class HclCommandsGen2Arch;  // lines 9-9
+class HclDeviceGen2Arch;    // lines 10-10
 
 namespace hcl
 {

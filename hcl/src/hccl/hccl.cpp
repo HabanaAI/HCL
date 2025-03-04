@@ -34,11 +34,12 @@
 #include "hcl_public_streams.h"      // for tdrDetectionFlag
 #include "hcl_types.h"               // for HclConfigType, LOOP...
 #include "hcl_utils.h"               // for HCL_API_LOG_ENTRY
-#include "hccl_api_inc.h"            // for HCCL_TRY
+#include "hccl_api_inc.h"            // for HCCL_* macros
 #include "internal/hccl_internal.h"  // for hcclDFA, hcclDestro...
 #include "hcl_log_manager.h"         // for LOG_ERR, LOG_DEBUG
 #include "hccl_gen2_impl.h"          // for Gen2 hccl impl under HclGen2
 #include "hccl_wrapper.h"            // for hccl*_Wrapper
+#include "fault_tolerance_inc.h"     // for HLFT.* macros
 
 struct HCL_Request;
 
@@ -56,9 +57,29 @@ std::mutex g_dfaMutex;
 
 // Fault tolerance vars
 std::atomic<bool> g_faultsCheckStopApi {false};  // To check conditions for faults API stop handling only when necessary
-std::atomic<bool> g_faultsStopAllApi {false};    // To track stop API request
-std::condition_variable g_faultsStopAllApiCv;    // CV to block user API threads
-std::mutex              g_faultsStopAllApiMutex;  // Mutex for condition variable
+std::atomic<uint32_t>   g_faultsStopAllApi {false};  // To track stop API requests
+std::condition_variable g_faultsStopAllApiCv;        // CV to block user API threads
+std::mutex              g_faultsStopAllApiMutex;     // Mutex for condition variable
+
+// Called to check if to stop all API's during fault tolerance handling from hccl.cpp and hccl_wrapper.cpp
+void checkFaultToleranceStopApi()
+{
+    LOG_DEBUG(HCL_FAILOVER, "{}: Stop API check", __func__);
+    LOG_DEBUG(HCL_API, "{}: Stop API check", __func__);
+    std::unique_lock<std::mutex> lk(g_faultsStopAllApiMutex);
+    LOG_DEBUG(HCL_FAILOVER, "{}: Before CV wait, g_faultsStopAllApi={}", __func__, g_faultsStopAllApi.load());
+    LOG_DEBUG(HCL_API, "{}: Before CV wait, g_faultsStopAllApi={}", __func__, g_faultsStopAllApi.load());
+    g_faultsStopAllApiCv.wait(lk,
+                              [] { return (g_faultsStopAllApi.load() == 0); }); /* Block if g_faultsStopAllApi != 0 */
+    LOG_INFO(HCL_FAILOVER,
+             "{}: After CV wait, User API thread is unblocked, g_faultsCheckStopApi={}",
+             __func__,
+             g_faultsCheckStopApi.load());
+    LOG_INFO(HCL_API,
+             "{}: After CV wait, User API thread is unblocked, g_faultsCheckStopApi={}",
+             __func__,
+             g_faultsCheckStopApi.load());
+}
 
 static hcclResult_t syncHCLStreamHandle(synStreamHandle stream_handle)
 {
@@ -221,7 +242,8 @@ hcclResult_t hcclAlltoAll_Original(const void*     sendbuff,
     return hcclAlltoAll_Wrapper(sendbuff, recvbuff, count, datatype, comm, stream_handle);
 }
 
-hcclResult_t HCCL_API_CALL hcclBarrier_Original(hcclComm_t comm_handle, synStreamHandle stream_handle)
+hcclResult_t HCCL_API_CALL hcclBarrier_Original([[maybe_unused]] hcclComm_t      comm_handle,
+                                                [[maybe_unused]] synStreamHandle stream_handle)
 {
     HCCL_TRY
     LOG_ERR(HCL_API, "Unsupported API for Gen2");
@@ -258,7 +280,7 @@ hcclResult_t HCCL_API_CALL hcclGroupEnd_Original()
     return hcclGroupEnd_Wrapper();
 }
 
-hcclResult_t hcclInitDevice_Original(const synDeviceId deviceId)
+hcclResult_t hcclInitDevice_Original([[maybe_unused]] const synDeviceId deviceId)
 {
     HCCL_TRY
     hcclResult_t status = hccl_ctx.init_device(hccl_ctx.generateApiId());
@@ -278,7 +300,8 @@ hcclResult_t hcclEventRecord_Original(hcclEventHandle* eventHandle, synStreamHan
     HCCL_API_EXIT(status)
 }
 
-hcclResult_t hcclSynchronizeEvent_Original(const hcclEventHandle& eventHandle, uint64_t microSeconds)
+hcclResult_t hcclSynchronizeEvent_Original([[maybe_unused]] const hcclEventHandle& eventHandle,
+                                           [[maybe_unused]] uint64_t               microSeconds)
 {
     HCCL_TRY
     LOG_ERR(HCL_API, "Unsupported API for Gen2");
@@ -607,6 +630,8 @@ hcclResult_t HCCL_API_CALL hcclReduceScatter_impl(const void*     sendbuff,
 {
     auto* hccl_comm = hccl_ctx.communicator(comm);
     RETURN_ON_INVALID_HCCL_COMM(hccl_comm);
+    HCCL_CHECK_STOP_COLL_API_COMM_UNTIL(hccl_comm);
+
     hccl_comm->incCollectiveCtr();
 
     HCL_API_LOG_ENTRY(
@@ -627,6 +652,14 @@ hcclResult_t HCCL_API_CALL hcclReduceScatter_impl(const void*     sendbuff,
     hcclResult_t status = syncHCLStreamHandle(stream_handle);
     if (status != hcclSuccess) return status;
 
+    LOG_SYNC_DBG(ReduceScatter,
+                 "#Lines: 1 {:#x} {:#x} {:#x} {:#x} {:#x}",
+                 TO64(stream_handle),
+                 TO64(hccl_comm),
+                 TO64(sendbuff),
+                 TO64(recvbuff),
+                 recvcount * hccl_data_type_elem_size(datatype));
+
     return (*functions_pointers_table
                  ->pfn_hcclReduceScatter)(sendbuff, recvbuff, recvcount, datatype, reduceOp, comm, stream_handle);
 }
@@ -641,6 +674,8 @@ hcclResult_t HCCL_API_CALL hcclAllReduce_impl(const void*     sendbuff,
 {
     auto* hccl_comm = hccl_ctx.communicator(comm);
     RETURN_ON_INVALID_HCCL_COMM(hccl_comm);
+    HCCL_CHECK_STOP_COLL_API_COMM_UNTIL(hccl_comm);
+
     hccl_comm->incCollectiveCtr();
 
     HCL_API_LOG_ENTRY("rank={}/{}, oam={}, (sendbuff={:p}, recvbuff={:p}, count={}, datatype={}, reduceOp={}, "
@@ -661,6 +696,14 @@ hcclResult_t HCCL_API_CALL hcclAllReduce_impl(const void*     sendbuff,
     hcclResult_t status = syncHCLStreamHandle(stream_handle);
     if (status != hcclSuccess) return status;
 
+    LOG_SYNC_DBG(AllReduce,
+                 "#Lines: 1 {:#x} {:#x} {:#x} {:#x} {:#x}",
+                 TO64(stream_handle),
+                 TO64(hccl_comm),
+                 TO64(sendbuff),
+                 TO64(recvbuff),
+                 count * hccl_data_type_elem_size(datatype));
+
     return (*functions_pointers_table
                  ->pfn_hcclAllReduce)(sendbuff, recvbuff, count, datatype, reduceOp, comm, stream_handle);
 }
@@ -676,6 +719,8 @@ hcclResult_t HCCL_API_CALL hcclReduce_impl(const void*     sendbuff,
 {
     auto* hccl_comm = hccl_ctx.communicator(comm);
     RETURN_ON_INVALID_HCCL_COMM(hccl_comm);
+    HCCL_CHECK_STOP_COLL_API_COMM_UNTIL(hccl_comm);
+
     hccl_comm->incCollectiveCtr();
 
     HCL_API_LOG_ENTRY("rank={}/{}, oam={}, (sendbuff={:p}, recvbuff={:p}, count={}, datatype={}, reduceOp={}, "
@@ -696,6 +741,14 @@ hcclResult_t HCCL_API_CALL hcclReduce_impl(const void*     sendbuff,
     hcclResult_t status = syncHCLStreamHandle(stream_handle);
     if (status != hcclSuccess) return status;
 
+    LOG_SYNC_DBG(Reduce,
+                 "#Lines: 1 {:#x} {:#x} {:#x} {:#x} {:#x}",
+                 TO64(stream_handle),
+                 TO64(hccl_comm),
+                 TO64(sendbuff),
+                 TO64(recvbuff),
+                 count * hccl_data_type_elem_size(datatype));
+
     return (*functions_pointers_table
                  ->pfn_hcclReduce)(sendbuff, recvbuff, count, datatype, reduceOp, root, comm, stream_handle);
 }
@@ -709,6 +762,8 @@ hcclResult_t HCCL_API_CALL hcclBcast_impl(void*           buff,
 {
     auto* hccl_comm = hccl_ctx.communicator(comm);
     RETURN_ON_INVALID_HCCL_COMM(hccl_comm);
+    HCCL_CHECK_STOP_COLL_API_COMM_UNTIL(hccl_comm);
+
     hccl_comm->incCollectiveCtr();
 
     HCL_API_LOG_ENTRY("rank={}/{}, oam={}, (buff={:p}, count={}, datatype={}, root={}, uniqId={}, "
@@ -740,6 +795,8 @@ hcclResult_t HCCL_API_CALL hcclBroadcast_impl(const void*     sendbuff,
 {
     auto* hccl_comm = hccl_ctx.communicator(comm_handle);
     RETURN_ON_INVALID_HCCL_COMM(hccl_comm);
+    HCCL_CHECK_STOP_COLL_API_COMM_UNTIL(hccl_comm);
+
     hccl_comm->incCollectiveCtr();
 
     HCL_API_LOG_ENTRY("rank={}/{}, oam={}, (sendbuff={:p}, recvbuff={:p}, count={}, datatype={}, root={}, "
@@ -759,6 +816,14 @@ hcclResult_t HCCL_API_CALL hcclBroadcast_impl(const void*     sendbuff,
     hcclResult_t status = syncHCLStreamHandle(stream_handle);
     if (status != hcclSuccess) return status;
 
+    LOG_SYNC_DBG(Broadcast,
+                 "#Lines: 1 {:#x} {:#x} {:#x} {:#x} {:#x}",
+                 TO64(stream_handle),
+                 TO64(hccl_comm),
+                 TO64(sendbuff),
+                 TO64(recvbuff),
+                 count * hccl_data_type_elem_size(datatype));
+
     return (*functions_pointers_table
                  ->pfn_hcclBroadcast)(sendbuff, recvbuff, count, datatype, root, comm_handle, stream_handle);
 }
@@ -772,6 +837,8 @@ hcclResult_t HCCL_API_CALL hcclAllGather_impl(const void*     sendbuff,
 {
     auto* hccl_comm = hccl_ctx.communicator(comm_handle);
     RETURN_ON_INVALID_HCCL_COMM(hccl_comm);
+    HCCL_CHECK_STOP_COLL_API_COMM_UNTIL(hccl_comm);
+
     hccl_comm->incCollectiveCtr();
 
     HCL_API_LOG_ENTRY("rank={}/{}, oam={}, (sendbuff={:p}, recvbuff={:p}, sendcount={}, datatype={}, uniqId={}, "
@@ -790,11 +857,20 @@ hcclResult_t HCCL_API_CALL hcclAllGather_impl(const void*     sendbuff,
     hcclResult_t status = syncHCLStreamHandle(stream_handle);
     if (status != hcclSuccess) return status;
 
+    LOG_SYNC_DBG(AllGather,
+                 "#Lines: 1 {:#x} {:#x} {:#x} {:#x} {:#x}",
+                 TO64(stream_handle),
+                 TO64(hccl_comm),
+                 TO64(sendbuff),
+                 TO64(recvbuff),
+                 sendcount * hccl_data_type_elem_size(datatype));
+
     return (*functions_pointers_table
                  ->pfn_hcclAllGather)(sendbuff, recvbuff, sendcount, datatype, comm_handle, stream_handle);
 }
 
-hcclResult_t HCCL_API_CALL hcclBarrier_impl(hcclComm_t comm_handle, synStreamHandle stream_handle)
+hcclResult_t HCCL_API_CALL hcclBarrier_impl([[maybe_unused]] hcclComm_t      comm_handle,
+                                            [[maybe_unused]] synStreamHandle stream_handle)
 {
     HCCL_TRY
     LOG_ERR(HCL_API, "Unsupported API for Gen2");
@@ -810,6 +886,8 @@ hcclResult_t HCCL_API_CALL hcclAlltoAll_impl(const void*     sendbuff,
 {
     auto* hccl_comm = hccl_ctx.communicator(comm);
     RETURN_ON_INVALID_HCCL_COMM(hccl_comm);
+    HCCL_CHECK_STOP_COLL_API_COMM_UNTIL(hccl_comm);
+
     hccl_comm->incCollectiveCtr();
 
     HCL_API_LOG_ENTRY("rank={}/{}, oam={}, (sendbuff={:p}, recvbuff={:p}, count={}, datatype={}, uniqId={}, "
@@ -828,6 +906,14 @@ hcclResult_t HCCL_API_CALL hcclAlltoAll_impl(const void*     sendbuff,
     hcclResult_t status = syncHCLStreamHandle(stream_handle);
     if (status != hcclSuccess) return status;
 
+    LOG_SYNC_DBG(AllToAll,
+                 "#Lines: 1 {:#x} {:#x} {:#x} {:#x} {:#x}",
+                 TO64(stream_handle),
+                 TO64(hccl_comm),
+                 TO64(sendbuff),
+                 TO64(recvbuff),
+                 count * hccl_data_type_elem_size(datatype));
+
     return (*functions_pointers_table->pfn_hcclAlltoAll)(sendbuff, recvbuff, count, datatype, comm, stream_handle);
 }
 
@@ -840,7 +926,8 @@ hcclResult_t HCCL_API_CALL hcclSend_impl(const void*     sendbuff,
 {
     auto* hccl_comm = hccl_ctx.communicator(comm_handle);
     RETURN_ON_INVALID_HCCL_COMM(hccl_comm);
-    uint64_t send_cntr = hccl_comm->incSendCtr(peer);
+
+    const uint64_t send_cntr = hccl_comm->incSendCtr((HCL_Rank)peer);
     HCL_API_LOG_ENTRY(
         "rank={}/{}, oam={}, (sendbuff={:p}, count={}, datatype={}, uniqId={}, stream_handle={:p}, peer={}, send#={})",
         hccl_comm->user_rank(),
@@ -857,6 +944,13 @@ hcclResult_t HCCL_API_CALL hcclSend_impl(const void*     sendbuff,
     hcclResult_t status = syncHCLStreamHandle(stream_handle);
     if (status != hcclSuccess) return status;
 
+    LOG_SYNC_DBG(Send,
+                 "#Lines: 1 {:#x} {:#x} {:#x} {:#x}",
+                 TO64(stream_handle),
+                 TO64(hccl_comm),
+                 TO64(sendbuff),
+                 count * hccl_data_type_elem_size(datatype));
+
     return (*functions_pointers_table->pfn_hcclSend)(sendbuff, count, datatype, peer, comm_handle, stream_handle);
 }
 
@@ -869,7 +963,8 @@ hcclResult_t HCCL_API_CALL hcclRecv_impl(void*           recvbuff,
 {
     auto* hccl_comm = hccl_ctx.communicator(comm_handle);
     RETURN_ON_INVALID_HCCL_COMM(hccl_comm);
-    uint64_t recv_cntr = hccl_comm->incRecvCtr(peer);
+
+    const uint64_t recv_cntr = hccl_comm->incRecvCtr((HCL_Rank)peer);
     HCL_API_LOG_ENTRY(
         "rank={}/{}, oam={}, (recvbuff={:p}, count={}, datatype={}, uniqId={}, stream_handle={:p}, peer={}, recv#={})",
         hccl_comm->user_rank(),
@@ -886,18 +981,31 @@ hcclResult_t HCCL_API_CALL hcclRecv_impl(void*           recvbuff,
     hcclResult_t status = syncHCLStreamHandle(stream_handle);
     if (status != hcclSuccess) return status;
 
+    LOG_SYNC_DBG(Receive,
+                 "#Lines: 1 {:#x} {:#x} {:#x} {:#x}",
+                 TO64(stream_handle),
+                 TO64(hccl_comm),
+                 TO64(recvbuff),
+                 count * hccl_data_type_elem_size(datatype));
+
     return (*functions_pointers_table->pfn_hcclRecv)(recvbuff, count, datatype, peer, comm_handle, stream_handle);
 }
 
 hcclResult_t HCCL_API_CALL hcclGroupStart_impl()
 {
     HCL_API_LOG_ENTRY();
+
+    LOG_SYNC_DBG(GroupStart, "#Lines: 1");
+
     return (*functions_pointers_table->pfn_hcclGroupStart)();
 }
 
 hcclResult_t HCCL_API_CALL hcclGroupEnd_impl()
 {
     HCL_API_LOG_ENTRY();
+
+    LOG_SYNC_DBG(GroupEnd, "#Lines: 1");
+
     return (*functions_pointers_table->pfn_hcclGroupEnd)();
 }
 
@@ -963,7 +1071,7 @@ hcclResult_t HCCL_API_CALL hcclDfaUpdateState(DfaPhase dfaPhase)
 
 hcclResult_t HCCL_API_CALL hcclGetVersionString(char* pVersion, const unsigned len)
 {
-    HCL_API_LOG_ENTRY("pVersion={:p}, len={}", pVersion, len);
+    HCL_API_LOG_ENTRY("pVersion={:#x}, len={}", TO64(pVersion), len);
     return (*functions_pointers_table->pfn_hcclGetVersionString)(pVersion, len);
 }
 

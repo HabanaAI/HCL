@@ -19,6 +19,6 @@ protected:
     bool accept();
 
 private:
-    virtual bool send(void* data, size_t size) override { return false; }
-    virtual bool recv(void* data, size_t size) override { return false; }
+    virtual bool send([[maybe_unused]] void* data, [[maybe_unused]] size_t size) override { return false; }
+    virtual bool recv([[maybe_unused]] void* data, [[maybe_unused]] size_t size) override { return false; }
 };

@@ -171,7 +171,7 @@ unsigned CommunicatorDescriptor::getCommDescIndex(HCL_Comm comm)
     return m_lru.use(comm);
 }
 
-bool CommunicatorDescriptor::isActive(HCL_Comm comm, uint8_t nic)
+bool CommunicatorDescriptor::isActive(HCL_Comm comm)
 {
     return m_lru.isActive(comm);
 }

@@ -18,13 +18,11 @@ unsigned BufferAllocationManager::alloc(DeviceBufferManager&                devi
     unsigned bufferAllocationIndex;
     uint64_t lastTargetVal;
     int64_t  signalsDiff;
-
     for (bufferAllocationIndex = 0; bufferAllocationIndex < m_nextBufferToAllocateIndex; bufferAllocationIndex++)
     {
         lastTargetVal =
             deviceBufferManager.allocNextBuffer(longSo.targetValue + m_allocations[bufferAllocationIndex].m_iterations,
                                                 m_allocations[bufferAllocationIndex].m_poolId);
-
         if (m_allocations[bufferAllocationIndex].m_poolId == SCALEUP_AND_ALL2ALL_POOL)
         {
             unsigned currentBufferIdx =
@@ -129,6 +127,11 @@ void BufferAllocationManager::registerStaticBuffersAllocations(CommonState& comm
                         numIterations++;
                     }
                     addAllocation(SCALEOUT_POOL, numIterations);
+                    if (commonState.isRSContReduction())
+                    {
+                        addAllocation(SCALEOUT_POOL_1, numIterations);
+                        addAllocation(SCALEOUT_ACC_POOL, numIterations);
+                    }
                 }
             }
             else  // boxIter > 0

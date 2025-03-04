@@ -52,12 +52,14 @@ BarrierArbitratorDescriptor::BarrierArbitratorDescriptor(HclCollectiveRoutinesGe
 {
 }
 
-void BarrierArbitratorDescriptor::run(SliceState& sliceState)
+void BarrierArbitratorDescriptor::run([[maybe_unused]] SliceState& sliceState)
 {
-    m_collectiveRoutines.m_deviceController.waitForBarrierArm(m_currentStream);
+    m_collectiveRoutines.m_deviceController.waitForExecutionConditions(m_currentStream);
 
     llvm_vecsmall::SmallVector<unsigned, MAX_STREAM_TO_INC> activeStreams = {m_uarchStreamIdx};
-    m_collectiveRoutines.m_deviceController.addBarrierArm(m_arbitratorStream, false, m_requiredCredits, activeStreams);
+    m_collectiveRoutines.m_deviceController.setOpExecutionConditions(m_arbitratorStream,
+                                                                     m_requiredCredits,
+                                                                     activeStreams);
 }
 
 void BarrierArbitratorDescriptor::run(NonCollectiveState& nonCollectiveState)
@@ -69,10 +71,12 @@ void BarrierArbitratorDescriptor::run(NonCollectiveState& nonCollectiveState)
                   nonCollectiveState.m_remoteRank,
                   nonCollectiveState.m_isSend);
 
-    m_collectiveRoutines.m_deviceController.waitForBarrierArm(m_currentStream);
+    m_collectiveRoutines.m_deviceController.waitForExecutionConditions(m_currentStream);
 
     llvm_vecsmall::SmallVector<unsigned, MAX_STREAM_TO_INC> activeStreams = {m_uarchStreamIdx};
-    m_collectiveRoutines.m_deviceController.addBarrierArm(m_arbitratorStream, false, m_requiredCredits, activeStreams);
+    m_collectiveRoutines.m_deviceController.setOpExecutionConditions(m_arbitratorStream,
+                                                                     m_requiredCredits,
+                                                                     activeStreams);
 }
 
 NativeScaleoutDescriptor::NativeScaleoutDescriptor(HclCollectiveRoutinesGen2Arch& collectiveRoutines,
@@ -115,7 +119,9 @@ void NativeScaleoutDescriptor::run(SliceState& sliceState)
         unsigned boxIter = mod(sliceState.m_boxNumInfo.m_boxNum + sliceState.m_boxIterations -
                                    sliceState.m_dynamicComm.getMyScaleupGroup(),
                                sliceState.m_boxIterations);
-        doReduction      = sliceState.m_isReductionCollective && boxIter >= sliceState.m_scaleoutBuffersAmount;
+        doReduction      = (sliceState.m_isReductionCollective && boxIter >= sliceState.m_scaleoutBuffersAmount &&
+                       !sliceState.isRSContReduction()) ||
+                      sliceState.doReduction();
     }
 
     LOG_TRACE(HCL_ECR,
@@ -396,21 +402,22 @@ void LibfabricScaleoutDescriptor::run(SliceState& sliceState)
                                         m_archStreamIdx,
                                         sliceState.m_dataType,
                                         soAddr,
-                                        sliceState.m_boxIter < sliceState.m_scaleoutBuffersAmount);
+                                        sliceState.m_boxIter <
+                                            DeviceBufferManager::getFactor(sliceState.m_execution.m_usedPool));
     }
 
     provider.notifyHostScheduler(m_archStreamIdx);
 }
 
 LibfabricNonCollectiveScaleoutDescriptor::LibfabricNonCollectiveScaleoutDescriptor(
-    HclCollectiveRoutinesGen2Arch& collectiveRoutines,
-    ScaleoutProvider&              scaleoutProvider,
-    hcl::ScalStream&               currentStream,
-    const int                      archStreamIdx,
-    const unsigned                 uarchStreamIdx,
-    const unsigned                 schedIdx,
-    const uint64_t                 targetValue,
-    HclCommandsGen2Arch&           commands)
+    HclCollectiveRoutinesGen2Arch&  collectiveRoutines,
+    ScaleoutProvider&               scaleoutProvider,
+    hcl::ScalStream&                currentStream,
+    const int                       archStreamIdx,
+    const unsigned                  uarchStreamIdx,
+    const unsigned                  schedIdx,
+    [[maybe_unused]] const uint64_t targetValue,
+    HclCommandsGen2Arch&            commands)
 : Descriptor(collectiveRoutines, scaleoutProvider, currentStream, archStreamIdx, uarchStreamIdx, schedIdx),
   m_commands(commands)
 {
@@ -674,6 +681,8 @@ void GaudiDirectScaleoutDescriptor::run(SliceState& sliceState)
             provider.m_hostStreamVec[m_archStreamIdx][hostUarchStreamIdx][HOST_STREAM_WAIT_FOR_SEND_COMP];
         uint64_t sendAddr = sliceState.m_execution.m_deviceAddress + offsetForSend;
 
+        /* If there's no scaleout data to send, avoid reaching host scheduler and signal directly from scaleout
+         * scheduler. Note that we don't wait on HFC at all. */
         if (dataSize == 0)
         {
             m_commands.serializeLbwWriteCommand(
@@ -681,17 +690,18 @@ void GaudiDirectScaleoutDescriptor::run(SliceState& sliceState)
                 m_schedIdx,
                 soAddr,
                 m_collectiveRoutines.getSoConfigValue(sliceState.signalToCost(SignalEvent::HNIC_SCALEOUT_SEND), true));
-            LOG_HCL_DEBUG(HCL, "dataSize = 0, do not perform scaleout send, signaling instead from scheduler");
+            LOG_HCL_DEBUG(HCL,
+                          "dataSize = 0, do not perform scaleout send, signaling instead from scheduler to {}",
+                          m_utils->printSOBInfo(sob));
         }
         else
         {
             FenceInfo fence = sliceState.m_execution.m_scaleoutFences[0];
-            // a dummy signal to mimic PDMA operation to use the same HNIC graph
-            m_commands.serializeLbwWriteCommand(
-                m_currentStream,
-                m_schedIdx,
-                fence.lbw.addr,
-                m_collectiveRoutines.getSoConfigValue(sliceState.signalToCost(SignalEvent::HNIC_PDMA), true));
+            LOG_HCL_DEBUG(HCL,
+                          "host fence counter index={}, lbw.addr=0x{:x}, data=0x{:x}",
+                          fence.index,
+                          fence.lbw.addr,
+                          fence.lbw.data);
 
             sendHostStream->incSrCount();
             OfiCompCallbackParams compParams {
@@ -728,6 +738,8 @@ void GaudiDirectScaleoutDescriptor::run(SliceState& sliceState)
 
         m_commands.serializeLbwWriteCommand(m_currentStream, m_schedIdx, fence.lbw.addr, fence.lbw.data);
 
+        /* if there's no scaleout data to receive, avoid reaching host scheduler and signal directly from scaleout
+         * scheduler */
         if (dataSize == 0)
         {
             streamAddWait(recvHostStream->getOuterQueue(), fence, recvHostStream->getSrCount());

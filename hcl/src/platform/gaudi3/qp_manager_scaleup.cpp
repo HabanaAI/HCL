@@ -130,7 +130,7 @@ void QPManagerGaudi3ScaleUp::setNicOffsets(hcl::ScalStream&       stream,
     const QPManagerHints hints(comm,
                                HCL_INVALID_RANK,
                                INVALID_QP,
-                               QPManagerGaudi3::getQPi(collectiveOp, isSend));  // TODO: fix func call
+                               QPManagerGaudi3::getQPi(collectiveOp, isSend));
     const uint32_t       qpn = getQPn(hints);
 
     LOG_HCL_TRACE(HCL, "comm={}, collectiveOp={}, qpn={}, isSend={}", comm, collectiveOp, qpn, isSend);
@@ -242,7 +242,7 @@ void QPManagerGaudi3ScaleUp::setLastRankScaleup(hcl::ScalStream&       stream,
     const QPManagerHints hints(comm,
                                HCL_INVALID_RANK,
                                INVALID_QP,
-                               QPManagerGaudi3::getQPi(collectiveOp, isSend));  // TODO: fix func call
+                               QPManagerGaudi3::getQPi(collectiveOp, isSend));
     uint32_t             qpn = getQPn(hints);
 
     // we need to set the port mask to 1 for port that go out to the last rank
@@ -282,9 +282,12 @@ void QPManagerGaudi3ScaleUp::ReleaseQPsResource(const QPManagerHints& hints)
     const HCL_Comm            comm  = hints.m_comm;
     const UniqueSortedVector& ranks = m_device.getComm(comm).getInnerRanksExclusive();
 
-    for (auto& rank : ranks)
+    // if a comm doesn't have scaleup, it didn't increase the m_qpInfoScaleUp size
+    if (m_qpInfoScaleUp.size() <= comm) return;
+
+    for (unsigned qpi = 0; qpi < m_maxQPsPerConnection; qpi++)
     {
-        for (unsigned qpi = 0; qpi < m_maxQPsPerConnection; qpi++)
+        for (auto& rank : ranks)
         {
             for (auto nic : m_device.getActiveNics(m_device.getMyRank(comm), rank, 1, comm))
             {
@@ -298,8 +301,7 @@ void QPManagerGaudi3ScaleUp::ReleaseQPsResource(const QPManagerHints& hints)
 
                 m_device.destroyQp(nic, qpn);
             }
-
-            m_qpInfoScaleUp.at(comm).at(qpi) = 0;
         }
+        m_qpInfoScaleUp.at(comm).at(qpi) = 0;
     }
 }

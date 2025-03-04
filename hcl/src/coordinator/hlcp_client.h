@@ -32,10 +32,12 @@ class hlcp_client_t
 , public coordinator_t
 {
 public:  // IHcclCoordinatorClient
-    hlcp_client_t(const uint32_t              nranks,
+    hlcp_client_t(const HCL_Comm              comm,
+                  const uint32_t              nranks,
                   const HCL_Rank              rank,
                   const internal_unique_id_t* internalUniqueId,
                   IMigrationCallback&         migrationCb);
+
     hlcp_client_t(const hlcp_client_t&)            = delete;
     hlcp_client_t& operator=(const hlcp_client_t&) = delete;
 
@@ -54,8 +56,6 @@ public:  // IHcclCoordinatorClient
                                            const hcclRedOp_t      reduceOp,
                                            const HCL_Rank         peer,
                                            const HCL_Rank         root) override;
-
-    virtual hcclResult_t sendCollectiveLogErr() override;
 
     virtual hcclResult_t sendRecvFromRanks(UniqueSortedVector& nonPeerRemoteRanks,
                                            std::vector<void*>& recvBuffers,
@@ -99,9 +99,11 @@ private:
     void on_hlcp_qps_conf(hlcp_cmd_qps_conf_t& cmd);
     void on_hlcp_non_peer_data(hlcp_cmd_non_peers_t& cmd);
     void on_hlcp_sync(hlcp_cmd_sync_t& cmd);
+    void on_hlcp_log_msg(hlcp_cmd_log_msg_t& cmd);
 
-    HCL_Rank rank_  = HCL_INVALID_RANK;
-    uint32_t ranks_ = 0;
+    HCL_Comm comm_id_ = HCL_INVALID_COMM;
+    HCL_Rank rank_    = HCL_INVALID_RANK;
+    uint32_t ranks_   = 0;
 
     sockaddr_t hlcp_srv_;
 

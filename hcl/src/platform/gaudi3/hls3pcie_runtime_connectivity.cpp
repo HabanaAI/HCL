@@ -22,7 +22,7 @@ HLS3PCIERuntimeConnectivity::HLS3PCIERuntimeConnectivity(const int              
 static constexpr uint32_t mmD1_NIC0_QM_SPECIAL_GLBL_SPARE_0 = 0xD409F60;
 
 // Needs to be adjusted per active scaleup ports
-uint32_t HLS3PCIERuntimeConnectivity::getBackpressureOffset(const uint16_t nic) const
+uint32_t HLS3PCIERuntimeConnectivity::getBackpressureOffset([[maybe_unused]] const uint16_t nic) const
 {
     return mmD1_NIC0_QM_SPECIAL_GLBL_SPARE_0;
 }

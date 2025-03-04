@@ -24,16 +24,17 @@
 class uninitialized_device_t : public hccl_device_t
 {
 public:
-    virtual hcclResult_t group(bool start) override
+    virtual hcclResult_t group([[maybe_unused]] bool start) override
     {
         VERIFY(false, "device not initialized");
         return hcclInvalidUsage;
     }
-    virtual hcclResult_t send_recv_call(int myRank, const SendRecvApiEntry& entry) override
+    virtual hcclResult_t send_recv_call([[maybe_unused]] int                     myRank,
+                                        [[maybe_unused]] const SendRecvApiEntry& entry) override
     {
         VERIFY(false, "device not initialized");
     }
-    virtual hcclResult_t collective_call(HclCollectiveParams& params) override
+    virtual hcclResult_t collective_call([[maybe_unused]] HclCollectiveParams& params) override
     {
         VERIFY(false, "device not initialized");
     }
@@ -42,17 +43,17 @@ public:
         VERIFY(false, "device not initialized");
         return nullptr;
     }
-    virtual hcclResult_t init_device(uint8_t apiId) override
+    virtual hcclResult_t init_device([[maybe_unused]] uint8_t apiId) override
     {
         VERIFY(false, "device not initialized");
         return hcclInvalidUsage;
     }
-    virtual hcclResult_t init(uint8_t apiId) override
+    virtual hcclResult_t init([[maybe_unused]] uint8_t apiId) override
     {
         VERIFY(false, "device not initialized");
         return hcclInvalidUsage;
     }
-    virtual uint32_t stream_id(void* streamHandle) override
+    virtual uint32_t stream_id([[maybe_unused]] void* streamHandle) override
     {
         VERIFY(false, "device not initialized");
         return 0;
@@ -244,4 +245,16 @@ hcclResult_t hccl_device_t::collective_call(HclCollectiveParams& params)
     }
 
     return aggregators_[stream_id(params.m_streamHandle)]->addCollectiveApiCall(params);
+}
+
+void hccl_device_t::invalidateGraphCacheForComm(const HCL_Comm comm)
+{
+    for (auto& archStreamCollective : collectives)
+    {
+        LOG_HCL_TRACE(HCL,
+                      "invalidate graph cache for comm {} on stream {}",
+                      comm,
+                      archStreamCollective->getArchStream());
+        archStreamCollective->invalidateCommCache(comm);
+    }
 }

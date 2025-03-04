@@ -78,7 +78,10 @@ public:
 
     virtual ~NativeScaleoutDescriptor() = default;
     virtual void run(SliceState& sliceState) override;
-    virtual void run(NonCollectiveState& nonCollectiveState) override { VERIFY(false, "Illegal call"); }
+    virtual void run([[maybe_unused]] NonCollectiveState& nonCollectiveState) override
+    {
+        VERIFY(false, "Illegal call");
+    }
 };
 
 class NativeNonCollectiveScaleoutDescriptor : public Descriptor
@@ -93,7 +96,7 @@ public:
                                                    const WqeWraparoundBits&       wraparoundBits);
 
     virtual ~NativeNonCollectiveScaleoutDescriptor() = default;
-    virtual void run(SliceState& sliceState) override { VERIFY(false, "Illegal call"); }
+    virtual void run([[maybe_unused]] SliceState& sliceState) override { VERIFY(false, "Illegal call"); }
     virtual void run(NonCollectiveState& nonCollectiveState) override;
 
 private:
@@ -112,7 +115,10 @@ public:
                                          HclCommandsGen2Arch&           commands);
     virtual ~LibfabricScaleoutDescriptor() = default;
     virtual void run(SliceState& sliceState) override;
-    virtual void run(NonCollectiveState& nonCollectiveState) override { VERIFY(false, "Illegal call"); }
+    virtual void run([[maybe_unused]] NonCollectiveState& nonCollectiveState) override
+    {
+        VERIFY(false, "Illegal call");
+    }
 
 protected:
     void     streamAddWait(spHostStreamFifo hostStream, FenceInfo fence, const uint64_t srCount);
@@ -136,8 +142,8 @@ public:
                                                       const uint64_t                 targetValue,
                                                       HclCommandsGen2Arch&           commands);
     virtual ~LibfabricNonCollectiveScaleoutDescriptor() = default;
-    virtual void run(SliceState& sliceState) override { VERIFY(false, "Illegal call"); }
-    virtual void run(NonCollectiveState& nonCollectiveState) override;
+    virtual void run([[maybe_unused]] SliceState& sliceState) override { VERIFY(false, "Illegal call"); }
+    virtual void run([[maybe_unused]] NonCollectiveState& nonCollectiveState) override;
 
 protected:
     unsigned getHostUarchStreamIdx();
@@ -157,7 +163,10 @@ public:
                                            HclCommandsGen2Arch&           commands);
     virtual ~GaudiDirectScaleoutDescriptor() = default;
     virtual void run(SliceState& sliceState) override;
-    virtual void run(NonCollectiveState& nonCollectiveState) override { VERIFY(false, "Illegal call"); }
+    virtual void run([[maybe_unused]] NonCollectiveState& nonCollectiveState) override
+    {
+        VERIFY(false, "Illegal call");
+    }
 
     Gen2ArchScalUtils* m_utils;
 };
@@ -173,6 +182,6 @@ public:
                                                         const uint64_t                 targetValue,
                                                         HclCommandsGen2Arch&           commands);
     virtual ~GaudiDirectNonCollectiveScaleoutDescriptor() = default;
-    virtual void run(SliceState& sliceState) override { VERIFY(false, "Illegal call"); }
+    virtual void run([[maybe_unused]] SliceState& sliceState) override { VERIFY(false, "Illegal call"); }
     virtual void run(NonCollectiveState& nonCollectiveState) override;
 };

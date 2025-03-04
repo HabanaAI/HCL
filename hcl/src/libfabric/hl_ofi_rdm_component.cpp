@@ -4,6 +4,7 @@
 #include "hccl_types.h"                  // for hcclLibfabricError, hcclSuccess
 #include "hcl_utils.h"                   // for LOG_HCL_ERR, LOG_HCL_DEBUG
 #include "libfabric/hl_ofi.h"            // for OFI_UNLIKELY, MAX_EP_ADDR
+#include "libfabric/libfabric_common.h"  // for container_of
 #include "hcl_log_manager.h"             // for LOG_ERR, LOG_DEBUG
 #include "ofi_plugin.h"                  // for ofi_plugin
 #include "rdma/fi_domain.h"              // for fi_mr_attr, fid_mr, fi_av_attr
@@ -42,38 +43,27 @@ void* ofi_rdm_component_t::get_cq_buf()
     return m_cqe_tagged_buffers.data();
 }
 
-int ofi_rdm_component_t::next_tag(uint64_t* tag)
+uint64_t ofi_rdm_component_t::next_tag()
 {
-    int ret = hcclSuccess;
-
-    if (m_tag + 1 >= m_max_tag)
-    {
-        LOG_HCL_ERR(HCL_OFI, "Can't open more connections for OFI device ID {}", m_ofiDeviceID);
-        ret = hcclLibfabricError;
-    }
-    else
-    {
-        // Increment m_tag by 1
-        *tag = ++m_tag;
-    }
-
-    return ret;
+    std::scoped_lock<FutexLock> lock(m_tagLock);
+    VERIFY(m_tag + 1 < m_max_tag, "Can't open more connections for OFI device ID {}", m_ofiDeviceID);
+    // Increment m_tag by 1
+    return ++m_tag;
 }
 
-int ofi_rdm_component_t::listen(uint64_t       tag,
-                                void*          handle,
-                                listenComm_t** listenComm,
-                                unsigned       hostConnIdx,
-                                uint16_t       qpSetIndex)
+int ofi_rdm_component_t::listen(uint64_t      tag,
+                                void*         handle,
+                                listenComm_t* listenComm,
+                                unsigned      hostConnIdx,
+                                uint16_t      qpSetIndex)
 {
-    int                           ret                  = hcclUninitialized;
-    char                          ep_name[MAX_EP_ADDR] = {0};
-    size_t                        namelen              = sizeof(ep_name);
-    fi_addr_t                     local_ep_addr;
-    std::unique_ptr<listenComm_t> lComm;
-    std::vector<uint8_t>          addr;
+    int                  ret                  = hcclUninitialized;
+    char                 ep_name[MAX_EP_ADDR] = {0};
+    size_t               namelen              = sizeof(ep_name);
+    fi_addr_t            local_ep_addr;
+    std::vector<uint8_t> addr;
 
-    const auto [ep, av, cq] = acquire_ep_av(hostConnIdx, EndpointRole::LISTEN, qpSetIndex);
+    const auto [ep, av, cq, desc] = acquire_resources(hostConnIdx, EndpointRole::LISTEN, qpSetIndex);
 
     OFI_EXIT_ON_ERROR(ofi_plugin->w_fi_getname(&(ep->get()->fid), (void*)&ep_name, &namelen));
     addr = std::vector<uint8_t>(ep_name, ep_name + namelen);
@@ -93,32 +83,31 @@ int ofi_rdm_component_t::listen(uint64_t       tag,
     }
 
     // Build listenComm
-    lComm                = std::make_unique<listenComm_t>();
-    lComm->tag           = tag;
-    lComm->local_ep      = *ep;
-    lComm->cq            = *cq;
-    lComm->accepted      = false;
-    lComm->dev           = m_ofiDeviceID;
-    lComm->local_ep_addr = local_ep_addr;
+    listenComm->tag           = tag;
+    listenComm->local_ep      = *ep;
+    listenComm->cq            = *cq;
+    listenComm->mrDesc        = desc;
+    listenComm->accepted      = false;
+    listenComm->dev           = m_ofiDeviceID;
+    listenComm->local_ep_addr = local_ep_addr;
+    listenComm->isInitialized = true;
 
     LOG_HCL_DEBUG(HCL_OFI,
                   "listenComm initialized; EP: {}, tag: {}",
-                  ofi_plugin->w_fi_tostr(&lComm->local_ep_addr, FI_TYPE_ADDR_FORMAT),
+                  ofi_plugin->w_fi_tostr(&listenComm->local_ep_addr, FI_TYPE_ADDR_FORMAT),
                   tag);
 
-    *listenComm = lComm.release();
-    ret         = hcclSuccess;
+    ret = hcclSuccess;
 error:
     return ret;
 }
 
-int ofi_rdm_component_t::accept(listenComm_t* lComm, ofiComm_t** ofiComm)
+int ofi_rdm_component_t::accept(listenComm_t* lComm, ofiComm_t* ofiComm)
 {
-    int                        ret                         = hcclUninitialized;
-    ssize_t                    rc                          = 0;
-    char                       remote_ep_addr[MAX_EP_ADDR] = {0};
-    fi_addr_t                  remote_ep                   = 0;
-    std::unique_ptr<ofiComm_t> oComm;
+    int       ret                         = hcclUninitialized;
+    ssize_t   rc                          = 0;
+    char      remote_ep_addr[MAX_EP_ADDR] = {0};
+    fi_addr_t remote_ep                   = 0;
 
     assert(lComm->dev == m_ofiDeviceID);
 
@@ -134,36 +123,27 @@ int ofi_rdm_component_t::accept(listenComm_t* lComm, ofiComm_t** ofiComm)
     req.ofiDevice = m_ofiDeviceID;
 
     // Post a buffer for receiving "connection" request
-    do
+    rc = RETRY_ON_EAGAIN(ofi_plugin->w_fi_trecv(lComm->local_ep,
+                                                (void*)&remote_ep_addr,
+                                                MAX_EP_ADDR,
+                                                nullptr,
+                                                FI_ADDR_UNSPEC,
+                                                lComm->tag | ~m_max_tag,
+                                                0,
+                                                &req.ctx),
+                         m_eagainMaxRetryDuration,
+                         // Process completions to have enough resources for posting recv
+                         OFI_EXIT_ON_ERROR(ofi_progress(lComm->cq)));
+    if (0 != rc)
     {
-        rc = ofi_plugin->w_fi_trecv(lComm->local_ep,
-                                    (void*)&remote_ep_addr,
-                                    MAX_EP_ADDR,
-                                    nullptr,
-                                    FI_ADDR_UNSPEC,
-                                    lComm->tag | ~m_max_tag,
-                                    0,
-                                    &req.ctx);
-        if (rc == 0)
-        {
-            break;
-        }
-        else if (rc == -FI_EAGAIN)
-        {
-            // Process completions to have enough resources for posting recv
-            OFI_EXIT_ON_ERROR(ofi_progress(lComm->cq));
-        }
-        else
-        {
-            LOG_HCL_ERR(HCL_OFI,
-                        "Unable to post a buffer for receiving connections "
-                        "for OFI device ID {}; RC: {}, ERROR: {}",
-                        m_ofiDeviceID,
-                        rc,
-                        ofi_plugin->w_fi_strerror(-rc));
-            return hcclLibfabricError;
-        }
-    } while (true);
+        LOG_HCL_ERR(HCL_OFI,
+                    "Unable to post a buffer for receiving connections "
+                    "for OFI device ID {}; RC: {}, ERROR: {}",
+                    m_ofiDeviceID,
+                    rc,
+                    ofi_plugin->w_fi_strerror(-rc));
+        return hcclLibfabricError;
+    }
     LOG_HCL_DEBUG(HCL_OFI, "Received connection request from peer");
 
     // Progress OFI until connection is accepted
@@ -174,36 +154,35 @@ int ofi_rdm_component_t::accept(listenComm_t* lComm, ofiComm_t** ofiComm)
     LOG_HCL_DEBUG(HCL_OFI, "Connection accepted ep = {}, cq = {}", fmt::ptr(lComm->local_ep), fmt::ptr(lComm->cq));
 
     // Build recvComm
-    oComm                 = std::make_unique<ofiComm_t>();
-    oComm->tag            = lComm->tag;
-    oComm->local_ep       = lComm->local_ep;
-    oComm->cq             = lComm->cq;
-    oComm->local_ep_addr  = lComm->local_ep_addr;
-    oComm->remote_ep_addr = remote_ep;
-    oComm->dev            = m_ofiDeviceID;
+    ofiComm->tag            = lComm->tag;
+    ofiComm->local_ep       = lComm->local_ep;
+    ofiComm->cq             = lComm->cq;
+    ofiComm->mrDesc         = lComm->mrDesc;
+    ofiComm->local_ep_addr  = lComm->local_ep_addr;
+    ofiComm->remote_ep_addr = remote_ep;
+    ofiComm->dev            = m_ofiDeviceID;
+    ofiComm->isInitialized  = true;
 
-    LOG_HCL_DEBUG(HCL_OFI, "ofiComm (accept) initialized for OFI device ID {}; tag {}", oComm->dev, oComm->tag);
-    *ofiComm = oComm.release();
-    ret      = hcclSuccess;
+    LOG_HCL_DEBUG(HCL_OFI, "ofiComm (accept) initialized for OFI device ID {}; tag {}", ofiComm->dev, ofiComm->tag);
+    ret = hcclSuccess;
 error:
     return ret;
 }
 
-int ofi_rdm_component_t::connect(const void* handle,
-                                 ofiComm_t** ofiComm,
-                                 void*       localAddr,
-                                 unsigned    hostConnIdx,
-                                 uint16_t    qpSetIndex)
+int ofi_rdm_component_t::connect(const void*            handle,
+                                 ofiComm_t*             ofiComm,
+                                 [[maybe_unused]] void* localAddr,
+                                 unsigned               hostConnIdx,
+                                 uint16_t               qpSetIndex)
 {
-    int                        ret                         = hcclUninitialized;
-    ssize_t                    rc                          = 0;
-    uint64_t                   tag                         = 0ull;
-    char                       remote_ep_addr[MAX_EP_ADDR] = {0};
-    char                       local_ep_addr[MAX_EP_ADDR]  = {0};
-    size_t                     namelen                     = sizeof(local_ep_addr);
-    std::unique_ptr<ofiComm_t> oComm;
-    ofi_req_t                  req;
-    fi_addr_t                  remote_addr;
+    int       ret                         = hcclUninitialized;
+    ssize_t   rc                          = 0;
+    uint64_t  tag                         = 0ull;
+    char      remote_ep_addr[MAX_EP_ADDR] = {0};
+    char      local_ep_addr[MAX_EP_ADDR]  = {0};
+    size_t    namelen                     = sizeof(local_ep_addr);
+    ofi_req_t req;
+    fi_addr_t remote_addr;
 
     memcpy(&remote_ep_addr, static_cast<const char*>(handle), MAX_EP_ADDR);
     memcpy(&tag, static_cast<const char*>(handle) + MAX_EP_ADDR, sizeof(tag));
@@ -213,7 +192,7 @@ int ofi_rdm_component_t::connect(const void* handle,
         return hcclLibfabricError;
     }
 
-    const auto [ep, av, cq] = acquire_ep_av(hostConnIdx, EndpointRole::CONNECT, qpSetIndex);
+    const auto [ep, av, cq, desc] = acquire_resources(hostConnIdx, EndpointRole::CONNECT, qpSetIndex);
     const std::vector<uint8_t> addr(&remote_ep_addr[0], &remote_ep_addr[0] + sizeof(remote_ep_addr));
     try
     {
@@ -227,54 +206,45 @@ int ofi_rdm_component_t::connect(const void* handle,
     }
 
     // Build ofiComm_t
-    oComm                 = std::make_unique<ofiComm_t>();
-    oComm->tag            = tag;
-    oComm->local_ep       = *ep;
-    oComm->cq             = *cq;
-    oComm->remote_ep_addr = remote_addr;
-    oComm->dev            = m_ofiDeviceID;
+    ofiComm->tag            = tag;
+    ofiComm->local_ep       = *ep;
+    ofiComm->cq             = *cq;
+    ofiComm->mrDesc         = desc;
+    ofiComm->remote_ep_addr = remote_addr;
+    ofiComm->dev            = m_ofiDeviceID;
+    ofiComm->isInitialized  = true;
 
-    LOG_HCL_DEBUG(HCL_OFI, "ofiComm (connect) initialized for OFI device ID {}; tag {}", oComm->dev, oComm->tag);
+    LOG_HCL_DEBUG(HCL_OFI, "ofiComm (connect) initialized for OFI device ID {}; tag {}", ofiComm->dev, ofiComm->tag);
 
     // Can optimize this memory allocation by using a pre-allocated
     // buffer and reusing elements from there. For now, going with
     // simple memory allocation. Should remember to free at completion.
-    req.ofiComm   = oComm.get();
-    req.ofiDevice = oComm->dev;
+    req.ofiComm   = ofiComm;
+    req.ofiDevice = ofiComm->dev;
     req.direction = OFI_SEND;
 
     // Get local EP address to transfer in the connect message
     OFI_EXIT_ON_ERROR(ofi_plugin->w_fi_getname(&(ep->get()->fid), (void*)&local_ep_addr, &namelen));
 
     // Send "connect" message to remote EP
-    do
+    rc = RETRY_ON_EAGAIN(ofi_plugin->w_fi_tsend(ofiComm->local_ep,
+                                                (void*)&local_ep_addr,
+                                                MAX_EP_ADDR,
+                                                nullptr,
+                                                ofiComm->remote_ep_addr,
+                                                ofiComm->tag | ~m_max_tag,
+                                                &req.ctx),
+                         m_eagainMaxRetryDuration,
+                         OFI_EXIT_ON_ERROR(ofi_progress(*cq)));
+    if (0 != rc)
     {
-        rc = ofi_plugin->w_fi_tsend(oComm->local_ep,
-                                    (void*)&local_ep_addr,
-                                    MAX_EP_ADDR,
-                                    nullptr,
-                                    oComm->remote_ep_addr,
-                                    oComm->tag | ~m_max_tag,
-                                    &req.ctx);
-        if (rc == 0)
-        {
-            break;
-        }
-        else if (rc == -FI_EAGAIN)
-        {
-            // Process completions to have enough resources to send connect msg
-            OFI_EXIT_ON_ERROR(ofi_progress(*cq));
-        }
-        else
-        {
-            LOG_HCL_ERR(HCL_OFI,
-                        "Unable to send connect message for OFI device ID {}; RC: {}, ERROR: {}",
-                        m_ofiDeviceID,
-                        rc,
-                        ofi_plugin->w_fi_strerror(-rc));
-            return hcclLibfabricError;
-        }
-    } while (true);
+        LOG_HCL_ERR(HCL_OFI,
+                    "Unable to send connect message for OFI device ID {}; RC: {}, ERROR: {}",
+                    m_ofiDeviceID,
+                    rc,
+                    ofi_plugin->w_fi_strerror(-rc));
+        return hcclLibfabricError;
+    }
 
     // Ensure the message is sent
     do
@@ -283,8 +253,7 @@ int ofi_rdm_component_t::connect(const void* handle,
     } while (req.state != OFI_REQ_COMPLETED);
 
     LOG_HCL_DEBUG(HCL_OFI, "Connect to remote-EP succeeded ep = {}, cq = {}", fmt::ptr(ep->get()), fmt::ptr(cq->get()));
-    *ofiComm = oComm.release();
-    ret      = hcclSuccess;
+    ret = hcclSuccess;
 
 error:
     return ret;
@@ -340,16 +309,14 @@ error:
     return ret;
 }
 
-int ofi_rdm_component_t::isend(ofiComm_t*             ofiComm,
-                               void*                  data,
-                               size_t                 size,
-                               fid_mr*                mHandle,
-                               ofi_req_t**            request,
+int ofi_rdm_component_t::isend(ofiComm_t* const       ofiComm,
+                               void* const            data,
+                               const size_t           size,
+                               ofi_req_t** const      request,
                                OfiCompCallbackParams& compParams)
 {
-    int     ret  = hcclUninitialized;
-    void*   desc = nullptr;
-    ssize_t rc   = -1;
+    int     ret = hcclUninitialized;
+    ssize_t rc  = -1;
 
     assert(m_ofiDeviceID == ofiComm->dev);
 
@@ -361,27 +328,14 @@ int ofi_rdm_component_t::isend(ofiComm_t*             ofiComm,
 
     OFI_EXIT_ON_ERROR(ofi_progress(ofiComm->cq));
 
-    if (nullptr != mHandle)
-    {
-        if (m_ep_single == ofiComm->local_ep)
-        {
-            mHandle = get_mr()->getSingleQpMrHandle();
-        }
-        desc = ofi_plugin->w_fi_mr_desc((fid_mr*)mHandle);
-        if (nullptr == desc)
-        {
-            LOG_HCL_ERR(
-                HCL_OFI,
-                "Could not get descriptor for send operation using fi_mr_desc. addr: 0x{:x} size: 0x{:x} ({:g}MB).",
-                (uint64_t)data,
-                size,
-                B2MB(size));
-            return hcclLibfabricError;
-        }
-    }
-
     // Try sending data to remote EP; return nullptr request if not able to send
-    rc = ofi_plugin->w_fi_tsend(ofiComm->local_ep, data, size, desc, ofiComm->remote_ep_addr, ofiComm->tag, &req->ctx);
+    rc = ofi_plugin->w_fi_tsend(ofiComm->local_ep,
+                                data,
+                                size,
+                                ofiComm->mrDesc,
+                                ofiComm->remote_ep_addr,
+                                ofiComm->tag,
+                                &req->ctx);
     if (OFI_UNLIKELY(rc == -FI_EAGAIN))
     {
         *request = nullptr;
@@ -405,16 +359,14 @@ error:
     return ret;
 }
 
-int ofi_rdm_component_t::irecv(ofiComm_t*             ofiComm,
-                               void*                  data,
-                               size_t                 size,
-                               fid_mr*                mHandle,
-                               ofi_req_t**            request,
+int ofi_rdm_component_t::irecv(ofiComm_t* const       ofiComm,
+                               void* const            data,
+                               const size_t           size,
+                               ofi_req_t** const      request,
                                OfiCompCallbackParams& compParams)
 {
-    int     ret  = hcclUninitialized;
-    ssize_t rc   = 0;
-    void*   desc = nullptr;
+    int     ret = hcclUninitialized;
+    ssize_t rc  = 0;
 
     assert(ofiComm->dev == m_ofiDeviceID);
 
@@ -426,26 +378,9 @@ int ofi_rdm_component_t::irecv(ofiComm_t*             ofiComm,
 
     OFI_EXIT_ON_ERROR(ofi_progress(ofiComm->cq));
 
-    if (nullptr != mHandle)
-    {
-        if (m_ep_single == ofiComm->local_ep)
-        {
-            mHandle = get_mr()->getSingleQpMrHandle();
-        }
-        desc = ofi_plugin->w_fi_mr_desc((fid_mr*)mHandle);
-        if (nullptr == desc)
-        {
-            LOG_HCL_ERR(HCL_OFI,
-                        "Could not get descriptor for recv operation using fi_mr_desc. addr: {} size: 0x{:x}. ({:g}MB)",
-                        (uint64_t)data,
-                        size,
-                        B2MB(size));
-            return hcclLibfabricError;
-        }
-    }
-
     // Try posting buffer to local EP
-    rc = ofi_plugin->w_fi_trecv(ofiComm->local_ep, data, size, desc, FI_ADDR_UNSPEC, ofiComm->tag, 0, &req->ctx);
+    rc = ofi_plugin
+             ->w_fi_trecv(ofiComm->local_ep, data, size, ofiComm->mrDesc, FI_ADDR_UNSPEC, ofiComm->tag, 0, &req->ctx);
     if (rc == -FI_EAGAIN)
     {
         // return nullptr request
@@ -470,26 +405,11 @@ error:
     return ret;
 }
 
-int ofi_rdm_component_t::close(ofiComm_t* ofiComm)
+ofi_rdm_component_t::Resources ofi_rdm_component_t::acquire_resources(unsigned                          hostConnIdx,
+                                                                      ofi_rdm_component_t::EndpointRole role,
+                                                                      uint16_t                          qpSetIndex)
 {
-    LOG_HCL_DEBUG(HCL_OFI, "Freeing ofiComm for OFI device ID {}, tag {}", ofiComm->dev, ofiComm->tag);
-    delete ofiComm;
-
-    return hcclSuccess;
-}
-
-int ofi_rdm_component_t::close(listenComm_t* listenComm)
-{
-    LOG_HCL_DEBUG(HCL_OFI, "Freeing listenComm for OFI device ID {}, tag {}", listenComm->dev, listenComm->tag);
-    delete listenComm;
-
-    return hcclSuccess;
-}
-
-ofi_rdm_component_t::EpAv
-ofi_rdm_component_t::acquire_ep_av(unsigned hostConnIdx, ofi_rdm_component_t::EndpointRole role, uint16_t qpSetIndex)
-{
-    for (const auto& [key, ep_av] : m_eps)
+    for (const auto& [key, resources] : m_eps)
     {
         const auto [hostConnIdx_, role_, qpSetIndex_] = key;
         if (isDifferentQP(hostConnIdx, role, qpSetIndex, hostConnIdx_, role_, qpSetIndex_))
@@ -497,19 +417,24 @@ ofi_rdm_component_t::acquire_ep_av(unsigned hostConnIdx, ofi_rdm_component_t::En
             continue;
         }
         // Found existing endpoint
-        m_eps[std::make_tuple(hostConnIdx, role, qpSetIndex)] = ep_av;
-        return ep_av;
+        m_eps[std::make_tuple(hostConnIdx, role, qpSetIndex)] = resources;
+        return resources;
     }
     const auto domain =
         (GCFG_HCL_HNIC_SCALE_OUT_QP_SETS.value() != qpSetIndex) ? m_domain.get() : m_domain_single.get();
     const auto av = std::make_shared<FiObject<struct fid_av*>>(create_av(domain));
     const auto cq = (GCFG_HCL_HNIC_SCALE_OUT_QP_SETS.value() != qpSetIndex) ? m_cq : m_cq_single;
     const auto ep = std::make_shared<FiObject<struct fid_ep*>>(create_ep(m_prov, domain, cq->get(), av->get()));
-    if (GCFG_HCL_HNIC_SCALE_OUT_QP_SETS.value() == qpSetIndex && !GCFG_HCL_SINGLE_QP_PER_SET.value())
+    struct fid_mr* const mr   = (GCFG_HCL_HNIC_SCALE_OUT_QP_SETS.value() != qpSetIndex)
+                                    ? (m_mr.has_value() ? m_mr->get() : nullptr)
+                                    : (m_mrSingle.has_value() ? m_mrSingle->get() : nullptr);
+    void*                desc = nullptr;
+    if (mr)
     {
-        m_ep_single = ep->get();
+        desc = ofi_plugin->w_fi_mr_desc(mr);
+        VERIFY(nullptr != desc, "Could not get descriptor using fi_mr_desc.");
     }
-    m_eps[std::make_tuple(hostConnIdx, role, qpSetIndex)] = std::make_tuple(ep, av, cq);
+    m_eps[std::make_tuple(hostConnIdx, role, qpSetIndex)] = std::make_tuple(ep, av, cq, desc);
     return m_eps[std::make_tuple(hostConnIdx, role, qpSetIndex)];
 }
 

@@ -43,7 +43,8 @@ enum class SyncManagerName
     longMonitor,         // "network_long_monitors_"
     so,                  // "network_gp_sos_"
     cgInternal,          // "network_completion_queue_internal_"
-    cgExternal,          // "network_completion_queue_external_"
+    cgExternal,          // "network_completion_queue_external_".
+    hfcMonitor,          // "network_gp_monitors_hfc_"
     count,
 };
 
@@ -119,11 +120,12 @@ inline ScalJsonNames::ScalJsonNames()
     {
         std::string indexStr = std::to_string(index++);
         map_init(singleMap)
-            (SyncManagerName::networkMonitor, ("network_gp_monitors_"                    + indexStr))
-            (SyncManagerName::longMonitor,    ("network_long_monitors_"                  + indexStr))
-            (SyncManagerName::so,             ("network_gp_sos_"                         + indexStr))
-            (SyncManagerName::cgInternal,     ("network_completion_queue_internal_"      + indexStr))
-            (SyncManagerName::cgExternal,     ("network_completion_queue_external_"      + indexStr))
+            (SyncManagerName::networkMonitor, ("network_gp_monitors_"               + indexStr))
+            (SyncManagerName::longMonitor,    ("network_long_monitors_"             + indexStr))
+            (SyncManagerName::so,             ("network_gp_sos_"                    + indexStr))
+            (SyncManagerName::cgInternal,     ("network_completion_queue_internal_" + indexStr))
+            (SyncManagerName::cgExternal,     ("network_completion_queue_external_" + indexStr))
+            (SyncManagerName::hfcMonitor,     ("network_gp_monitors_hfc_"           + indexStr))
     ;
     }
 }

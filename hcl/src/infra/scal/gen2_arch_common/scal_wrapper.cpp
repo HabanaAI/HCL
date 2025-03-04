@@ -12,6 +12,7 @@
 #include "scal_names.h"                              // for SyncManagerName
 #include "scal_utils.h"                              // for Gen2ArchScalUtils
 #include "infra/hcl_debug_stats.h"                   // for DEBUG_STATS_...
+#include "ibverbs/hcl_ibverbs.h"
 
 using namespace hcl;
 
@@ -24,9 +25,12 @@ Gen2ArchScalWrapper::Gen2ArchScalWrapper(int fd, ScalJsonNames& scalNames) : m_s
     m_deviceHandle = a;
     if (rc != SCAL_SUCCESS)
     {
-        throw ScalErrorException("Failed on scal_get_handle_from_fd with fd: " + std::to_string(fd));
+        throw ScalErrorException("Failed on scal_get_handle_from_fd with fd: " + std::to_string(fd) +
+                                 ", rc: " + std::to_string(rc));
     }
 }
+
+Gen2ArchScalWrapper::Gen2ArchScalWrapper(ScalJsonNames& scalNames) : m_scalNames(scalNames) {}
 
 void Gen2ArchScalWrapper::getMemoryPoolInfo(scal_pool_handle_t*    mpHandle,
                                             scal_memory_pool_info* mpInfo,
@@ -224,7 +228,7 @@ void Gen2ArchScalWrapper::sendStream(const scal_stream_handle_t stream,
 
 Gen2ArchScalWrapper::CgComplex Gen2ArchScalWrapper::getCgInfo(const std::string& cgName) const
 {
-    scal_comp_group_handle_t       cgHndl;
+    scal_comp_group_handle_t cgHndl;
     scal_completion_group_infoV2_t cgScalInfo;
     // SW-47057 - for adding zero
 
@@ -238,7 +242,7 @@ Gen2ArchScalWrapper::CgComplex Gen2ArchScalWrapper::getCgInfo(const std::string&
     rc = scal_completion_group_get_infoV2(cgHndl, &cgScalInfo);
     if (rc != SCAL_SUCCESS)
     {
-        throw ScalErrorException("Failed on scal_completion_group_get_infoV2 with cg handle: " +
+        throw ScalErrorException("Failed on scal_completion_group_get_info with cg handle: " +
                                  std::to_string(uint64_t(cgHndl)) + " and cg name  " + cgName);
     }
 
@@ -287,6 +291,8 @@ SmInfo Gen2ArchScalWrapper::getSmInfo(unsigned archStreamIndex) const
     scal_monitor_pool_info     monPoolInfo;
     scal_monitor_pool_handle_t longMonPoolHandle;
     scal_monitor_pool_info     longMonPoolInfo;
+    scal_monitor_pool_handle_t hfcMonPoolHandle;
+    scal_monitor_pool_info     hfcMonPoolInfo;
     scal_so_pool_handle_t      soPoolHandle;
     scal_so_pool_info          soPoolInfo;
 
@@ -300,6 +306,9 @@ SmInfo Gen2ArchScalWrapper::getSmInfo(unsigned archStreamIndex) const
         throw ScalErrorException("Failed on scal_get_so_monitor_handle_by_name with smName: " +
                                  m_scalNames.smNames[archStreamIndex][SyncManagerName::networkMonitor]);
     }
+    LOG_HCL_DEBUG(HCL_SCAL,
+                  "scal_get_so_monitor_handle_by_name[{}] done",
+                  m_scalNames.smNames[archStreamIndex][SyncManagerName::networkMonitor]);
 
     rc = scal_monitor_pool_get_info(monPoolHandle, &monPoolInfo);
     if (rc != 0)
@@ -324,6 +333,10 @@ SmInfo Gen2ArchScalWrapper::getSmInfo(unsigned archStreamIndex) const
                                  std::to_string(uint64_t(m_deviceHandle)) +
                                  " and name: " + m_scalNames.smNames[archStreamIndex][SyncManagerName::longMonitor]);
     }
+    LOG_HCL_DEBUG(HCL_SCAL,
+                  "scal_get_so_monitor_handle_by_name[{}] done",
+                  m_scalNames.smNames[archStreamIndex][SyncManagerName::longMonitor]);
+
     rc = scal_monitor_pool_get_info(longMonPoolHandle, &longMonPoolInfo);
     assert(rc == 0);
     if (rc != 0)
@@ -331,6 +344,26 @@ SmInfo Gen2ArchScalWrapper::getSmInfo(unsigned archStreamIndex) const
         throw ScalErrorException("Failed on scal_monitor_pool_get_info with long monitor handle: " +
                                  std::to_string(uint64_t(longMonPoolHandle)));
     }
+    rc = scal_get_so_monitor_handle_by_name(m_deviceHandle,
+                                            m_scalNames.smNames[archStreamIndex][SyncManagerName::hfcMonitor].c_str(),
+                                            &hfcMonPoolHandle);
+    assert(rc == 0);
+    if (rc != 0)
+    {
+        throw ScalErrorException("Failed on scal_get_so_monitor_handle_by_name with smName: " +
+                                 m_scalNames.smNames[archStreamIndex][SyncManagerName::hfcMonitor]);
+    }
+    LOG_HCL_DEBUG(HCL_SCAL,
+                  "scal_get_so_monitor_handle_by_name[{}] done",
+                  m_scalNames.smNames[archStreamIndex][SyncManagerName::hfcMonitor]);
+
+    rc = scal_monitor_pool_get_info(hfcMonPoolHandle, &hfcMonPoolInfo);
+    if (rc != 0)
+    {
+        throw ScalErrorException("Failed on scal_monitor_pool_get_info with pool handle: " +
+                                 std::to_string(uint64_t(hfcMonPoolHandle)));
+    }
+    assert(rc == 0);
 
     rc = scal_get_so_pool_handle_by_name(m_deviceHandle,
                                          m_scalNames.smNames[archStreamIndex][SyncManagerName::so].c_str(),
@@ -364,6 +397,16 @@ SmInfo Gen2ArchScalWrapper::getSmInfo(unsigned archStreamIndex) const
     info.longMonitorBaseIdx = longMonPoolInfo.baseIdx;
     info.longMonitorSmIndex = longMonPoolInfo.smIndex;
     info.longMonitorSize    = longMonPoolInfo.size;  // In term of regular monitors (4 monitors per long monitor)
+
+    info.hfcMonitorBaseIdx = hfcMonPoolInfo.baseIdx;
+    info.hfcMonitorSmIndex = hfcMonPoolInfo.smIndex;
+    info.hfcMonitorSize    = hfcMonPoolInfo.size;
+
+    // need to verify that HFC monitors and GPSOs are on the same sync manager
+    VERIFY(info.hfcMonitorSmIndex == info.soSmIndex,
+           "Host fence counter monitor ({}) and so pool sm index ({}) mismatch",
+           info.hfcMonitorSmIndex,
+           info.soSmIndex);
 
     return info;
 }
@@ -429,7 +472,8 @@ unsigned Gen2ArchScalWrapper::getNumberOfEngines(const char* cluster_name)
     int                   rc = scal_get_cluster_handle_by_name(m_deviceHandle, cluster_name, &cluster);
     if (rc != 0)
     {
-        throw ScalErrorException("Failed on scal_get_cluster_handle_by_name with name: nic_scaleup");
+        throw ScalErrorException(
+            "getNumberOfEngines: Failed on scal_get_cluster_handle_by_name with name: nic_scaleup");
     }
 
     scal_cluster_info_t clusterInfo;
@@ -460,9 +504,8 @@ void hcl::Gen2ArchScalWrapper::getHBMInfoForExport(uint64_t& vaBase,
                                                    uint64_t& hbmPoolStart,
                                                    uint64_t& allocatedPoolSize) const
 {
-    scal_pool_handle_t      mpHandle;
+    scal_pool_handle_t mpHandle;
     scal_memory_pool_infoV2 mpInfo;
-
     getMemoryPoolInfoV2(&mpHandle, &mpInfo, "global_hbm");
 
     vaBase            = mpInfo.device_base_allocated_address;
@@ -477,13 +520,18 @@ void hcl::Gen2ArchScalWrapper::getHBMInfoForExport(uint64_t& vaBase,
 
 const std::vector<unsigned> Gen2ArchScalWrapper::getNicsScaleUpEngines()
 {
+    // The code later assumes that we have a cluster named nic_scaleup, which is not true in case
+    // of a single device. In this case, return an empty vector
+    if (!g_ibv.has_ib_device()) return {};
+
     if (m_scaleUpNicEngines.size() == 0)
     {
         scal_cluster_handle_t cluster;
         int                   rc = scal_get_cluster_handle_by_name(m_deviceHandle, "nic_scaleup", &cluster);
         if (rc != 0)
         {
-            throw ScalErrorException("Failed on scal_get_cluster_handle_by_name with name: nic_scaleup");
+            throw ScalErrorException(
+                "getNicsScaleUpEngines: Failed on scal_get_cluster_handle_by_name with name: nic_scaleup");
         }
 
         scal_cluster_info_t clusterInfo;

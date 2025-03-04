@@ -30,6 +30,7 @@ void HclCollectiveMemHandlerGaudi2::generateBaseAddressOrSubBuffIdx(SliceState& 
     {
         subBuffIndex = m_addressGenerator.generateScaleUpRecvIndices(sliceState, m_archStreamId) /
                        DeviceBufferManager::getFactor(SCALEUP_AND_ALL2ALL_POOL);
+        m_addressGenerator.addressContainer().consumeScaleUpRecvAddress(sliceState);
         LOG_HCL_TRACE(HCL, "Setting scale-up receive index to {}", subBuffIndex);
     }
 }
@@ -47,14 +48,14 @@ void HclCollectiveMemHandlerGaudi2::memsetIMBs(IntermediateBufferContainer* imbC
                                                uint8_t                      streamCtxtID,
                                                hcclDataType_t               dataType)
 {
-    // get relevant slice
-    unsigned indexOfSubBuffer = m_intermediateBufferManager.getSliceId(poolId, m_streamId);
-
-    // get correct index by relevant granularity
-    indexOfSubBuffer /= m_intermediateBufferManager.getFactor(poolId);
-
-    if (m_intermediateBufferManager.bufferExpired(poolId))
+    if (m_intermediateBufferManager.isPoolAllocated(poolId) && m_intermediateBufferManager.bufferExpired(poolId))
     {
+        // get relevant slice
+        unsigned indexOfSubBuffer = m_intermediateBufferManager.getSliceId(poolId, m_streamId);
+
+        // get correct index by relevant granularity
+        indexOfSubBuffer /= m_intermediateBufferManager.getFactor(poolId);
+
         unsigned bufferSize = imbContainer->getSliceSize(DeviceBufferManager::getPoolSizeIndex(poolId));
 
         VERIFY(sizeInBytes <= bufferSize,
@@ -62,11 +63,10 @@ void HclCollectiveMemHandlerGaudi2::memsetIMBs(IntermediateBufferContainer* imbC
                sizeInBytes,
                bufferSize);
 
-        unsigned    memsetLoops   = 1;
-        unsigned    initialOffset = 0;
-        hcclRedOp_t effectiveOp   = sendSliceState.m_reduceOp;
+        unsigned    memsetLoops = 1;
+        hcclRedOp_t effectiveOp = sendSliceState.m_reduceOp;
 
-        if (poolId == SCALEOUT_POOL)
+        if (poolId == SCALEOUT_POOL || poolId == PRIMITIVE_POOL)
         {
             if (sendSliceState.m_16BitReduction)
             {
@@ -100,6 +100,11 @@ void HclCollectiveMemHandlerGaudi2::memsetIMBs(IntermediateBufferContainer* imbC
             currNumberOfRanks      = std::min(sendSliceState.m_scaleoutBuffersAmount, sendSliceState.m_boxIterations);
             currNumberOfSubBuffers = sendSliceState.m_scaleoutBuffersAmount;
         }
+        else if (poolId == PRIMITIVE_POOL)
+        {
+            currNumberOfRanks      = 1;
+            currNumberOfSubBuffers = 1;
+        }
         else
         {
             VERIFY(false, "The following pool id={} should not be used in memset.", poolId);
@@ -109,19 +114,32 @@ void HclCollectiveMemHandlerGaudi2::memsetIMBs(IntermediateBufferContainer* imbC
         {
             m_commands.serializeMemsetCommand(garbageCollectionStream,
                                               schedIdx,
-                                              sendSliceState.getIntermediateBuffer(poolId) + initialOffset +
+                                              sendSliceState.getIntermediateBuffer(poolId) +
                                                   i * bufferSize,  // for v3 commands, memsetLoops = 1, i = 0
                                               sizeInBytes,
-                                              signalsManager->enqueueInternalCompletion(SignalEvent::EDMA_MEMSET),
+                                              signalsManager->getSoAddress(WaitMethod::INTERNAL_CG_SO),
                                               streamCtxtID,
                                               dataType,
                                               effectiveOp,
                                               true,  // true for sibo memset v3, false for lin memset
-                                              poolId,
+                                              DeviceBufferManager::getPoolSizeIndex(poolId),
                                               false,  // isForScaleout
                                               currNumberOfRanks,
                                               currNumberOfSubBuffers,
                                               indexOfSubBuffer);
+        }
+    }
+}
+
+void HclCollectiveMemHandlerGaudi2::enqueueInternalCompletionMemsetSignals(SignalsManager* signalsManager,
+                                                                           e_devicePoolID  poolId)
+{
+    const unsigned memsetLoops = 1;
+    if (m_intermediateBufferManager.bufferExpired(poolId))
+    {
+        for (unsigned i = 0; i < memsetLoops; ++i)
+        {
+            signalsManager->enqueueInternalCompletion(SignalEvent::EDMA_MEMSET);
         }
     }
 }

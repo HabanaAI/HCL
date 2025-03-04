@@ -63,6 +63,22 @@ public:
                           unsigned         fenceBase,
                           unsigned         fenceIdx);
 
+    /**
+     * @brief Setup host fence counter monitors with monitor payload data (value to signal) and payload address high (of
+     * the fence to signal).
+     *
+     * @param scalStream scal stream
+     * @param monitorBase host fence counter monitor base index
+     * @param numMonitors number of host fence counter monitors
+     * @param smBase sync manager base address
+     * @param fenceAddr fence address
+     */
+    void addSetupHFCMonitors(hcl::ScalStream& scalStream,
+                             unsigned int     monitorBase,
+                             unsigned         numMonitors,
+                             uint64_t         smBase,
+                             uint64_t         fenceAddr);
+
     void addSetupLongMonitors(hcl::ScalStream& scalStream,
                               unsigned         dcoreIdx,
                               uint64_t         monitorPayloadAddr,
@@ -124,26 +140,49 @@ public:
                                    unsigned         fenceIdx,
                                    bool             useEqual);
 
+    /**
+     * @brief Arm the host fence counter monitor. Set up monitor config, payload address low (of the exact fence to
+     * signal) and monitor arm.
+     *
+     * @param scalStream scal stream
+     * @param smBase sync manager base address
+     * @param soValue sync object value to arm the monitor with
+     * @param soIdx sync object index to arm the monitor with
+     * @param soQuarter sync object quarter in the sync manager
+     * @param monitorIdx monitor index
+     * @param fenceAddr fence address to signal
+     * @param useEqual use equal in the monitor arm
+     */
+    void createArmHFCMonMessages(hcl::ScalStream& scalStream,
+                                 unsigned         smBase,
+                                 uint64_t         soValue,
+                                 unsigned         soIdx,
+                                 unsigned         soQuarter,
+                                 unsigned         monitorIdx,
+                                 uint32_t         fenceAddr,
+                                 bool             useEqual = false);
+
     void createResetSoMessages(HclLbwWriteAggregator&                                         aggregator,
                                uint32_t                                                       smIdx,
                                const std::array<bool, (unsigned)WaitMethod::WAIT_METHOD_MAX>& methodsToClean);
 
     bool isForceOrder(bool external);
 
-    virtual uint64_t getSyncManagerBase(unsigned)                = 0;
-    virtual uint32_t getRegSobObj(uint64_t smBase, unsigned Idx) = 0;
+    virtual uint64_t getSyncManagerBase(unsigned)                    = 0;
+    virtual uint32_t getRegSobObj(uint64_t smBase, unsigned idx)     = 0;
+    virtual uint64_t getFullRegSobObj(uint64_t smBase, unsigned idx) = 0;
     unsigned         getSoPoolSize(GpsoPool pool);
 
     void                                       setNullSubmit(bool nullSubmit) { m_nullSubmit = nullSubmit; }
     inline std::vector<std::pair<bool, bool>>& getLtuData() { return m_ltuValid; }
 
 protected:
-    virtual uint32_t     getAddrMonPayAddrl(uint64_t smBase, unsigned Idx) = 0;
-    virtual uint32_t     getAddrMonPayAddrh(uint64_t smBase, unsigned Idx) = 0;
-    virtual uint32_t     getAddrMonPayData(uint64_t smBase, unsigned Idx)  = 0;
-    virtual uint32_t     getAddrMonConfig(uint64_t smBase, unsigned Idx)   = 0;
-    virtual uint32_t     getAddrSobObj(uint64_t smBase, unsigned Idx)      = 0;
-    virtual uint32_t     getOffsetMonArm(unsigned Idx)                     = 0;
+    virtual uint32_t     getAddrMonPayAddrl(uint64_t smBase, unsigned idx) = 0;
+    virtual uint32_t     getAddrMonPayAddrh(uint64_t smBase, unsigned idx) = 0;
+    virtual uint32_t     getAddrMonPayData(uint64_t smBase, unsigned idx)  = 0;
+    virtual uint32_t     getAddrMonConfig(uint64_t smBase, unsigned idx)   = 0;
+    virtual uint32_t     getAddrSobObj(uint64_t smBase, unsigned idx)      = 0;
+    virtual uint32_t     getOffsetMonArm(unsigned idx)                     = 0;
     virtual uint32_t     createMonConfig(bool isLong, unsigned soQuarter)  = 0;
     virtual uint32_t     getArmMonSize()                                   = 0;
     virtual uint32_t     createMonArm(uint64_t       soValue,
@@ -202,6 +241,7 @@ private:
 
     std::map<uint32_t, uint64_t> m_pendingWaits;
     std::map<uint32_t, uint32_t> m_longMonitorStatus;
+    std::map<uint32_t, uint32_t> m_hfcMonitorStatus;
 
     uint32_t m_syncObjectBase = (uint32_t)-1;
     unsigned m_soSize         = (unsigned)-1;

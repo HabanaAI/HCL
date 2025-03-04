@@ -16,6 +16,7 @@ typedef int (*hbldv_modify_qp_fn)(struct ibv_qp*        ibqp,
                                   struct ibv_qp_attr*   attr,
                                   int                   attr_mask,
                                   struct hbldv_qp_attr* hl_attr);
+typedef int (*hbldv_migrate_qp_fn)(struct ibv_qp* ibqp);
 
 typedef int (*hbldv_query_qp_fn)(struct ibv_qp* ibvqp, struct hbldv_query_qp_attr* qp_attr);
 typedef struct hbldv_usr_fifo* (*hbldv_create_usr_fifo_fn)(struct ibv_context*         context,
@@ -65,6 +66,7 @@ public:
     hbldv_create_cq_fn        hbldv_create_cq        = nullptr;
     hbldv_query_qp_fn         hbldv_query_qp         = nullptr;
     hbldv_modify_qp_fn        hbldv_modify_qp        = nullptr;
+    hbldv_migrate_qp_fn       hbldv_migrate_qp       = nullptr;
     hbldv_create_usr_fifo_fn  hbldv_create_usr_fifo  = nullptr;
     hbldv_destroy_usr_fifo_fn hbldv_destroy_usr_fifo = nullptr;
     hbldv_reserve_coll_qps_fn hbldv_reserve_coll_qps = nullptr;

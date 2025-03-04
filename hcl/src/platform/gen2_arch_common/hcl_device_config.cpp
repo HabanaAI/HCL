@@ -12,6 +12,8 @@
 #include "hcl_types.h"        // for SYN_VALID_DEVICE_ID
 #include "hcl_global_conf.h"  // for GCFG_*
 #include "hcl_utils.h"        // for LOG_*
+#include "network_utils.h"
+#include "hccl_device.h"
 
 using json = nlohmannV340::json;
 
@@ -22,9 +24,11 @@ const std::map<HclConfigType, std::string> g_boxTypeIdToStr = {{BACK_2_BACK, "BA
                                                                {OCP1, "OCP1"},
                                                                {HLS1H, "HLS1-H"},
                                                                {HLS2, "HLS2"},
+                                                               {HL288, "HL288"},
                                                                {HLS3, "HLS3"},
                                                                {HL338, "HL338"},
-                                                               {UNKNOWN, "UNKNOWN"}};
+                                                               {UNKNOWN, "UNKNOWN"},
+};
 
 constexpr char BOOT_ID_FILE[] = "/proc/sys/kernel/random/boot_id";
 
@@ -41,7 +45,29 @@ bool HclDeviceConfig::parseDeviceConfig()
 {
     try
     {
-        if (!parseGaudinet())
+        if (GCFG_HCL_USE_NET_DETECT.value())
+        {
+            net_itfs_map_t nis = get_net_itfs();
+
+            LOG_HCL_INFO(HCL, "detected network interfaces: ");
+
+            for (const auto& [iname, net_itf] : nis)
+            {
+                LOG_HCL_INFO(HCL,
+                             "    {}{}: mac: 0x{:x} ,ip4: {} (0x{:x}), ip6: {} (0x{:x})",
+                             iname,
+                             net_itf.gaudi ? "(gaudi)" : "",
+                             net_itf.mac,
+                             ip2str(net_itf.ip4),
+                             net_itf.ip4,
+                             ip2str(net_itf.ip6),
+                             net_itf.ip6);
+
+                HclNicNetInfo netInfo {net_itf.ip4, 0, 0};
+                m_gaudiNet.insert({net_itf.mac, netInfo});
+            }
+        }
+        else if (!parseGaudinet())
         {
             LOG_HCL_ERR(HCL, "Parsing Gaudi net file failed");
             return false;
@@ -241,7 +267,9 @@ void HclDeviceConfig::fillDeviceInfo(RankInfoHeader& dest)
     {
         std::string hostname = getHostName();
         strcpy(dest.hostname, hostname.c_str());
-        dest.hostnameLength = hostname.size();
+        dest.hostnameLength          = hostname.size();
+        dest.failedScaleOutPortsMask = hccl_device()->getFailedScaleOutPortsMask();
+        LOG_HCL_DEBUG(HCL, "m_failedScaleOutPortsMask={:024b}", (uint64_t)hccl_device()->getFailedScaleOutPortsMask());
     }
 }
 

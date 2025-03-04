@@ -18,7 +18,7 @@ typedef std::array<Gen2ArchNicsDeviceSingleConfig, GEN2ARCH_HLS_BOX_SIZE> Server
 
 constexpr unsigned SCALEOUT_DEVICE_ID      = -1;
 constexpr unsigned NOT_CONNECTED_DEVICE_ID = -2;
-constexpr unsigned MAX_SUB_NICS            = 6;  // TODO: per server type
+constexpr unsigned MAX_SUB_NICS            = 6;
 
 constexpr HCL_Comm DEFAULT_COMM_ID = 0;
 

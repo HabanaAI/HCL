@@ -18,13 +18,14 @@ public:
 
 private:
     virtual uint64_t getSyncManagerBase(unsigned smIdx) override;
-    virtual uint32_t getAddrMonPayAddrl(uint64_t smBase, unsigned Idx) override;
-    virtual uint32_t getAddrMonPayAddrh(uint64_t smBase, unsigned Idx) override;
-    virtual uint32_t getAddrMonPayData(uint64_t smBase, unsigned Idx) override;
-    virtual uint32_t getAddrMonConfig(uint64_t smBase, unsigned Idx) override;
-    virtual uint32_t getAddrSobObj(uint64_t smBase, unsigned Idx) override;
-    virtual uint32_t getRegSobObj(uint64_t smBase, unsigned Idx) override;
-    virtual uint32_t getOffsetMonArm(unsigned Idx) override;
+    virtual uint32_t getAddrMonPayAddrl(uint64_t smBase, unsigned idx) override;
+    virtual uint32_t getAddrMonPayAddrh(uint64_t smBase, unsigned idx) override;
+    virtual uint32_t getAddrMonPayData(uint64_t smBase, unsigned idx) override;
+    virtual uint32_t getAddrMonConfig(uint64_t smBase, unsigned idx) override;
+    virtual uint32_t getAddrSobObj(uint64_t smBase, unsigned idx) override;
+    virtual uint32_t getRegSobObj(uint64_t smBase, unsigned idx) override;
+    virtual uint64_t getFullRegSobObj(uint64_t smBase, unsigned idx) override;
+    virtual uint32_t getOffsetMonArm(unsigned idx) override;
     virtual uint32_t createMonConfig(bool isLong, unsigned soQuarter) override;
     virtual uint32_t createSchedMonExpFence(unsigned fenceIdx) override;
     virtual uint32_t getArmMonSize() override;

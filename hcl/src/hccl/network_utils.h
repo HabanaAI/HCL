@@ -15,6 +15,9 @@
 #include <cstddef>  // for size_t
 #include <string>   // for string
 #include <vector>   // for vector
+#include <unordered_map>
+#include "netinet/in.h"
+#include "hcl_types.h"
 
 struct sockaddr_storage;
 
@@ -31,7 +34,6 @@ detected_tcp_if detect_tcp_if();
 // Determines the TCP network interfaces and their IP address to be used for server socket creation.
 int detect_tcp_ifs(std::vector<detected_tcp_if>& detected_tcp_ifs);
 
-// Translate address from sockaddr in human readable string.
 std::string address_to_string(const sockaddr_storage* addr);
 
 std::string get_global_comm_id();
@@ -55,3 +57,26 @@ bool ip_is_local(const std::string ip);
 //  * Positive integer - in this case it is always `length`.
 // This function will never return value >0 but less than `length`.
 int recv_all(int sockfd, void* buffer, size_t length);
+
+struct net_itf_t
+{
+    uint128_t ip6   = 0;
+    uint64_t  mac   = 0;
+    uint32_t  ip4   = 0;
+    bool      gaudi = false;
+    auto      operator=(const in6_addr& addr)
+    {
+        std::memcpy(&ip6, &addr.__in6_u, sizeof(ip6));
+        return *this;
+    }
+    auto operator=(const in_addr& addr)
+    {
+        ip4 = addr.s_addr;
+        return *this;
+    }
+
+} __attribute__((aligned(16)));
+
+using net_itfs_map_t = std::unordered_map<std::string, net_itf_t>;
+
+net_itfs_map_t get_net_itfs();

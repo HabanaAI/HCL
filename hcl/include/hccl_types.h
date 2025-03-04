@@ -91,8 +91,6 @@ typedef enum
     hcclNumTypes
 } hcclDataType_t;
 
-typedef void (*hcclStreamCallback_t)(synStreamHandle stream, hcclResult_t result, void* userData);
-
 #ifdef __cplusplus
 }  // end extern "C"
 #endif

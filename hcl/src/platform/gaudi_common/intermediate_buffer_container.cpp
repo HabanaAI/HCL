@@ -1,5 +1,5 @@
 #include "platform/gaudi_common/intermediate_buffer_container.h"  // for IntermediateBufferContainerGaudiCommon
-#include "hcl_types.h"                                            // for SYN_VALID_DEVICE_ID
+#include "platform/gaudi_common/gaudi_consts.h"                   // for SYN_VALID_DEVICE_ID
 #include "synapse_api.h"                                          // for synDeviceFree, synDeviceMalloc
 #include "hcl_utils.h"                                            // for VERIFY
 

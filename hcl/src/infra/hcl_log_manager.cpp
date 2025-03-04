@@ -10,6 +10,8 @@
 #define HCL_LOG_FILE               "hcl.log"
 #define HCL_COORDINATOR_LOG_FILE   "hcl_coordinator.log"
 #define HCL_TEST_SEPARATE_LOG_FILE "hcl_test.log"
+#define HCL_SYNC_DBG_TOOL_LOG_FILE "hcl_synchronization_debug_info.log"
+
 namespace hcl
 {
 LogManager& LogManager::instance()
@@ -21,27 +23,49 @@ LogManager& LogManager::instance()
 
 static void createModuleLoggers(LogManager::LogType)
 {
-    hl_logger::LoggerCreateParams hclParams;
-    hclParams.logFileName         = HCL_LOG_FILE;
-    hclParams.logFileSize         = LOG_SIZE;
-    hclParams.logFileAmount       = LOG_AMOUNT;
-    hclParams.logFileBufferSize   = 1024 * 1024;
-    hclParams.printSpecialContext = true;
-    hclParams.rotateLogfileOnOpen = true;
-    hl_logger::createLoggers({LogManager::LogType::HCL,
-                              LogManager::LogType::HCL_OFI,
-                              LogManager::LogType::HCL_SCAL,
-                              LogManager::LogType::HCL_SIMB,
-                              LogManager::LogType::HCL_SYNCOB,
-                              LogManager::LogType::HCL_ECR,
-                              LogManager::LogType::HCL_PROACT,
-                              LogManager::LogType::HCL_IBV,
-                              LogManager::LogType::FUNC_SCOPE,
-                              LogManager::LogType::HCL_SUBMIT},
-                             hclParams);
-    // save HCL_API INFO logs to the lazy log
-    hclParams.defaultLazyLoggingLevel = HLLOG_LEVEL_INFO;
-    hl_logger::createLogger(LogManager::LogType::HCL_API, hclParams);
+    {
+        hl_logger::LoggerCreateParams hclParams;
+        hclParams.logFileName         = HCL_LOG_FILE;
+        hclParams.logFileSize         = LOG_SIZE;
+        hclParams.logFileAmount       = LOG_AMOUNT;
+        hclParams.logFileBufferSize   = 1024 * 1024;
+        hclParams.printSpecialContext = true;
+        hclParams.rotateLogfileOnOpen = true;
+        hl_logger::createLoggers({LogManager::LogType::HCL,
+                                  LogManager::LogType::HCL_OFI,
+                                  LogManager::LogType::HCL_SCAL,
+                                  LogManager::LogType::HCL_SIMB,
+                                  LogManager::LogType::HCL_SYNCOB,
+                                  LogManager::LogType::HCL_ECR,
+                                  LogManager::LogType::HCL_PROACT,
+                                  LogManager::LogType::HCL_IBV,
+                                  LogManager::LogType::FUNC_SCOPE,
+                                  LogManager::LogType::HCL_SUBMIT},
+                                 hclParams);
+        // save HCL_API INFO logs to the lazy log
+        hclParams.defaultLazyLoggingLevel = HLLOG_LEVEL_INFO;
+        hl_logger::createLogger(LogManager::LogType::HCL_API, hclParams);
+    }
+
+    {
+        hl_logger::LoggerCreateParams syncDbgParams;
+
+        // To be used for regular logging mode
+        syncDbgParams.logFileName         = HCL_SYNC_DBG_TOOL_LOG_FILE;
+        syncDbgParams.logFileSize         = LOG_SIZE;
+        syncDbgParams.logFileAmount       = LOG_AMOUNT;
+        syncDbgParams.logFileBufferSize   = 1024 * 1024;
+        syncDbgParams.printSpecialContext = true;
+        syncDbgParams.loggerFlushLevel    = HLLOG_LEVEL_ERROR;
+
+        syncDbgParams.forceDefaultLazyLoggingLevel = true;
+        syncDbgParams.defaultLazyLoggingLevel      = HLLOG_LEVEL_TRACE;
+        syncDbgParams.defaultLoggingLevel          = HLLOG_LEVEL_ERROR;
+        // As it is required to log a log of operations, we will initialize with this amount
+        syncDbgParams.defaultLazyQueueSize = 100000;
+
+        hl_logger::createLogger(LogManager::LogType::HCL_SYNC_DBG_TOOL, syncDbgParams);
+    }
 }
 
 static void createModuleLoggersOnDemand(LogManager::LogType)
@@ -184,6 +208,7 @@ HLLOG_DEFINE_MODULE_LOGGER(HCL_API,
                            FUNC_SCOPE,
                            HCL_CG,
                            HCL_FAILOVER,
+                           HCL_SYNC_DBG_TOOL,
                            LOG_MAX)
 
 namespace hcl

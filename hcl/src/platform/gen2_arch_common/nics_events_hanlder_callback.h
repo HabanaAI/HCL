@@ -1,13 +1,7 @@
 #pragma once
 
 #include <cstdint>
-
-enum NicLkdEventsEnum
-{
-    NIC_LKD_EVENTS_UP = 0,
-    NIC_LKD_EVENTS_DOWN,
-    NIC_LKD_EVENTS_SHUTDOWN
-};
+#include "hcl_types.h"  // for NicLkdEventsEnum
 
 class INicsEventsHandlerCallBack
 {

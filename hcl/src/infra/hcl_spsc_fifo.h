@@ -156,7 +156,7 @@ public:
         return ret;
     }
 
-    inline void submit(bool force = false)
+    inline void submit([[maybe_unused]] bool force = false)
     {
         // submit() is called when the user has done writing and the data should be 'submitted' (i.e. read) by the
         // consumer.

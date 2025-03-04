@@ -73,41 +73,46 @@ uint64_t HclGraphSyncGaudi3::getSyncManagerBase(unsigned smIdx)
     return smBase;
 }
 
-uint32_t HclGraphSyncGaudi3::getAddrMonPayAddrl(uint64_t smBase, unsigned Idx)
+uint32_t HclGraphSyncGaudi3::getAddrMonPayAddrl(uint64_t smBase, unsigned idx)
 {
-    return varoffsetof(gaudi3::block_sob_objs, mon_pay_addrl_0[Idx]) + smBase;
+    return varoffsetof(gaudi3::block_sob_objs, mon_pay_addrl_0[idx]) + smBase;
 }
 
-uint32_t HclGraphSyncGaudi3::getAddrMonPayAddrh(uint64_t smBase, unsigned Idx)
+uint32_t HclGraphSyncGaudi3::getAddrMonPayAddrh(uint64_t smBase, unsigned idx)
 {
-    return varoffsetof(gaudi3::block_sob_objs, mon_pay_addrh_0[Idx]) + smBase;
+    return varoffsetof(gaudi3::block_sob_objs, mon_pay_addrh_0[idx]) + smBase;
 }
 
-uint32_t HclGraphSyncGaudi3::getAddrMonPayData(uint64_t smBase, unsigned Idx)
+uint32_t HclGraphSyncGaudi3::getAddrMonPayData(uint64_t smBase, unsigned idx)
 {
-    return varoffsetof(gaudi3::block_sob_objs, mon_pay_data_0[Idx]) + smBase;
+    return varoffsetof(gaudi3::block_sob_objs, mon_pay_data_0[idx]) + smBase;
 }
 
-uint32_t HclGraphSyncGaudi3::getAddrMonConfig(uint64_t smBase, unsigned Idx)
+uint32_t HclGraphSyncGaudi3::getAddrMonConfig(uint64_t smBase, unsigned idx)
 {
-    return varoffsetof(gaudi3::block_sob_objs, mon_config_0[Idx]) + smBase;
+    return varoffsetof(gaudi3::block_sob_objs, mon_config_0[idx]) + smBase;
 }
 
-uint32_t HclGraphSyncGaudi3::getAddrSobObj(uint64_t smBase, unsigned Idx)
+uint32_t HclGraphSyncGaudi3::getAddrSobObj(uint64_t smBase, unsigned idx)
 {
-    return smBase + varoffsetof(gaudi3::block_sob_objs, sob_obj_0[Idx]);
+    return smBase + varoffsetof(gaudi3::block_sob_objs, sob_obj_0[idx]);
 }
 
-uint32_t HclGraphSyncGaudi3::getRegSobObj(uint64_t smBase, unsigned Idx)
+uint64_t HclGraphSyncGaudi3::getFullRegSobObj(uint64_t smBase, unsigned idx)
+{
+    return smBase + sizeof(gaudi3::sob_objs::reg_sob_obj_0) * idx;
+}
+
+uint32_t HclGraphSyncGaudi3::getRegSobObj(uint64_t smBase, unsigned idx)
 {
     // doesn't mater if it is index 0 or 1 since both structs are identical (reg_sob_obj_0/reg_sob_obj_1)
-    return smBase + sizeof(gaudi3::sob_objs::reg_sob_obj_0) * Idx;
+    return smBase + sizeof(gaudi3::sob_objs::reg_sob_obj_0) * idx;
 }
 
-uint32_t HclGraphSyncGaudi3::getOffsetMonArm(unsigned Idx)
+uint32_t HclGraphSyncGaudi3::getOffsetMonArm(unsigned idx)
 {
     // doesn't mater if it is index 0 or 1 since the offset from the SMBase is the same
-    return varoffsetof(gaudi3::block_sob_objs, mon_arm_0[Idx]);
+    return varoffsetof(gaudi3::block_sob_objs, mon_arm_0[idx]);
 }
 
 uint32_t HclGraphSyncGaudi3::createMonConfig(bool isLong, unsigned soQuarter)

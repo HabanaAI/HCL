@@ -114,6 +114,10 @@ typedef enum synStatus
     synFailedToCollectTime          = 41,
     synTimeout                      = 42,
     synResourceBadUsage             = 43,
+    synNullPtr                      = 44,
+    synFailFuser                    = 45,
+    synFailComplexGuid              = 46,
+    synFailTpcKernels               = 47,
     // Always last
     synStatusLast                   = synResourceBadUsage
 } synStatus;
@@ -167,6 +171,7 @@ typedef enum synDataType
     syn_type_int64    = 1 << 15,         // 64-bit signed integer
     syn_type_uint64   = 1 << 16,         // 64-bit unsigned integer
     syn_type_ufp16     = 1 << 17,        // 16-bit unsigned floating point
+    syn_type_packed_nf4 = 1 << 18,       // 4-bit signed normal floating point
 
     // Must be last and this enum must be in ascending order!
     syn_type_max
@@ -174,17 +179,18 @@ typedef enum synDataType
 
 typedef enum
 {
-    DATA_TENSOR  = 0,
+    DATA_TENSOR = 0,
     SHAPE_TENSOR,
     OUTPUT_DESCRIBING_SHAPE_TENSOR = SHAPE_TENSOR,
     INPUT_DESCRIBING_SHAPE_TENSOR_DEPRECATED,
     DATA_TENSOR_DYNAMIC,
     DEVICE_SHAPE_TENSOR,
+    // [SW-178073] HOST_SHAPE_TENSOR will be depreceted soon as part of the transition to H2D
     HOST_SHAPE_TENSOR,
     HOST_TO_DEVICE_TENSOR,
     TENSOR_TYPE_MAX,
     TENSOR_TYPE_INVALID = TENSOR_TYPE_MAX
-}  synTensorType;
+} synTensorType;
 
 enum synConvParamIndex
 {

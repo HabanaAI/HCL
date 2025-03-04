@@ -24,11 +24,14 @@
 #include "platform/gen2_arch_common/server_connectivity_types.h"  // for SCALEOUT_DEVICE_ID
 #include "coordinator_defs.h"
 
+// DFA vars
+extern DfaPhase g_dfaPhase;
+
 class HclCommandsGen2Arch;
 class DeviceBufferManager;
 
 /* This is a test-only constructor, so the nic array in a few lines is allowed... :-\ */
-HclDeviceGen2Arch::HclDeviceGen2Arch(const bool                   testCtor,
+HclDeviceGen2Arch::HclDeviceGen2Arch([[maybe_unused]] const bool  testCtor,
                                      HclDeviceControllerGen2Arch& controller,
                                      HclDeviceConfig&             deviceConfig,
                                      Gen2ArchServerDef&           serverDef)
@@ -81,6 +84,12 @@ uint32_t HclDeviceGen2Arch::createQpnInLKD(const uint32_t port, const uint8_t qp
 
 bool HclDeviceGen2Arch::isNicUp(uint32_t nic)
 {
+    uint32_t nicMask = (1 << nic);
+    if ((m_hclNic.mask & nicMask) == 0)
+    {
+        return false;
+    }
+
     return g_ibv.is_nic_up(nic);
 }
 
@@ -145,7 +154,16 @@ hcclResult_t HclDeviceGen2Arch::openQpsHLS(HCL_Comm comm)
     return hcclSuccess;
 }
 
-nics_mask_t HclDeviceGen2Arch::getActiveNics(HCL_Rank fromRank, HCL_Rank toRank, int physicalQueueOffset, HCL_Comm comm)
+void HclDeviceGen2Arch::invalidateCache(HCL_Comm comm)
+{
+    m_activeNicsSingleRankCache.at(comm).clear();
+    m_QpConnectionExistsForRank.at(comm).clear();
+};
+
+nics_mask_t HclDeviceGen2Arch::getActiveNics(HCL_Rank             fromRank,
+                                             HCL_Rank             toRank,
+                                             [[maybe_unused]] int physicalQueueOffset,
+                                             HCL_Comm             comm)
 {
     // should not happen
     VERIFY(fromRank != toRank, "getActiveNics called with same rank({})", fromRank);
@@ -163,16 +181,37 @@ nics_mask_t HclDeviceGen2Arch::getActiveNics(HCL_Rank fromRank, HCL_Rank toRank,
                              : SCALEOUT_DEVICE_ID;
 
     const nics_mask_t result = getAllPorts(deviceId, getComm(comm).getCommConnectivity().getExternalPortsMask());
-
-    VERIFY(result.count() <= ((SCALEOUT_DEVICE_ID == (unsigned)deviceId)
-                                  ? getServerConnectivity().getMaxNumScaleOutPorts(/* ? HCL_Comm comm*/)
-                                  : getServerConnectivity().getMaxNumScaleUpPortsPerConnection(comm)),
-
-           "invalid number of active nics({}) from rank({}) to rank({})",
-
-           result.count(),
-           fromRank,
-           toRank);
+    if (g_dfaPhase == DfaPhase::NONE)
+    {
+        // This active nic validation should only run when dfa is not running.
+        // We need to make sure that the number of active nics is correct (scaleout nics can be brought up/down).
+        if (SCALEOUT_DEVICE_ID == (unsigned)deviceId)
+        {
+            uint32_t maxNics = getServerConnectivity().getMaxNumScaleOutPorts();
+            VERIFY(result.count() <= maxNics,
+                   "invalid number of external active nics({}) (out of {}) from rank({}) to rank({}) (deviceId: {}). "
+                   "dfa ({})",
+                   result.count(),
+                   maxNics,
+                   fromRank,
+                   toRank,
+                   deviceId,
+                   g_dfaPhase);
+        }
+        else
+        {
+            uint32_t maxNics = getServerConnectivity().getMaxNumScaleUpPortsPerConnection(comm);
+            VERIFY(result.count() == maxNics,
+                   "invalid number of internal active nics({}) (out of {}) from rank({}) to rank({}) (deviceId: {}). "
+                   "dfa ({})",
+                   result.count(),
+                   maxNics,
+                   fromRank,
+                   toRank,
+                   deviceId,
+                   g_dfaPhase);
+        }
+    }
 
     m_activeNicsSingleRankCache[comm][ranksPair] = result;
 
@@ -180,8 +219,8 @@ nics_mask_t HclDeviceGen2Arch::getActiveNics(HCL_Rank fromRank, HCL_Rank toRank,
     if (fromRank == getMyRank(comm))
     {
         // direct access to qp data, to set nic
-        GaudiNicQPs::NicQPs* qps   = getComm(comm).m_rankInfo.remoteInfo[toRank].gaudiNicQPs.qp;
-        uint32_t             index = 0;
+        NicQPs*  qps   = getComm(comm).m_rankInfo.remoteInfo[toRank].gaudiNicQPs.qp;
+        uint32_t index = 0;
         for (uint8_t nic : m_activeNicsSingleRankCache[comm][ranksPair])
         {
             qps[index++].nic = nic;
@@ -201,12 +240,16 @@ bool HclDeviceGen2Arch::isScaleOutPort(const uint16_t port, const HCL_Comm comm)
     return getServerConnectivity().isScaleoutPort(port, comm);
 }
 
-hcclResult_t HclDeviceGen2Arch::onNewCommStart(HCL_Comm comm, uint32_t commSize, HclConfig& config)
+uint16_t HclDeviceGen2Arch::getLogicalScaleoutPortNum(const uint16_t nic) const
+{
+    const nics_mask_t scaleoutPorts = m_serverConnectivity.getScaleOutPortsGlbl();
+    VERIFY(scaleoutPorts[nic], "nic={} is not a scaleout port", nic);
+    return getServerConnectivity().getSubPortIndex(nic);
+}
+
+hcclResult_t HclDeviceGen2Arch::onNewCommStart(HCL_Comm comm, [[maybe_unused]] uint32_t commSize, HclConfig& config)
 {
     VERIFY(config.m_jsonIndex != -1);
-
-    // get comm
-    getComm(comm).m_rankInfo.device.m_comm = comm;
 
     // get my rank
     getComm(comm).m_rankInfo.header.hcclRank = config.m_jsonIndex;
@@ -220,7 +263,7 @@ hcclResult_t HclDeviceGen2Arch::onNewCommStart(HCL_Comm comm, uint32_t commSize,
     return hcclSuccess;
 }
 
-hcclResult_t HclDeviceGen2Arch::destroyComm(HCL_Comm comm, bool force)
+hcclResult_t HclDeviceGen2Arch::destroyComm(HCL_Comm comm, [[maybe_unused]] bool force)
 {
     LOG_HCL_INFO(HCL, "starting to destroy communicator ({})...", comm);
     deleteCommConnections(comm);
@@ -231,6 +274,7 @@ hcclResult_t HclDeviceGen2Arch::destroyComm(HCL_Comm comm, bool force)
 void HclDeviceGen2Arch::deleteCommConnections(HCL_Comm comm)
 {
     QPManagerHints hints(comm);
+
     for (unsigned nic = 0; nic < MAX_NICS_GEN2ARCH; nic++)
     {
         hints.m_nic = nic;
@@ -371,9 +415,9 @@ hcclResult_t HclDeviceGen2Arch::establishQpConnectionWithPeerQp(const HCL_Comm c
     const uint16_t   peerNic          = getPeerNic(rank, comm, port);
     GaudiNicAddress& remoteNicAddress = getComm(comm).m_remoteDevices[rank]->device.gaudiNicAddresses.nics[peerNic];
 
-    GaudiNicQPs::NicQPs& remoteQPs = getComm(comm).m_remoteDevices[rank]->remoteInfo.gaudiNicQPs[peerNic];
-    uint32_t             qpi       = getQpi(comm, port, rank, qpn, qpSet);
-    GaudiNicAddress&     srcNic    = getComm(comm).m_rankInfo.device.gaudiNicAddresses.nics[port];
+    NicQPs&          remoteQPs = getComm(comm).m_remoteDevices[rank]->remoteInfo.gaudiNicQPs[peerNic];
+    uint32_t         qpi       = getQpi(comm, port, rank, qpn, qpSet);
+    GaudiNicAddress& srcNic    = getComm(comm).m_rankInfo.device.gaudiNicAddresses.nics[port];
 
     uint8_t lagIdx, lastInLag;
     getLagInfo(port, lagIdx, lastInLag, comm);
@@ -407,7 +451,10 @@ bool HclDeviceGen2Arch::isDramAddressValid(uint64_t addr) const
     return (addr >= m_allocationRangeStart && addr < m_allocationRangeEnd);
 }
 
-void HclDeviceGen2Arch::getLagInfo(const uint16_t nic, uint8_t& lagIdx, uint8_t& lastInLag, const HCL_Comm comm)
+void HclDeviceGen2Arch::getLagInfo([[maybe_unused]] const uint16_t nic,
+                                   uint8_t&                        lagIdx,
+                                   uint8_t&                        lastInLag,
+                                   [[maybe_unused]] const HCL_Comm comm)
 {
     lagIdx    = 0;
     lastInLag = false;
@@ -587,7 +634,7 @@ void HclDeviceGen2Arch::initRemoteNicsLoopback(const HCL_Comm comm)
         int scaleoutNicIndex = 0;
 
         // direct access to qp data, to set nic
-        GaudiNicQPs::NicQPs* qps = getComm(comm).m_rankInfo.remoteInfo[rank].gaudiNicQPs.qp;
+        NicQPs* qps = getComm(comm).m_rankInfo.remoteInfo[rank].gaudiNicQPs.qp;
         for (size_t qpIndex = 0; qpIndex < COMPACT_RANK_INFO_NICS; qpIndex++)
         {
             if (rank < getScaleupGroupSize(comm))
@@ -651,4 +698,20 @@ void HclDeviceGen2Arch::getAsyncError(const std::vector<HCL_HwModuleId> remoteMo
     }
 
     *asyncError = hcclSuccess;
+}
+
+void HclDeviceGen2Arch::deleteMigrationQPs([[maybe_unused]] const HCL_Comm comm)
+{
+    // do nothing for Gen2
+}
+
+void HclDeviceGen2Arch::updateMigrationQpsToRts([[maybe_unused]] const HCL_Comm comm)
+{
+    VERIFY(false, "should not get here for Gaudi2!");
+}
+
+void HclDeviceGen2Arch::createMigrationQps([[maybe_unused]] const HCL_Comm comm,
+                                           [[maybe_unused]] const uint16_t nicDown)
+{
+    VERIFY(false, "should not get here for Gaudi2!");
 }

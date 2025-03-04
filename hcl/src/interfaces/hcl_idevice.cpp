@@ -25,6 +25,7 @@
 #include "hcl_log_manager.h"                              // for LOG_*
 #include "hcl_types.h"                                    // for MAX_COMPACT_RANK_INFO_NICS, SYN_VALID_DEVICE_ID
 #include "ibverbs/hcl_ibverbs.h"                          // for g_ibv
+#include "fault_tolerance_inc.h"                          // for HLFT.* macros
 
 #include "platform/gen2_arch_common/server_connectivity_user_config.h"  // for json
 
@@ -65,18 +66,20 @@ hcclResult_t IHclDevice::destroy(bool force)
     return hcclSuccess;
 }
 
-hcclResult_t IHclDevice::destroyComm(HCL_Comm comm, bool force)
+hcclResult_t IHclDevice::destroyComm([[maybe_unused]] HCL_Comm comm, bool force)
 {
     LOG_HCL_TRACE(HCL, "interface force({})", force);
     return hcclSuccess;
 }
 
-hcclResult_t IHclDevice::onNewCommStart(HCL_Comm comm, uint32_t commSize, HclConfig& config)
+hcclResult_t IHclDevice::onNewCommStart([[maybe_unused]] HCL_Comm   comm,
+                                        [[maybe_unused]] uint32_t   commSize,
+                                        [[maybe_unused]] HclConfig& config)
 {
     return hcclSuccess;
 }
 
-hcclResult_t IHclDevice::sync(HCL_Comm comm, uint16_t tag)
+hcclResult_t IHclDevice::sync([[maybe_unused]] HCL_Comm comm, [[maybe_unused]] uint16_t tag)
 {
     return hcclSuccess;
 }
@@ -101,12 +104,12 @@ HCL_Rank IHclDevice::getCommRank(HCL_Comm comm)
     return getMyRank(comm);
 }
 
-HCL_Rank IHclDevice::getCommRank(HCL_Comm comm, HCL_Rank rank)
+HCL_Rank IHclDevice::getCommRank([[maybe_unused]] HCL_Comm comm, HCL_Rank rank)
 {
     return rank;
 }
 
-HCL_Rank IHclDevice::getGlobalRankForComm(HCL_Comm comm, HCL_Rank rankID) const
+HCL_Rank IHclDevice::getGlobalRankForComm([[maybe_unused]] HCL_Comm comm, HCL_Rank rankID) const
 {
     return rankID;
 }
@@ -129,6 +132,11 @@ const UniqueSortedVector& IHclDevice::getCommRanks(HCL_Comm comm)
 bool IHclDevice::isCommExist(HCL_Comm comm)
 {
     return m_dynamicComms.isCommExist(comm);
+}
+
+size_t IHclDevice::getMaxCommNum() const
+{
+    return m_dynamicComms.getMaxCommNum();
 }
 
 void IHclDevice::getMacAddressInfo()
@@ -380,13 +388,31 @@ void IHclDevice::initNicsMask()
 
     // Get mac and IP address from all available ports and store Gaudi`s ports
     LOG_HCL_DEBUG(HCL,
-                  "disabled ports={:24b} m_nicsStatusMask={:24b}",
+                  "disabled ports={:024b} m_nicsStatusMask={:024b}",
                   (uint64_t)m_deviceConfig.getDisabledPorts(),
                   (uint64_t)m_hclNic.mask);
 
+    const nics_mask_t shutdownSimPortsMask =
+        GCFG_HCL_FAULT_TOLERANCE_LOGICAL_PORTS_SHUTDOWN_MASK.value();  // Used for CI testing only
+    HLFT_DBG("shutdownSimPortsMask={:024b}", (uint64_t)shutdownSimPortsMask);
     for (uint32_t nic = 0; nic < m_hal->getMaxNics(); nic++)
     {
-        updateNicState(nic, isNicUp(nic), true);
+        const NicLkdEventsEnum event =
+            isNicUp(nic) ? NicLkdEventsEnum::NIC_LKD_EVENTS_UP : NicLkdEventsEnum::NIC_LKD_EVENTS_DOWN;
+        updateNicState(nic, event, true);
+
+        // Check fault tolerance enabled - if nic marked as up but physical link is down, we need to update the failed
+        // mask
+        if (GCFG_HCL_FAULT_TOLERANCE_ENABLE.value() && m_hclNic.mask[nic] && isScaleOutPort(nic))
+        {
+            const eIbvNicPhysicalState nicPhysicalState = getNicPhysicalState(nic);
+            HLFT_INF("scaleout nic {} physical status {}", nic, nicPhysicalState);
+            if ((nicPhysicalState == eIbvNicPhysicalState::Shutdown) ||
+                ((shutdownSimPortsMask != 0) && shutdownSimPortsMask.get(getLogicalScaleoutPortNum(nic))))
+            {
+                m_failedScaleOutPortsMask.set(getLogicalScaleoutPortNum(nic));
+            }
+        }
     }
 }
 
@@ -420,7 +446,7 @@ void IHclDevice::fillMacAddresses(HCL_Comm comm)
     }
 }
 
-hcclResult_t IHclDevice::networkFlush(HCL_Request* phRequest, synStreamHandle streamHandle)
+hcclResult_t IHclDevice::networkFlush(HCL_Request* phRequest, [[maybe_unused]] synStreamHandle streamHandle)
 {
     // normal (non-Gaudi) implementation are empty.
     *phRequest = HCL_Request();
@@ -432,33 +458,35 @@ int IHclDevice::getFd() const
     return m_deviceConfig.getFd();
 }
 
-bool IHclDevice::isNicUp(uint32_t nic)
+bool IHclDevice::isNicUp([[maybe_unused]] uint32_t nic)
 {
     return false;
 }
 
-void IHclDevice::updateNicState(const uint32_t nic, const bool up, const bool atInit)
+void IHclDevice::updateNicState(const uint32_t nic, const NicLkdEventsEnum event, const bool atInit)
 {
+    const bool isPortUp = (event == NicLkdEventsEnum::NIC_LKD_EVENTS_UP);
     // update state of enabled ports
     if ((m_hclNic.mask[nic]))
     {
-        m_hclNic.state[nic] = up;
-        if (!up && atInit) m_hclNic.mask[nic] = false;  // update disabled nic mask
+        m_hclNic.state[nic] = isPortUp;
+        if (!isPortUp && atInit) m_hclNic.mask[nic] = false;  // update disabled nic mask
     }
 
     LOG_HCL_TRACE(HCL,
-                  "{} Network link fd({}), {} port({}){} is {}",
+                  "{} Network link fd({}), {} port({}){} is {}, event={}",
                   GCFG_BOX_TYPE.value(),
                   getFd(),
                   isScaleOutPort(nic) ? "external" : "internal",
                   nic,
                   m_hclNic.mask[nic] ? "" : " DISABLED",
-                  up ? "up" : "down");
+                  isPortUp ? "up" : "down",
+                  (unsigned)event);
 }
 
-void IHclDevice::waitForAllEvents(bool isCsDone) {}
+void IHclDevice::waitForAllEvents([[maybe_unused]] bool isCsDone) {}
 
-void IHclDevice::waitForAllEvents(uint32_t queueOffset, bool isCsDone) {}
+void IHclDevice::waitForAllEvents([[maybe_unused]] uint32_t queueOffset, [[maybe_unused]] bool isCsDone) {}
 
 uint32_t IHclDevice::allocateQp(uint32_t port, HCL_Rank rank, HCL_Comm comm, uint8_t qpId, uint8_t qpSet)
 {
@@ -517,7 +545,8 @@ void IHclDevice::openWQs()
     }
 }
 
-uint8_t IHclDevice::getPeerNic(const HCL_Rank rank, const HCL_Comm comm, const uint8_t port)
+uint8_t
+IHclDevice::getPeerNic([[maybe_unused]] const HCL_Rank rank, [[maybe_unused]] const HCL_Comm comm, const uint8_t port)
 {
     return port;
 }
@@ -676,6 +705,13 @@ void IHclDevice::setScaleoutMode(const unsigned scaleOutGNICs)
         LOG_HCL_INFO(HCL, "ofi selected by user");
     }
 
+    // check if stand-alone device
+    else if (!g_ibv.has_ib_device())
+    {
+        LOG_HCL_INFO(HCL, "No IB device detected. No scale-up or scale-out ports");
+        m_scaleoutAvailable = false;
+    }
+
     // Start auto-detection flow - if scaleout mode wasn't specified by the user, identify it
     // First, check whether GNICs are available for scale-out
     else if (scaleOutGNICs)
@@ -698,24 +734,36 @@ void IHclDevice::setScaleoutMode(const unsigned scaleOutGNICs)
         m_scaleoutAvailable = false;
     }
 
+    VERIFY(
+        !(GCFG_HCCL_OVER_OFI.value() && !GCFG_HCCL_GAUDI_DIRECT.value() && GCFG_HCL_RS_SO_RECV_CONT_REDUCTION.value()),
+        "PDMA flow doesn't support RS_SO_RECV_CONT_REDUCTION");
+
+    LOG_HCL_INFO(HCL, "scaleOutGNICs({})", scaleOutGNICs);
+
     // Check if GCFG_HCCL_GAUDI_DIRECT is set (by auto-detect / user)
-    // if so, enable AWS environment variable for RDMA: FI_EFA_USE_DEVICE_RDMA
+    // if so, enable huge pages safety variable for RDMA: RDMAV_HUGEPAGES_SAFE
     // and disable sending inline data in Mellanox environment: MLX5_SCATTER_TO_CQE
     if (GCFG_HCCL_GAUDI_DIRECT.value())
     {
-        // Set FI_EFA_USE_DEVICE_RDMA without overwriting value if was already set
-        LOG_HCL_DEBUG(HCL, "Setting FI_EFA_USE_DEVICE_RDMA without overwrite.");
-        setenv("FI_EFA_USE_DEVICE_RDMA", "1", 0);
         // when using mpi, param configuration might not succeed- indicate the situation to the user
-        int enableInline = getEnvInt("MLX5_SCATTER_TO_CQE", -1);
+        int enableInline       = getEnvInt("MLX5_SCATTER_TO_CQE", -1);
+        int rdmaVHugePagesSafe = getEnvInt("RDMAV_HUGEPAGES_SAFE", -1);
         if (enableInline != 0)
         {
             LOG_HCL_WARN(
                 HCL,
                 "MLX5_SCATTER_TO_CQE={}, to avoid sending inline data, attempting to set it to MLX5_SCATTER_TO_CQE=0",
                 (enableInline == -1) ? "<not set>" : std::to_string(enableInline));
+            setenv("MLX5_SCATTER_TO_CQE", "0", 0);
         }
-        setenv("MLX5_SCATTER_TO_CQE", "0", 0);
+        if (rdmaVHugePagesSafe != 1)
+        {
+            LOG_HCL_WARN(
+                HCL,
+                "RDMAV_HUGEPAGES_SAFE={}, to ensure huge pages safety, attempting to set it to RDMAV_HUGEPAGES_SAFE=1",
+                (rdmaVHugePagesSafe == -1) ? "<not set>" : std::to_string(rdmaVHugePagesSafe));
+            setenv("RDMAV_HUGEPAGES_SAFE", "1", 0);
+        }
     }
 }
 

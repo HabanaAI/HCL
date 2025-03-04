@@ -33,6 +33,9 @@ struct SmInfo
     unsigned longMonitorBaseIdx;
     unsigned longMonitorSmIndex;
     unsigned longMonitorSize;
+    unsigned hfcMonitorBaseIdx;
+    unsigned hfcMonitorSmIndex;
+    unsigned hfcMonitorSize;
 };
 
 struct HostFenceInfo

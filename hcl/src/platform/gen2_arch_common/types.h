@@ -8,6 +8,14 @@
 #define HCL_INVALID_PORT      (uint16_t)(-1)  // 0xFFFF
 #define HCL_INVALID_FENCE_ID  (uint32_t)(-1)  // 0xFFFFFFFF
 
+enum nic_edma_datatypes_t
+{
+    NIC_EDMA_UNSIGNED = 0x0,
+    NIC_EDMA_SIGNED   = 0x1,
+    NIC_EDMA_FP       = 0x2,
+    NIC_EDMA_BF       = 0x3
+};
+
 enum reduction_datatype_e
 {
     REDUCTION_INT8           = 0x0,

@@ -25,16 +25,15 @@ public:
 
     static_assert(sizeof(PARAM) <= HLCP_MAX_PARAM_SIZE);
 
-    virtual cmdid_t id() const override { return ID; }
-    virtual void*   param() const override { return (void*)&param_; }
-    virtual size_t  param_size() const override { return sizeof(PARAM); }
-    virtual void*   payload() const override { return payload_; }
-    virtual size_t  payload_size() const override { return payload_size_; }
+    virtual cmdid_t     id() const override { return ID; }
+    virtual const char* name() const override { return cmd2str(ID); }
+    virtual void*       param() const override { return (void*)&param_; }
+    virtual size_t      param_size() const override { return sizeof(PARAM); }
+    virtual void*       payload() const override { return payload_; }
+    virtual size_t      payload_size() const override { return payload_size_; }
 
     void alloc_payload() { payload_ = new uint8_t[payload_size_]; }
     void free_payload() { delete[] (uint8_t*)payload_; }
-
-    virtual const char* name() const override { return cmd2str(ID); }
 
     PARAM   param_;
     PAYLOAD payload_      = nullptr;
@@ -51,6 +50,7 @@ struct hlcp_rank_data_param_t
     RankInfoHeader info      = {0};
     uint32_t       hlcp_port = -1;
     uint32_t       comm_size = 0;
+    HCL_Comm       comm      = HCL_INVALID_COMM;
 };
 constexpr cmdid_t HLCP_RANK_DATA = HLCP_BASE_CMD_ID + 10;  // client -> server
 using hlcp_cmd_rank_data_t       = _hlcp_command_t<HLCP_RANK_DATA, hlcp_rank_data_param_t>;

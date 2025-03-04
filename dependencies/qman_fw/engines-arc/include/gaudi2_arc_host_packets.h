@@ -138,6 +138,27 @@ struct arc_fw_synapse_config_t {
 			/**<
 			 * Refer to arc_fw_sync_scheme_t
 			 */
+			uint16_t scale_up_send_signals;
+			/**<
+			 * Num completion signals from scaleup send cmds
+			 */
+			uint16_t scale_up_recv_signals;
+			/**<
+			 * Num completion signals from scaleup recv cmds
+			 */
+			uint16_t scale_out_send_signals;
+			/**<
+			 * Num completion signals from scaleout send cmds
+			 */
+			uint16_t scale_out_recv_signals;
+			/**<
+			 * Num completion signals from scaleout recv cmds
+			 */
+			uint16_t nic_edma_signals;
+			/**<
+			 * Num completion signals from nic edma cmds
+			 */
+			uint16_t reserved;
 		};
 		uint32_t synapse_params[ARC_FW_SYNAPSE_CONFIG_SIZE];
 	};
@@ -276,6 +297,13 @@ struct engine_config_t {
 	 * SOB ID to be incremented by any one engine
 	 * during the processing of Alloc Barrier command. One SOB per
 	 * Completion Group
+	 */
+	uint32_t ports_per_rank;
+	/**<
+	 * Number of ports in one rank of this engine config
+	 * each engine has its own configuration. So, scaleup
+	 * and scaleout eninges can have different values for
+	 * this field
 	 */
 };
 

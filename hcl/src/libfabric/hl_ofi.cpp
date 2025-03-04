@@ -13,6 +13,7 @@
 #include <algorithm>                     // for unique
 #include <unordered_map>                 // for unordered_map
 #include <regex>                         // for regex, cregex_iterator, cmatch
+#include "hlthunk.h"                     // for hlthunk_get_pci_bus_id_from_fd
 #include "hccl/network_utils.h"          // for get_desired_tcp_if_from_env_var
 #include "hccl_ofi_wrapper_interface.h"  // for ofi_plugin_interface
 #include "hccl_types.h"                  // for hcclLibfabricError, hcclSuccess
@@ -30,7 +31,6 @@
 #define PCI_ADDR_LEN   12  // len(0000:00:00.0) == 12
 
 bool ofi_t::s_mrLocal     = false;
-bool ofi_t::s_hmemMR      = false;
 bool ofi_t::s_gaudiDirect = false;
 bool ofi_t::s_verbs       = false;
 
@@ -363,28 +363,18 @@ bool ofi_t::exclude_verbs_provider(const fi_info* const provider, const uint64_t
 
 void get_hints(struct fi_info* const hints, const bool gaudi_direct)
 {
-    if (gaudi_direct)
-    {
-        hints->caps                 = FI_MSG | FI_HMEM;
-        hints->domain_attr->mr_mode = FI_MR_LOCAL | FI_MR_HMEM;
-    }
-    else
-    {
-        hints->caps                 = FI_MSG;
-        hints->domain_attr->mr_mode = FI_MR_LOCAL;
-    }
-
-    hints->caps |= FI_TAGGED;
-    hints->ep_attr->type = FI_EP_RDM;
-
+    hints->caps = FI_MSG | FI_TAGGED;
     // Set MR mode bits to indicate FI_MR_BASIC registration with local memory buffers
     // Will need to change if device memory can be accessed
-    hints->domain_attr->mr_mode |= FI_MR_VIRT_ADDR | FI_MR_ALLOCATED | FI_MR_PROV_KEY;
+    hints->domain_attr->mr_mode = FI_MR_LOCAL | FI_MR_VIRT_ADDR | FI_MR_ALLOCATED | FI_MR_PROV_KEY;
 
-    if (!GCFG_HCL_SINGLE_QP_PER_SET.value())
+    if (gaudi_direct)
     {
-        hints->domain_attr->threading = FI_THREAD_ENDPOINT;
+        hints->caps |= FI_HMEM;
+        hints->domain_attr->mr_mode |= FI_MR_HMEM;
     }
+
+    hints->ep_attr->type = FI_EP_RDM;
 
     hints->mode = FI_CONTEXT;
 
@@ -435,7 +425,7 @@ ofi_t::ofi_t(int fd, int hw_module_id)
 : m_device_fd(fd),
   m_hw_module_id(hw_module_id),
   m_nOFIDevices(0),
-  m_ofi_lock(PTHREAD_MUTEX_INITIALIZER),
+  m_ofi_lock(),
   m_is_initialized(false),
   m_components(),
   m_fi_getinfo_result(nullptr)
@@ -646,7 +636,6 @@ int ofi_t::init()
         LOG_HCL_DEBUG(HCL_OFI,
                       "Provider {} requires registration of device memory buffers",
                       info->fabric_attr->prov_name);
-        s_hmemMR = true;
     }
 
     try
@@ -662,7 +651,7 @@ int ofi_t::init()
     return ret;
 }
 
-int ofi_t::listen(int ofiDevice, void* handle, listenComm_t** listenComm, unsigned hostConnIdx, uint16_t qpSetIndex)
+int ofi_t::listen(int ofiDevice, void* handle, listenComm_t* listenComm, unsigned hostConnIdx, uint16_t qpSetIndex)
 {
     int      ret;
     uint64_t tag = 0;
@@ -676,22 +665,14 @@ int ofi_t::listen(int ofiDevice, void* handle, listenComm_t** listenComm, unsign
         return hcclLibfabricError;
     }
 
-    pthread_mutex_lock(&m_ofi_lock);
     ret = acquireOfiComponent(ofiDevice);
     if (ret)
     {
-        pthread_mutex_unlock(&m_ofi_lock);
         return hcclLibfabricError;
     }
 
     assert(m_components[ofiDevice] != NULL);
-    ret = m_components[ofiDevice]->next_tag(&tag);
-    pthread_mutex_unlock(&m_ofi_lock);
-    if (ret)
-    {
-        return hcclLibfabricError;
-    }
-
+    tag = m_components[ofiDevice]->next_tag();
     ret = m_components[ofiDevice]->listen(tag, handle, listenComm, hostConnIdx, qpSetIndex);
     if (ret)
     {
@@ -703,7 +684,7 @@ int ofi_t::listen(int ofiDevice, void* handle, listenComm_t** listenComm, unsign
 
 int ofi_t::connect(int         ofiDevice,
                    const void* handle,
-                   ofiComm_t** ofiComm,
+                   ofiComm_t*  ofiComm,
                    void*       localAddr,
                    unsigned    hostConnIdx,
                    uint16_t    qpSetIndex)
@@ -719,9 +700,7 @@ int ofi_t::connect(int         ofiDevice,
         return hcclLibfabricError;
     }
 
-    pthread_mutex_lock(&m_ofi_lock);
     ret = acquireOfiComponent(ofiDevice);
-    pthread_mutex_unlock(&m_ofi_lock);
     if (ret)
     {
         return hcclLibfabricError;
@@ -736,13 +715,11 @@ int ofi_t::connect(int         ofiDevice,
     return hcclSuccess;
 }
 
-int ofi_t::accept(listenComm_t* listenComm, ofiComm_t** ofiComm)
+int ofi_t::accept(listenComm_t* listenComm, ofiComm_t* ofiComm)
 {
     int ret;
 
-    pthread_mutex_lock(&m_ofi_lock);
     ret = acquireOfiComponent(listenComm->dev);
-    pthread_mutex_unlock(&m_ofi_lock);
     if (ret)
     {
         return hcclLibfabricError;
@@ -756,11 +733,10 @@ int ofi_t::accept(listenComm_t* listenComm, ofiComm_t** ofiComm)
     return hcclSuccess;
 }
 
-int ofi_t::isend(ofiComm_t*             ofiComm,
-                 void*                  data,
-                 size_t                 size,
-                 fid_mr*                mHandle,
-                 ofi_req_t**            request,
+int ofi_t::isend(ofiComm_t* const       ofiComm,
+                 void* const            data,
+                 const size_t           size,
+                 ofi_req_t** const      request,
                  OfiCompCallbackParams& compParams)
 {
     int ret;
@@ -777,7 +753,7 @@ int ofi_t::isend(ofiComm_t*             ofiComm,
         return hcclLibfabricError;
     }
 
-    ret = m_components[ofiComm->dev]->isend(ofiComm, data, size, mHandle, request, compParams);
+    ret = m_components[ofiComm->dev]->isend(ofiComm, data, size, request, compParams);
     if (ret)
     {
         return hcclLibfabricError;
@@ -786,11 +762,10 @@ int ofi_t::isend(ofiComm_t*             ofiComm,
     return hcclSuccess;
 }
 
-int ofi_t::irecv(ofiComm_t*             ofiComm,
-                 void*                  data,
-                 size_t                 size,
-                 fid_mr*                mHandle,
-                 ofi_req_t**            request,
+int ofi_t::irecv(ofiComm_t* const       ofiComm,
+                 void* const            data,
+                 const size_t           size,
+                 ofi_req_t** const      request,
                  OfiCompCallbackParams& compParams)
 {
     int ret;
@@ -807,7 +782,7 @@ int ofi_t::irecv(ofiComm_t*             ofiComm,
         return hcclLibfabricError;
     }
 
-    ret = m_components[ofiComm->dev]->irecv(ofiComm, data, size, mHandle, request, compParams);
+    ret = m_components[ofiComm->dev]->irecv(ofiComm, data, size, request, compParams);
     if (ret)
     {
         return hcclLibfabricError;
@@ -835,39 +810,17 @@ int ofi_t::test(ofi_req_t* request, int* done, size_t* size)
     return hcclSuccess;
 }
 
-int ofi_t::close(ofiComm_t* ofiComm)
+int ofi_t::close(const ofiComm_t& ofiComm)
 {
-    if (OFI_UNLIKELY(ofiComm == NULL))
-    {
-        LOG_HCL_ERR(HCL_OFI, "ofiComm value isn't valid");
-        return hcclLibfabricError;
-    }
-
-    int ofiDevice = ofiComm->dev;
-    m_components[ofiDevice]->close(ofiComm);
-
-    pthread_mutex_lock(&m_ofi_lock);
+    const auto ofiDevice = ofiComm.dev;
     releaseOfiComponent(ofiDevice);
-    pthread_mutex_unlock(&m_ofi_lock);
-
     return hcclSuccess;
 }
 
-int ofi_t::close(listenComm_t* listenComm)
+int ofi_t::close(const listenComm_t& listenComm)
 {
-    if (OFI_UNLIKELY(listenComm == NULL))
-    {
-        LOG_HCL_ERR(HCL_OFI, "listenComm value isn't valid");
-        return hcclLibfabricError;
-    }
-
-    int ofiDevice = listenComm->dev;
-    m_components[ofiDevice]->close(listenComm);
-
-    pthread_mutex_lock(&m_ofi_lock);
+    const auto ofiDevice = listenComm.dev;
     releaseOfiComponent(ofiDevice);
-    pthread_mutex_unlock(&m_ofi_lock);
-
     return hcclSuccess;
 }
 
@@ -925,6 +878,7 @@ int ofi_t::initOfiComponent(int ofiDevice)
 
 int ofi_t::acquireOfiComponent(int ofiDevice)
 {
+    std::scoped_lock<FutexLock> lock(m_ofi_lock);
     if (m_components[ofiDevice] == NULL)
     {
         VERIFY(initOfiComponent(ofiDevice) == hcclSuccess, "initializing OFI component failed.");
@@ -939,6 +893,7 @@ int ofi_t::acquireOfiComponent(int ofiDevice)
 
 void ofi_t::releaseOfiComponent(int ofiDevice)
 {
+    std::scoped_lock<FutexLock> lock(m_ofi_lock);
     if (m_components[ofiDevice] == NULL)
     {
         LOG_HCL_ERR(HCL_OFI, "OFI component already deleted (or never created) for component {}", ofiDevice);

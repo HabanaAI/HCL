@@ -1,6 +1,7 @@
 #pragma once
 
-#include "hccl_types.h"
+#include <synapse_api_types.h>  // for synStreamHandle, synDeviceId
+#include "hccl_types.h"         // for hcclResult_t
 #include "dfa_defines.hpp"
 
 struct hcclEventHandle

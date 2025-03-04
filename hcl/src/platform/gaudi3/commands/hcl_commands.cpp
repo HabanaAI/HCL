@@ -16,10 +16,10 @@ void HclCommandsGaudi3::serializeDmaCommand(hcl::ScalStreamBase& scalStream, Dma
 {
     uint64_t sendDataSize    = cmd.m_chunkCount * dataTypeSizeInBytes(cmd.m_dataType);
     bool     is16BitMemcpy   = isDataTypeTwoBytes(cmd.m_dataType);
-    bool     useReductionInd = (cmd.m_isGDRMemcpy && !cmd.m_isFirstWrite);
+    bool     useReductionInd = !cmd.m_isFirstWrite && (cmd.m_isContReduction || cmd.m_isGDRMemcpy);
 
     uint32_t tempDmaType;
-    if (cmd.m_useSibo)
+    if (cmd.m_useSibo && cmd.m_numberOfRanks > 1)
     {
         tempDmaType = g3fw::NIC_EDMA_CMD_SIBO_OPS_V3;
     }
@@ -51,21 +51,21 @@ void HclCommandsGaudi3::serializeDmaCommand(hcl::ScalStreamBase& scalStream, Dma
                                                 cmd.m_isFirstWrite);
 }
 
-void HclCommandsGaudi3::serializeMemsetCommand(hcl::ScalStreamBase& scalStream,
-                                               unsigned             schedIdx,
-                                               uint64_t             addr,
-                                               uint64_t             sizeInBytes,
-                                               uint32_t             soAddressLSB,
-                                               uint8_t              streamCtxtID,
-                                               hcclDataType_t       dataType,
-                                               hcclRedOp_t          reduceOp,
-                                               bool                 useSibo,
-                                               uint32_t             poolId,
-                                               bool                 isForScaleout,
-                                               uint32_t             numberOfRanks,
-                                               uint32_t             numberOfSubBuffers,
-                                               unsigned             indexOfSubBuffer,
-                                               uint32_t             memsetValue)
+void HclCommandsGaudi3::serializeMemsetCommand(hcl::ScalStreamBase&      scalStream,
+                                               unsigned                  schedIdx,
+                                               uint64_t                  addr,
+                                               uint64_t                  sizeInBytes,
+                                               uint32_t                  soAddressLSB,
+                                               uint8_t                   streamCtxtID,
+                                               hcclDataType_t            dataType,
+                                               hcclRedOp_t               reduceOp,
+                                               [[maybe_unused]] bool     useSibo,
+                                               [[maybe_unused]] uint32_t poolId,
+                                               [[maybe_unused]] bool     isForScaleout,
+                                               [[maybe_unused]] uint32_t numberOfRanks,
+                                               [[maybe_unused]] uint32_t numberOfSubBuffers,
+                                               [[maybe_unused]] unsigned indexOfSubBuffer,
+                                               [[maybe_unused]] uint32_t memsetValue)
 {
     SchedArcCommandsGaudi3::serializeDmaCommand(scalStream,
                                                 schedIdx,

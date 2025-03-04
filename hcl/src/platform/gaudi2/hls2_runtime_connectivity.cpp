@@ -31,7 +31,4 @@ uint32_t HLS2RuntimeConnectivity::getBackpressureOffset(const uint16_t nic) cons
     return bp_offs;
 }
 
-void HLS2RuntimeConnectivity::initServerSpecifics()
-{
-    LOG_HCL_DEBUG(HCL, "m_hclCommId={}", m_hclCommId);
-}
+void HLS2RuntimeConnectivity::initServerSpecifics() {}

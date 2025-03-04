@@ -5,6 +5,7 @@
 #include "infra/scal/gen2_arch_common/scal_stream.h"  // for ScalStream
 #include "hcl_log_manager.h"                          // for LOG_*
 #include "hcl_utils.h"                                // for VERIFY
+#include "hcl_math_utils.h"                           // for mod
 #include "platform/gen2_arch_common/device_buffer_manager.h"
 #include "intermediate_buffer_container.h"
 #include "platform/gen2_arch_common/hcl_graph_sync.h"         // for HclGraphSyncGen2Arch
@@ -27,93 +28,102 @@ HclCollectiveMemHandlerGen2Arch::HclCollectiveMemHandlerGen2Arch(int            
 
 HclCollectiveMemHandlerGen2Arch::~HclCollectiveMemHandlerGen2Arch() {}
 
-void HclCollectiveMemHandlerGen2Arch::createMemCopyCommands(CommonState&     commonState,
+void HclCollectiveMemHandlerGen2Arch::createMemCopyCommands(SliceState&      sliceState,
                                                             SignalsManager*  signalsManager,
                                                             unsigned         sliceIter,
                                                             BoxNumInfo&      boxNumInfo,
                                                             uint64_t         chunkCount,
                                                             hcl::ScalStream& scalStream,
                                                             uint32_t         dmaType,
-                                                            bool             reductionSignalToCg,
-                                                            uint32_t         indexOfSubBuffer,
-                                                            bool             useSibo,
                                                             bool             isForScaleout,
                                                             e_devicePoolID   poolIdx,
-                                                            bool             isReductionStream)
+                                                            bool             isGDRMemcpy,
+                                                            bool             isForContReduction)
+
 {
-    uint64_t copyCount                 = chunkCount;
-    uint32_t soAddress                 = 0;
-    bool     reductionIsFirstBoxMemcpy = commonState.m_isMultiScaleupGroup && commonState.m_isReductionCollective &&
-                                     boxNumInfo.m_boxNum == commonState.m_dynamicComm.getMyScaleupGroup();
-
-    SignalEvent event = chooseMemCopyEvent(commonState, dmaType, boxNumInfo, useSibo, isForScaleout);
-
+    uint64_t       copyCount        = chunkCount;
+    uint32_t       soAddress        = 0;
+    const bool     useSibo          = DeviceBufferManager::isSiboPool(poolIdx);
+    const uint32_t indexOfSubBuffer = useSibo ? div(m_intermediateBufferManager.getSliceId(poolIdx, m_archStreamId),
+                                                    DeviceBufferManager::getFactor(poolIdx))
+                                              : 0;
+    bool           isFirstBox       = boxNumInfo.m_boxNum == sliceState.m_dynamicComm.getMyScaleupGroup();
+    SignalEvent    event =
+        chooseMemCopyEvent(sliceState, dmaType, isFirstBox, isGDRMemcpy, useSibo, isForScaleout, isForContReduction);
     // If V3 and second signal if needed.
-    bool isFirstBox = boxNumInfo.m_boxNum == commonState.m_dynamicComm.getMyScaleupGroup();
-    if (isFirstBox && commonState.m_currentOp == eHCLReduceScatter && commonState.m_isMultiScaleupGroup &&
-        commonState.m_dynamicComm.getScaleupGroupSize() != 1 &&
+    if (isFirstBox && sliceState.m_currentOp == eHCLReduceScatter && sliceState.m_isMultiScaleupGroup &&
+        sliceState.m_dynamicComm.getScaleupGroupSize() != 1 &&
         signalsManager->isEventRegistered(SignalEvent::SIGNAL_TO_LONGTERM))
     {
         soAddress = signalsManager->dequeueSoAddress(SignalEvent::SIGNAL_TO_LONGTERM);
     }
 
-    uint64_t strideCount = commonState.m_scaleUpStrideCount;
-    uint64_t offset =
-        commonState.m_dynamicComm.getRankInScaleupGroup() * strideCount * commonState.m_dataTypeSizeInBytes;
-    uint64_t all2allDestOffset =
-        commonState.m_dynamicComm.getRankInScaleupGroup() *
-        (boxNumInfo.m_boxNum == commonState.m_dynamicComm.getMyScaleupGroup() ? strideCount : chunkCount) *
-        commonState.m_dataTypeSizeInBytes;
+    uint64_t strideCount = sliceState.m_scaleUpStrideCount;
+    uint64_t offset = sliceState.m_dynamicComm.getRankInScaleupGroup() * strideCount * sliceState.m_dataTypeSizeInBytes;
+    uint64_t all2allDestOffset = sliceState.m_dynamicComm.getRankInScaleupGroup() *
+                                 (isFirstBox ? strideCount : chunkCount) * sliceState.m_dataTypeSizeInBytes;
 
-    bool     isLocalMemcpy = !useSibo;
-    bool     isPeersOnly   = commonState.m_isMultiScaleupGroup && commonState.m_dynamicComm.getScaleupGroupSize() == 1;
-    bool     isGDRMemcpy   = event == SignalEvent::EDMA_MEMCOPY_GDR;
-    uint64_t dstAddr       = m_addressGenerator.generateMemcpyDstAddress(
-        commonState,
+    uint64_t dstAddr = m_addressGenerator.generateMemcpyDstAddress(
+        sliceState,
         sliceIter,
         boxNumInfo,
-        reductionSignalToCg || (commonState.m_isReductionCollective && !isLocalMemcpy),
-        commonState.m_collectiveOp == eHCLAll2All ? all2allDestOffset : offset,
-        reductionIsFirstBoxMemcpy,
-        (commonState.m_isReductionCollective && isLocalMemcpy && !isPeersOnly) ||
-            useSibo,  // regular memcpy (not in place, first memcpy)
-        useSibo,
+        sliceState.m_collectiveOp == eHCLAll2All ? all2allDestOffset : offset,
         isForScaleout,
-        isReductionStream,
-        isGDRMemcpy);
+        isGDRMemcpy,
+        isForContReduction);
 
-    uint64_t srcAddr = m_addressGenerator.generateMemcpySrcAddress(
-        commonState,
-        sliceIter,
-        boxNumInfo,
-        reductionSignalToCg,
-        offset * (dmaType == DmaType::DMA_TYPE_CAST_DOWN ? 2 : 1),
-        commonState.m_isReductionCollective && !isLocalMemcpy,  // calculation of base address for batch mode memcpy
-        useSibo,
-        isForScaleout,
-        isReductionStream,
-        isGDRMemcpy);
+    uint64_t srcAddr =
+        m_addressGenerator.generateMemcpySrcAddress(sliceState,
+                                                    sliceIter,
+                                                    boxNumInfo,
+                                                    offset * (dmaType == DmaType::DMA_TYPE_CAST_DOWN ? 2 : 1),
+                                                    isForScaleout,
+                                                    isGDRMemcpy,
+                                                    isForContReduction);
 
     LOG_HCL_CONTEXT_TRACE(HCL, "Serializing an edma command");
 
-    unsigned numberOfRanks = isForScaleout ? std::min(commonState.m_scaleoutBuffersAmount, commonState.m_boxIterations)
-                                           : commonState.m_dynamicComm.getScaleupGroupSize();
-    unsigned numberOfSubBuffers = isForScaleout ? commonState.m_scaleoutBuffersAmount : DEFAULT_BOX_SIZE;
+    unsigned numberOfRanks;
+    unsigned numberOfSubBuffers = isForScaleout ? sliceState.m_scaleoutBuffersAmount : DEFAULT_BOX_SIZE;
+    if (isForScaleout)
+    {
+        if (sliceState.isRSContReduction())
+        {
+            if (isForContReduction)
+            {
+                numberOfRanks = mod(sliceState.m_boxIter, sliceState.m_scaleoutBuffersAmount) + 1;
+            }
+            else  // Final reduction of Accumulating Buffer
+            {
+                numberOfRanks =
+                    std::min(RS_CONT_REDUC_SO_POOL_AMOUNT,
+                             static_cast<unsigned>(std::ceil(static_cast<float>(sliceState.m_boxIterations) /
+                                                             sliceState.m_scaleoutBuffersAmount)));
+                numberOfSubBuffers = RS_CONT_REDUC_SO_POOL_AMOUNT;
+            }
+        }
+        else
+        {
+            numberOfRanks = std::min(sliceState.m_scaleoutBuffersAmount, sliceState.m_boxIterations);
+        }
+    }
+    else
+    {
+        numberOfRanks = sliceState.m_dynamicComm.getScaleupGroupSize();
+    }
 
-    hcclDataType_t dataTypeForDma =
-        ((commonState.m_dataType == hcclBfloat16 || commonState.m_dataType == hcclFloat16) && isForScaleout && useSibo)
-            ? hcclFloat32
-            : commonState.m_dataType;
+    hcclDataType_t dataTypeForDma = ((sliceState.m_dataType == hcclBfloat16 || sliceState.m_dataType == hcclFloat16) &&
+                                     isForScaleout && !isGDRMemcpy)
+                                        ? hcclFloat32
+                                        : sliceState.m_dataType;
 
-    bool useCasting = dmaType == DmaType::DMA_TYPE_CAST_DOWN ||
-                      (dmaType == DmaType::DMA_TYPE_CAST_UP &&
-                       (boxNumInfo.m_boxNum == commonState.m_dynamicComm.getMyScaleupGroup())) ||
+    bool useCasting = dmaType == DmaType::DMA_TYPE_CAST_DOWN || (dmaType == DmaType::DMA_TYPE_CAST_UP && isFirstBox) ||
                       ((dmaType == DmaType::DMA_TYPE_CAST_UP) && isGDRMemcpy);
 
     LOG_TRACE(HCL_ECR,
               "Counts for memcpy: op {}, box {}, slice {}, event {}, count {}, stride {}, "
               "src 0x{:X} dst 0x{:X}",
-              commonState.m_currentOp,
+              sliceState.m_currentOp,
               boxNumInfo.m_boxNum,
               sliceIter,
               event,
@@ -122,17 +132,22 @@ void HclCollectiveMemHandlerGen2Arch::createMemCopyCommands(CommonState&     com
               srcAddr,
               dstAddr);
 
-    uint32_t poolId = 0;
+    uint32_t poolSizeId = 0;
     if (poolIdx != NO_POOL)
     {
-        poolId = DeviceBufferManager::getPoolSizeIndex(poolIdx);
+        poolSizeId = DeviceBufferManager::getPoolSizeIndex(poolIdx);
     }
 
-    const unsigned boxIter        = commonState.calcBoxIterRecv(boxNumInfo);
+    const unsigned boxIter        = sliceState.calcBoxIterRecv(boxNumInfo);
     const uint8_t  edmaStreamCtxt = m_profilerDebugMode
-                                        ? getEdmaDebugCtxtId(commonState.m_apiId, isForScaleout, sliceIter)
-                                        : getEdmaStreamCtxtId(commonState.m_apiId, m_archStreamId);
-    bool           isFirstWrite   = boxIter < commonState.m_scaleoutBuffersAmount;
+                                        ? getEdmaDebugCtxtId(sliceState.m_apiId, isForScaleout, sliceIter)
+                                        : getEdmaStreamCtxtId(sliceState.m_apiId, m_archStreamId);
+    bool           isFirstWrite   = boxIter < DeviceBufferManager::getFactor(sliceState.m_execution.m_usedPool);
+    if (sliceState.isRSContReduction() && isForContReduction)
+    {
+        isFirstWrite = sliceState.m_boxIter < (sliceState.m_scaleoutBuffersAmount * RS_CONT_REDUC_SO_POOL_AMOUNT);
+    }
+
     // reduction op should be replaced to hcclSum if we're within the 1st use of the SCALEOUT buffer, to avoid issues
     // with min/max (as the buffer is set to 0 initially)
     bool replaceRedOp = isGDRMemcpy && isFirstWrite;
@@ -140,16 +155,15 @@ void HclCollectiveMemHandlerGen2Arch::createMemCopyCommands(CommonState&     com
     DmaCmdParams cmd {scalStream.getSchedIdx(),
                       signalsManager->dequeueSoAddress(event),
                       soAddress,
-                      commonState.m_collectiveOp,
-                      replaceRedOp ? hcclSum : commonState.m_reduceOp,
+                      sliceState.m_collectiveOp,
+                      replaceRedOp ? hcclSum : sliceState.m_reduceOp,
                       edmaStreamCtxt,
                       copyCount,
                       strideCount,
                       dstAddr,
                       srcAddr,
                       dataTypeForDma,
-                      reductionSignalToCg,
-                      commonState.m_isReductionCollective,
+                      sliceState.m_isReductionCollective,
                       useSibo,
                       numberOfRanks,
                       numberOfSubBuffers,
@@ -157,9 +171,10 @@ void HclCollectiveMemHandlerGen2Arch::createMemCopyCommands(CommonState&     com
                       isForScaleout,
                       useCasting,
                       isGDRMemcpy,
-                      poolId,
-                      commonState.m_dataType == hcclBfloat16,
-                      isFirstWrite};
+                      poolSizeId,
+                      sliceState.m_dataType == hcclBfloat16,
+                      isFirstWrite,
+                      isForContReduction};
 
     LOG_HCL_TRACE(HCL,
                   "Creating collective command SOAddressLSB(0x{:x}), SOAddressLSB2(0x{:x})",
@@ -170,9 +185,11 @@ void HclCollectiveMemHandlerGen2Arch::createMemCopyCommands(CommonState&     com
 
 SignalEvent HclCollectiveMemHandlerGen2Arch::chooseMemCopyEvent(CommonState& commonState,
                                                                 uint32_t     dmaType,
-                                                                BoxNumInfo&  boxNumInfo,
+                                                                bool         isFirstBox,
+                                                                bool         isGDRMemcpy,
                                                                 bool         useSibo,
-                                                                bool         isForScaleout)
+                                                                bool         isForScaleout,
+                                                                bool         isForContReduction)
 {
     SignalEvent event       = SignalEvent::SIGNAL_EVENT_MAX;
     bool        isPeersOnly = commonState.m_isMultiScaleupGroup && commonState.m_dynamicComm.getScaleupGroupSize() == 1;
@@ -182,16 +199,19 @@ SignalEvent HclCollectiveMemHandlerGen2Arch::chooseMemCopyEvent(CommonState& com
         {
             event = SignalEvent::EDMA_BATCH;
         }
+        else if (useSibo && commonState.isRSContReduction() && isForScaleout && isForContReduction)
+        {
+            event = SignalEvent::EDMA_CONT_BATCH_SCALEOUT;
+        }
         else if (useSibo && isForScaleout)
         {
             event = SignalEvent::EDMA_BATCH_SCALEOUT;
         }
-        else if (isForScaleout && !commonState.m_isReductionCollective)
+        else if (!useSibo && isForScaleout && !isGDRMemcpy)
         {
             event = SignalEvent::EDMA_MEMCOPY_FOR_SCALEOUT;
         }
-        else if (!useSibo && isForScaleout && commonState.m_isGdr &&
-                 (!isPeersOnly || boxNumInfo.m_boxNum != commonState.m_dynamicComm.getMyScaleupGroup()))
+        else if (isGDRMemcpy && (!isPeersOnly || !isFirstBox))
         {
             event = SignalEvent::EDMA_MEMCOPY_GDR;
         }
@@ -206,8 +226,7 @@ SignalEvent HclCollectiveMemHandlerGen2Arch::chooseMemCopyEvent(CommonState& com
         {
             event = SignalEvent::EDMA_BATCH;
         }
-        else if (!useSibo && isForScaleout && commonState.m_isGdr &&
-                 (!isPeersOnly || boxNumInfo.m_boxNum != commonState.m_dynamicComm.getMyScaleupGroup()))
+        else if (isGDRMemcpy && (!isPeersOnly || !isFirstBox))
         {
             event = SignalEvent::EDMA_MEMCOPY_GDR;
         }
@@ -218,7 +237,7 @@ SignalEvent HclCollectiveMemHandlerGen2Arch::chooseMemCopyEvent(CommonState& com
     }
     if (dmaType == DmaType::DMA_TYPE_CAST_DOWN)
     {
-        event = SignalEvent::EDMA_BATCH_SCALEOUT;
+        event = useSibo ? SignalEvent::EDMA_BATCH_SCALEOUT : SignalEvent::EDMA_MEMCOPY_FOR_SCALEOUT;
     }
 
     VERIFY(event != SignalEvent::SIGNAL_EVENT_MAX, "event is uninitialized!");
@@ -257,7 +276,6 @@ void HclCollectiveMemHandlerGen2Arch::createMemCopyCommandsNonCollective(hcl::Sc
                       dataType,
                       false,
                       false,
-                      false,
                       0,
                       0,
                       0,
@@ -265,6 +283,7 @@ void HclCollectiveMemHandlerGen2Arch::createMemCopyCommandsNonCollective(hcl::Sc
                       false,
                       false,
                       0,
+                      false,
                       false,
                       false};
 
@@ -290,7 +309,6 @@ void HclCollectiveMemHandlerGen2Arch::signalToSoViaEmptyDmaCommand(uint32_t     
                       0,
                       hcclFloat32,
                       0,
-                      0,
                       true,
                       1,
                       0,
@@ -299,6 +317,7 @@ void HclCollectiveMemHandlerGen2Arch::signalToSoViaEmptyDmaCommand(uint32_t     
                       0,
                       0,
                       1,
+                      0,
                       0,
                       0};
 

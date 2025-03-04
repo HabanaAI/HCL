@@ -287,6 +287,7 @@ int socket_io_t::recv()
         else if (received > 0)  // partial data received
         {
             rx_ += received;
+            continue;
         }
         else if ((received == -1) && would_block())
         {  // no more data in kernel buf, need wait for more

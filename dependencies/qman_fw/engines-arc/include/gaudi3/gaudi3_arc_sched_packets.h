@@ -121,9 +121,10 @@ enum sched_scaleout_recv_arc_cmd_opcode_t {
 	SCHED_SCALEOUT_RECV_ARC_CMD_ACP_FENCE_WAIT = 7,
 	SCHED_SCALEOUT_RECV_ARC_CMD_ACP_FENCE_INC_IMMEDIATE = 8,
 	SCHED_SCALEOUT_RECV_ARC_CMD_PDMA_BATCH_TRANSFER = 9,
-	SCHED_SCALEOUT_RECV_ARC_CMD_LBW_READ = 10,		// TODO: Only in Debug
-	SCHED_SCALEOUT_RECV_ARC_CMD_MEM_FENCE = 11,		// TODO: Only in Debug
-	SCHED_SCALEOUT_RECV_ARC_CMD_COUNT = 12,
+	SCHED_SCALEOUT_RECV_ARC_CMD_NIC_EDMA_OPS = 10,
+	SCHED_SCALEOUT_RECV_ARC_CMD_LBW_READ = 11,		// TODO: Only in Debug
+	SCHED_SCALEOUT_RECV_ARC_CMD_MEM_FENCE = 12,		// TODO: Only in Debug
+	SCHED_SCALEOUT_RECV_ARC_CMD_COUNT = 13,
 	SCHED_SCALEOUT_RECV_ARC_CMD_SIZE = 0x1F
 };
 
@@ -351,11 +352,11 @@ struct sched_mon_exp_fence_t {
 			/**<
 			 * opcode : MON_EXP_FENCE_UPDATE
 			 */
-			uint32_t fence_id:7;
+			uint32_t fence_id:6;
 			/**<
 			 * Index of the fence counter
 			 */
-			uint32_t reserved:23;
+			uint32_t reserved:24;
 			/**<
 			 * reserved
 			 */
@@ -750,34 +751,39 @@ struct sched_arc_lbw_write_t {
  *          to NIC engines
  */
 struct sched_arc_cmd_alloc_nic_barrier_t {
-	uint32_t opcode:5;
-	/**< opcode of the command = SCHED_ARC_CMD_ALLOC_NIC_BARRIER */
-	uint32_t comp_group_index:4;
-	/**<
-	 * Completion Group index. Index bettween 0 to
-	 * (COMP_GROUP_COUNT - 1)
-	 */
-	uint32_t fence_count:4;
-	/**<
-	 * No of fences that needs to be incremented.
-	 * Count can be between 0 to 7
-	 */
-	uint32_t required_sobs:7;
-	/**<
-	 * required number of sobs to be allocated
-	 */
-	uint32_t cmd_size_bytes:6;
-	/**<
-	 * Size of command in bytes
-	 */
-	uint32_t num_lbw_write:5;
-	/**<
-	 * Number of lbw writes
-	 */
-	uint32_t rsvd:1;
-	/**<
-	 * Reserved
-	 */
+	union {
+		struct {
+			uint32_t opcode:5;
+			/**< opcode of the command = SCHED_ARC_CMD_ALLOC_NIC_BARRIER */
+			uint32_t comp_group_index:4;
+			/**<
+			 * Completion Group index. Index bettween 0 to
+			 * (COMP_GROUP_COUNT - 1)
+			 */
+			uint32_t fence_count:4;
+			/**<
+			 * No of fences that needs to be incremented.
+			 * Count can be between 0 to 7
+			 */
+			uint32_t required_sobs:7;
+			/**<
+			 * required number of sobs to be allocated
+			 */
+			uint32_t cmd_size_dwords:6;
+			/**<
+			 * Size of command in bytes
+			 */
+			uint32_t num_lbw_write:5;
+			/**<
+			 * Number of lbw writes
+			 */
+			uint32_t rsvd:1;
+			/**<
+			 * Reserved
+			 */
+		} __attribute__ ((aligned(4), __packed__));
+		uint32_t raw_dword0;
+	};
 	struct sched_arc_fence_id_arr_t fence_arr[0];
 	/**<
 	 * array of fence Ids. Each element can contain upto 4 fence IDs.
@@ -833,8 +839,10 @@ struct sched_arc_cmd_dispatch_barrier_t {
 struct sched_arc_cmd_fence_wait_t {
 	uint32_t opcode:5;
 	/**< opcode of the command = SCHED_ARC_CMD_FENCE_WAIT */
-	uint32_t fence_id:7;
+	uint32_t fence_id:6;
 	/**< Index of the fence register of this stream */
+	uint32_t :1;
+	/**< reserved */
 	uint32_t target:6;
 	/**< target value of the fence */
 	uint32_t reserved:14;

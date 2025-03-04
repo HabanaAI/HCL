@@ -44,7 +44,7 @@ ScaleoutProvider* ScaleoutProvider::createScaleOutProvider(HclDeviceGen2Arch* de
     return provider;
 }
 
-HostBufferManager* ScaleoutProvider::getHostBufferManager(unsigned streamIdx)
+HostBufferManager* ScaleoutProvider::getHostBufferManager([[maybe_unused]] unsigned streamIdx)
 {
     VERIFY(false, "This scaleout provider does not support host-mapped buffers");
     return nullptr;
@@ -70,7 +70,7 @@ SignalEvent Gen2ArchScaleoutProvider::getScaleoutSendSignal()
     return SignalEvent::SCALEOUT_SEND;
 }
 
-SignalEvent Gen2ArchScaleoutProvider::getScaleoutRecvSignal()
+SignalEvent Gen2ArchScaleoutProvider::getScaleoutRecvSignal([[maybe_unused]] bool doReduction)
 {
     return SignalEvent::SCALEOUT_RECV;
 }
@@ -80,12 +80,14 @@ int Gen2ArchScaleoutProvider::getInternalScaleoutFences()
     return 0;
 }
 
-void Gen2ArchScaleoutProvider::validateSize(uint64_t size)
+void Gen2ArchScaleoutProvider::validateSize([[maybe_unused]] uint64_t size)
 {
     return;
 }
 
-int Gen2ArchScaleoutProvider::setInternalScaleoutRecvWait(WaitMethod method, SignalsManager& signalsManager)
+int Gen2ArchScaleoutProvider::setInternalScaleoutRecvWait([[maybe_unused]] WaitMethod      method,
+                                                          [[maybe_unused]] SignalsManager& signalsManager,
+                                                          [[maybe_unused]] bool            doReduction)
 {
     return 0;  // no internal waits
 }
@@ -179,7 +181,10 @@ void Gen2ArchScaleoutProvider::calculateScaleoutRecvResources(SliceState& sliceS
             if (sliceState.m_collectiveOp == eHCLBroadcast)
             {
                 unsigned nextBox = getNextBox(sliceState.m_dynamicComm.getMyScaleupGroup(), sliceState.m_boxIterations);
-                unsigned int numFences = (nextBox == sliceState.rootBox()) ? 1 : 2;
+                bool     isPeersOnly =
+                    sliceState.m_isMultiScaleupGroup && sliceState.m_dynamicComm.getScaleupGroupSize() == 1;
+                unsigned int numFences = (nextBox == sliceState.rootBox() || isPeersOnly) ? 1 : 2;
+
                 signalsManager.enqueueWait(waitEvent, {signalEvent}, waitMethod, 0, numFences);
             }
             else  // eHCLSinglePeerBroadcast
@@ -198,22 +203,44 @@ void Gen2ArchScaleoutProvider::calculateScaleoutRecvResources(SliceState& sliceS
 
         case eHCLReduceScatter:
         {
-            unsigned longtermOffset = 0;
-            unsigned phaseOfWait    = 0;
+            unsigned longtermOffset      = 0;
+            unsigned phaseOfWait         = 0;
+            bool     expectAnotherPhase  = false;
+            unsigned numOfExpectedFences = 1;
             if (isLongTerm(waitMethod))
             {
-                bool isEdgeIteration = sliceState.isEdgeIteration(sliceState.m_boxNumInfo);
-                longtermOffset =
-                    isEdgeIteration
-                        ? sliceState.m_scaleoutLongtermAmount - 1
-                        : (sliceState.calcBoxIterRecv(sliceState.m_boxNumInfo) % sliceState.m_scaleoutBuffersAmount);
-                phaseOfWait = isEdgeIteration ? 0
-                                              : sliceState.calcBoxIterRecv(sliceState.m_boxNumInfo) /
-                                                    sliceState.m_scaleoutBuffersAmount;
+                if (sliceState.isRSContReduction())
+                {
+                    longtermOffset = sliceState.getScaleoutLongtermOffset(waitEvent);
+                    phaseOfWait =
+                        div(sliceState.m_boxIter, sliceState.m_scaleoutBuffersAmount * RS_CONT_REDUC_SO_POOL_AMOUNT);
+                    expectAnotherPhase = sliceState.isAnotherPhaseWaitEventForFullBufferExpects();
+                    if (mod(sliceState.m_boxIter, sliceState.m_scaleoutBuffersAmount) != 0)
+                    {
+                        numOfExpectedFences = 0;
+                    }
+                }
+                else
+                {
+                    bool isEdgeIteration = sliceState.isEdgeIteration(sliceState.m_boxNumInfo);
+                    longtermOffset       = isEdgeIteration ? sliceState.m_scaleoutLongtermAmount - 1
+                                                           : (sliceState.calcBoxIterRecv(sliceState.m_boxNumInfo) %
+                                                        sliceState.m_scaleoutBuffersAmount);
+                    phaseOfWait          = isEdgeIteration ? 0
+                                                           : sliceState.calcBoxIterRecv(sliceState.m_boxNumInfo) /
+                                                        sliceState.m_scaleoutBuffersAmount;
+                }
             }
 
             VERIFY(phaseOfWait < WAIT_PHASE_MAX, "phaseOfWait={}, WAIT_PHASE_MAX={}", phaseOfWait, WAIT_PHASE_MAX);
-            signalsManager.enqueueWait(waitEvent, {signalEvent}, waitMethod, phaseOfWait, 1, longtermOffset);
+            signalsManager.enqueueWait(waitEvent,
+                                       {signalEvent},
+                                       waitMethod,
+                                       phaseOfWait,
+                                       numOfExpectedFences,
+                                       longtermOffset,
+                                       true,  // accSignals
+                                       expectAnotherPhase);
             break;
         }
 
@@ -244,9 +271,10 @@ void Gen2ArchScaleoutProvider::verifyConnections(HCL_Comm comm)
     }
 }
 
-void Gen2ArchScaleoutProvider::updateConnectionsNonPeer(const HCL_Comm                         comm,
-                                                        const UniqueSortedVector&              nonPeerRemoteRanks,
-                                                        const std::vector<HostNicConnectInfo>& bufferFromTargets)
+void Gen2ArchScaleoutProvider::updateConnectionsNonPeer(
+    const HCL_Comm                                          comm,
+    const UniqueSortedVector&                               nonPeerRemoteRanks,
+    [[maybe_unused]] const std::vector<HostNicConnectInfo>& bufferFromTargets)
 {
     LOG_HCL_TRACE(HCL, "comm={}, nonPeerRemoteRanks.size={}", comm, nonPeerRemoteRanks.size());
     for (const HCL_Rank remoteRank : nonPeerRemoteRanks)
@@ -255,7 +283,7 @@ void Gen2ArchScaleoutProvider::updateConnectionsNonPeer(const HCL_Comm          
     }
 }
 
-void Gen2ArchScaleoutProvider::closeConnections(HCL_Comm comm)
+void Gen2ArchScaleoutProvider::closeConnections([[maybe_unused]] HCL_Comm comm)
 {
     // nothing to do here
     return;
@@ -315,18 +343,19 @@ LibfabricScaleoutProvider::LibfabricScaleoutProvider(HclDeviceGen2Arch* device)
     if (ofi_t::isMRLocal())
     {
         // create MemoryRegion.
-        device->getOfiComponent()->create_mr(mrParams);
+        device->getOfiComponent()->initializeMemoryRegion(mrParams);
     }
 
     for (unsigned archStream = 0; archStream < m_numArchStreams; archStream++)
     {
         if (!isGaudiDirect())
         {
-            m_hostBufferManager.push_back(new HostBufferManager(
-                m_deviceHandle + (archStream * sizeOfHostBufferPool),
-                (uint64_t)m_hostAddress + (archStream * sizeOfHostBufferPool),
-                {HostBuffersAmount::getBufferCount(HNIC_SEND_POOL), HostBuffersAmount::getBufferCount(HNIC_RECV_POOL)},
-                device->getSIBBufferSize()));
+            m_hostBufferManager.push_back(
+                new HostBufferManager(m_deviceHandle + (archStream * sizeOfHostBufferPool),
+                                      (uint64_t)m_hostAddress + (archStream * sizeOfHostBufferPool),
+                                      {{HNIC_SEND_POOL, HostBuffersAmount::getBufferCount(HNIC_SEND_POOL)},
+                                       {HNIC_RECV_POOL, HostBuffersAmount::getBufferCount(HNIC_RECV_POOL)}},
+                                      device->getSIBBufferSize()));
         }
 
         for (size_t uarchStream = 0;
@@ -466,8 +495,7 @@ void LibfabricScaleoutProvider::openConnectionsOuterRanks(const HCL_Comm comm, c
     HclDynamicCommunicator& dynamicComm = m_device->getComm(comm);
     if (nullptr == dynamicComm.m_hostNicBridge)
     {
-        dynamicComm.m_hostNicBridge =
-            std::unique_ptr<ofi_communicator>(new ofi_communicator(m_device->getOfiComponent()->get_mr()));
+        dynamicComm.m_hostNicBridge = std::make_unique<ofi_communicator>();
     }
 
     VERIFY(dynamicComm.initializeHostNicBridge(outerRanks));
@@ -500,9 +528,10 @@ SignalEvent LibfabricScaleoutProvider::getScaleoutSendSignal()
     return SignalEvent::HNIC_SCALEOUT_SEND;
 }
 
-SignalEvent LibfabricScaleoutProvider::getScaleoutRecvSignal()
+SignalEvent LibfabricScaleoutProvider::getScaleoutRecvSignal(bool doReduction)
 {
-    return isGaudiDirect() ? SignalEvent::HNIC_SCALEOUT_RECV : SignalEvent::HNIC_PDMA;
+    return isGaudiDirect() ? (doReduction ? SignalEvent::EDMA_MEMCOPY_GDR : SignalEvent::HNIC_SCALEOUT_RECV)
+                           : SignalEvent::HNIC_PDMA;
 }
 
 int LibfabricScaleoutProvider::getInternalScaleoutFences()
@@ -545,11 +574,21 @@ void LibfabricScaleoutProvider::closeConnections(HCL_Comm comm)
     dynamicComm.m_hostNicBridge->destroy();
 }
 
-int LibfabricScaleoutProvider::setInternalScaleoutRecvWait(WaitMethod method, SignalsManager& signalsManager)
+int LibfabricScaleoutProvider::setInternalScaleoutRecvWait(WaitMethod      method,
+                                                           SignalsManager& signalsManager,
+                                                           bool            doReduction)
 {
     if (!isGaudiDirect())
     {
         signalsManager.enqueueWait(WaitEvent::HNIC_SCALEOUT_RECV_PDMA_WAIT_FOR_RECV,
+                                   {SignalEvent::HNIC_SCALEOUT_RECV},
+                                   method,
+                                   signalsManager.getNextPhase(method));
+        return 1;  // single internal wait
+    }
+    else if (doReduction)
+    {
+        signalsManager.enqueueWait(WaitEvent::GDR_MEMCPY_WAIT_FOR_HNIC_RECV,
                                    {SignalEvent::HNIC_SCALEOUT_RECV},
                                    method,
                                    signalsManager.getNextPhase(method));
@@ -619,17 +658,43 @@ void LibfabricScaleoutProvider::requestScaleoutResources(SliceState& sliceState,
 
         if (sliceState.m_currentOp == eHCLReduceScatter)
         {
-            WaitPhase waitPhase = 0;
+            unsigned  longtermOffset      = 0;
+            bool      expectAnotherPhase  = false;
+            unsigned  numOfExpectedFences = 1;
+            WaitPhase waitPhase           = 0;
             if (waitEvent == WaitEvent::HNIC_SIGNAL_SPLIT_WAIT_FOR_PDMA)
             {
                 waitPhase = 1;
             }
-            signalsManager.enqueueWait(waitEvent, {signalEvent}, waitMethod, waitPhase);
+            else if (sliceState.isRSContReduction())
+            {
+                longtermOffset = sliceState.getScaleoutLongtermOffset(waitEvent);
+                waitPhase =
+                    div(sliceState.m_boxIter, sliceState.m_scaleoutBuffersAmount * RS_CONT_REDUC_SO_POOL_AMOUNT);
+                if (sliceState.m_boxIter + sliceState.m_scaleoutBuffersAmount + 1 < sliceState.m_boxIterations)
+                {
+                    expectAnotherPhase = true;
+                }
+                if (mod(sliceState.m_boxIter, sliceState.m_scaleoutBuffersAmount) != 0)
+                {
+                    numOfExpectedFences = 0;
+                }
+            }
+            signalsManager.enqueueWait(waitEvent,
+                                       {signalEvent},
+                                       waitMethod,
+                                       waitPhase,
+                                       numOfExpectedFences,
+                                       longtermOffset,
+                                       true,
+                                       expectAnotherPhase);
         }
         else if (sliceState.m_collectiveOp == eHCLBroadcast && sliceState.m_currentOp == eHCLScatter)
         {
-            WaitPhase    waitPhase = isGaudiDirect() ? 0 : 1;
-            unsigned     nextBox = getNextBox(sliceState.m_dynamicComm.getMyScaleupGroup(), sliceState.m_boxIterations);
+            bool isPeersOnly = sliceState.m_isMultiScaleupGroup && sliceState.m_dynamicComm.getScaleupGroupSize() == 1;
+            unsigned nextBox = getNextBox(sliceState.m_dynamicComm.getMyScaleupGroup(), sliceState.m_boxIterations);
+
+            WaitPhase    waitPhase = isGaudiDirect() || (isPeersOnly && nextBox == sliceState.rootBox()) ? 0 : 1;
             unsigned int numFences = 1;
             if (isGaudiDirect() && (nextBox != sliceState.rootBox()))
             {

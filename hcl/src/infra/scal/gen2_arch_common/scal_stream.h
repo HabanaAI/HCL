@@ -8,7 +8,7 @@
 #include "scal.h"                    // for scal_buffer_handle_t, scal_buffer_info_t, scal_s...
 #include "hl_logger/hllog_core.hpp"  // for hl_logger::LoggerSPtr
 #include "infra/scal/gen2_arch_common/cyclic_buffer_factory.h"  // for CyclicBufferFactory
-#include "infra/scal/gaudi_common/factory_types.h"              // for CyclicBufferType
+#include "factory_types.h"                                      // for CyclicBufferType
 
 namespace hcl
 {

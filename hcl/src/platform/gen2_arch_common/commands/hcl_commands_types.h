@@ -20,7 +20,6 @@ struct DmaCmdParams
                           uint64_t         recvBaseAddress,
                           uint64_t         sendBaseAddress,
                           hcclDataType_t   dataType,
-                          bool             reductionSignalToCg,
                           bool             isReduction,
                           bool             useSibo,
                           uint32_t         numberOfRanks,
@@ -31,7 +30,8 @@ struct DmaCmdParams
                           bool             isGDRMemcpy,
                           uint32_t         poolId,
                           bool             isBFloat,
-                          bool             isFirstWrite)
+                          bool             isFirstWrite,
+                          bool             isContReduction)
     : m_schedIdx(schedIdx),
       m_soAddressLSB(soAddressLSB),
       m_soAddressLSB2(soAddressLSB2),
@@ -43,7 +43,6 @@ struct DmaCmdParams
       m_recvBaseAddress(recvBaseAddress),
       m_sendBaseAddress(sendBaseAddress),
       m_dataType(dataType),
-      m_reductionSignalToCg(reductionSignalToCg),
       m_isReduction(isReduction),
       m_useSibo(useSibo),
       m_numberOfRanks(numberOfRanks),
@@ -54,7 +53,8 @@ struct DmaCmdParams
       m_isGDRMemcpy(isGDRMemcpy),
       m_poolId(poolId),
       m_isBFloat(isBFloat),
-      m_isFirstWrite(isFirstWrite)
+      m_isFirstWrite(isFirstWrite),
+      m_isContReduction(isContReduction)
     {
     }
 
@@ -70,7 +70,6 @@ struct DmaCmdParams
     uint64_t         m_recvBaseAddress;
     uint64_t         m_sendBaseAddress;
     hcclDataType_t   m_dataType;
-    bool             m_reductionSignalToCg;
     bool             m_isReduction;
     bool             m_useSibo;
     uint32_t         m_numberOfRanks;
@@ -82,6 +81,7 @@ struct DmaCmdParams
     uint32_t         m_poolId;
     bool             m_isBFloat;
     bool             m_isFirstWrite;
+    bool             m_isContReduction;
 };
 
 struct ScaleUpCollectiveOp
@@ -106,7 +106,6 @@ struct ScaleUpCollectiveOp
                                  bool                    notifyRndvAck,
                                  bool                    waitForRndvAcks,
                                  bool                    isReduction,
-                                 uint32_t                accuIndex,
                                  uint32_t                subBuffIndex,
                                  HCL_CollectiveOp        complexCollective,
                                  bool                    isRoot)
@@ -130,7 +129,6 @@ struct ScaleUpCollectiveOp
       m_notifyRndvAck(notifyRndvAck),
       m_waitForRndvAcks(waitForRndvAcks),
       m_isReduction(isReduction),
-      m_accuIndex(accuIndex),
       m_subBuffIndex(subBuffIndex),
       m_complexCollective(complexCollective),
       m_isRoot(isRoot)
@@ -162,7 +160,6 @@ struct ScaleUpCollectiveOp
     bool                    m_notifyRndvAck;
     bool                    m_waitForRndvAcks;
     bool                    m_isReduction       = false;
-    uint32_t                m_accuIndex         = 0;
     uint32_t                m_subBuffIndex      = 0;
     HCL_CollectiveOp        m_complexCollective = eHCLNoCollective;
     bool                    m_isRoot            = false;

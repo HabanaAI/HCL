@@ -15,10 +15,9 @@ public:
     virtual void mcNicStateChange(const NicState& nicState) = 0;
 };
 
-
 // pseudo code for the callback
 //
-//void mcNicStateChange(const NicState& nicState)
+// void mcNicStateChange(const NicState& nicState)
 //{
 //
 //  if (nicState.state == down)

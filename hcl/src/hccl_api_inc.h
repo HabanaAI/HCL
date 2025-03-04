@@ -5,8 +5,9 @@
 #include <condition_variable>
 #include <mutex>
 
-#include "hcl_log_manager.h"  // for LOG_*
-#include "hcl_utils.h"        // for LOG_HCL*, g_status, g_dfaPhase
+#include "hccl_communicator.h"  // for hccl_communicator
+#include "hcl_log_manager.h"    // for LOG_*
+#include "hcl_utils.h"          // for LOG_HCL*, g_status, g_dfaPhase
 
 // DFA vars
 extern DfaPhase   g_dfaPhase;
@@ -14,9 +15,35 @@ extern std::mutex g_dfaMutex;
 
 // Fault tolerance vars
 extern std::atomic<bool>       g_faultsCheckStopApi;
-extern std::atomic<bool>       g_faultsStopAllApi;
+extern std::atomic<uint32_t>   g_faultsStopAllApi;
 extern std::condition_variable g_faultsStopAllApiCv;
 extern std::mutex              g_faultsStopAllApiMutex;
+
+void checkFaultToleranceStopApi();
+
+#define HCCL_CHECK_STOP_API()                                                                                          \
+    {                                                                                                                  \
+        if (g_faultsCheckStopApi.load())                                                                               \
+        {                                                                                                              \
+            checkFaultToleranceStopApi();                                                                              \
+        }                                                                                                              \
+    }
+
+#define HCCL_CHECK_STOP_COLL_API_COMM_UNTIL(hcclComm)                                                                  \
+    {                                                                                                                  \
+        if (g_faultsCheckStopApi.load())                                                                               \
+        {                                                                                                              \
+            hcclComm->checkFaultToleranceStopCommCollApiUntil();                                                       \
+        }                                                                                                              \
+    }
+
+#define HCCL_CHECK_STOP_SR_API_COMM_UNTIL(hcclComm)                                                                    \
+    {                                                                                                                  \
+        if (g_faultsCheckStopApi.load())                                                                               \
+        {                                                                                                              \
+            hcclComm->checkFaultToleranceStopCommSendRecvApiUntil();                                                   \
+        }                                                                                                              \
+    }
 
 #define HCCL_TRY                                                                                                       \
     if (g_dfaPhase == DfaPhase::STARTED)                                                                               \
@@ -27,14 +54,6 @@ extern std::mutex              g_faultsStopAllApiMutex;
     {                                                                                                                  \
         return g_status;                                                                                               \
     }                                                                                                                  \
-    if (g_faultsCheckStopApi.load())                                                                                   \
-    {                                                                                                                  \
-        LOG_DEBUG(HCL_FAILOVER, "{}: Stop API check", __func__);                                                       \
-        std::unique_lock<std::mutex> lk(g_faultsStopAllApiMutex);                                                      \
-        LOG_DEBUG(HCL_FAILOVER, "{}: Before CV wait", __func__);                                                       \
-        g_faultsStopAllApiCv.wait(lk, [] { return !g_faultsStopAllApi; }); /* Block if g_faultsStopAllApi is true */   \
-        LOG_DEBUG(HCL_FAILOVER, "{}: After CV wait, g_faultsCheckStopApi={}", __func__, g_faultsCheckStopApi.load());  \
-    } /* of g_faultsCheckStopApi check */                                                                              \
     try                                                                                                                \
     {
 #define HCCL_API_EXIT(status)                                                                                          \

@@ -2,11 +2,13 @@
 
 #include "libfabric/hl_ofi.h"            // for ofi_t
 #include <dlfcn.h>                       // for dlclose, dlopen, dlsym, RTLD...
+#include <optional>                      // for std::optional
 #include "hcl_log_manager.h"             // for LOG_ERR, LOG_DEBUG, LOG_INFO
 #include "hcl_utils.h"                   // for VERIFY
 #include "hccl_ofi_wrapper_interface.h"  // for ofi_plugin_interface
+#include "so.h"                          // for SharedObject
 
-static libHandle handle_;
+static std::optional<SharedObject> handle_;
 
 OfiPlugin::OfiPlugin(int fd, int hw_module_id)
 {
@@ -18,97 +20,43 @@ OfiPlugin::OfiPlugin(int fd, int hw_module_id)
     VERIFY(p_ofi->nOFIDevices() != 0, "No available OFI devices");
 }
 
-OfiPlugin::~OfiPlugin()
+bool OfiPlugin::initializeOFIPluginIfNeeded()
 {
-    destroy_ofi_plugin();
-}
-
-bool OfiPlugin::initialize_ofi_plugin()
-{
-    double version = 0;
-
-    handle_ = dlopen("libhccl_ofi_wrapper.so", RTLD_LAZY);
-    if (handle_ == nullptr)
+    if (ofi_plugin != nullptr)
     {
-        LOG_ERR(HCL, "Error in dlopen for libhccl_ofi_wrapper.so: {}", dlerror());
+        return true;
+    }
+
+    LOG_INFO(HCL, "Initializing ofi_plugin.");
+    try
+    {
+        handle_.emplace("libhccl_ofi_wrapper.so", RTLD_LAZY);
+    }
+    catch (const hcl::HclException&)
+    {
+        LOG_WARN(HCL, "Error loading OFI wrapper.");
         return false;
     }
-
-    p_get_version = (double (*)())dlsym(handle_, "get_version");
-    if (p_get_version == nullptr)
+    p_get_version        = handle_->symbol<double (*)()>("get_version");
+    const double version = (*p_get_version)();
+    if (static_cast<int>(version) == 0)
     {
-        LOG_CRITICAL(HCL, "Error in dlsym for get_version. Please update OFI wrapper to use host scale-out.");
-        dlclose(handle_);
+        LOG_ERR(HCL, "Error in getting OFI wrapper version.");
         return false;
     }
-    else
+    if (version >= get_wrapper_required_version())
     {
-        version = (*p_get_version)();
-        if (static_cast<int>(version) == 0)
-        {
-            LOG_ERR(HCL, "Error in getting OFI wrapper version.");
-            dlclose(handle_);
-            return false;
-        }
-        else
-        {
-            if (version >= get_wrapper_required_version())
-            {
-                LOG_INFO_F(HCL, "OFI wrapper version is: {}", version);
-            }
-            else
-            {
-                LOG_CRITICAL(HCL,
-                             "OFI wrapper version is: {}, while required version is: {}. Please update OFI wrapper to "
-                             "enable host scale-out.",
-                             version,
-                             get_wrapper_required_version());
-                dlclose(handle_);
-                return false;
-            }
-        }
+        LOG_INFO_F(HCL, "OFI wrapper version is: {}", version);
     }
 
-    p_create = (ofi_plugin_interface_handle(*)())dlsym(handle_, "create_ofi_plugin_handle");
-    if (p_create == nullptr)
-    {
-        LOG_ERR(HCL, "Error in dlsym for create_ofi_plugin_handle");
-        dlclose(handle_);
-        return false;
-    }
+    p_create   = handle_->symbol<ofi_plugin_interface_handle (*)()>("create_ofi_plugin_handle");
     ofi_plugin = (*p_create)();
     if (ofi_plugin == nullptr)
     {
         LOG_ERR(HCL, "Error in creating ofi_wrapper pointer");
-        dlclose(handle_);
         return false;
     }
     return true;
-}
-
-void OfiPlugin::destroy_ofi_plugin()
-{
-    LOG_INFO(HCL, "Destroying ofi_plugin.");
-    dlclose(handle_);
-}
-
-bool OfiPlugin::initializeOFIPluginIfNeeded()
-{
-    if (ofi_plugin == nullptr)
-    {
-        LOG_INFO(HCL, "Initializing ofi_plugin.");
-        if (!initialize_ofi_plugin())
-        {
-            LOG_ERR(HCL, "Failed to initialize ofi_plugin.");
-            return false;
-        }
-    }
-    return true;
-}
-
-double OfiPlugin::get_wrapper_required_version()
-{
-    return m_wrapper_required_version;
 }
 
 ofi_plugin_interface_handle (*OfiPlugin::p_create)() = NULL;

@@ -231,7 +231,7 @@ template<class U>
 VoidOutcome GcfgItemImpl<T, R>::setValue(const U& value, bool fromObserver)
 {
     // Environment variable take precedence
-    if (m_setFrom == GcfgSource::env)
+    if (m_setFrom == GcfgSource::env && !hl_gcfg::getForceSetValueUpdate())
     {
         try
         {

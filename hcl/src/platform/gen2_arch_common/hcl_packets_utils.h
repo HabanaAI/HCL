@@ -5,6 +5,7 @@
 
 #include "platform/gen2_arch_common/types.h"  // for reduction_datatype_e
 #include "hccl_types.h"                       // for hcclDataType_t
+#include "types.h"                            // for nic_edma_datatypes_t
 
 // Used for our command distribution tool, if the macro is changed then we also need to change the script
 #define PRINT_PACKET_TRACE(scalStream, msg, ...)                                                                       \
@@ -51,3 +52,5 @@ uint8_t getEdmaStreamCtxtId(uint8_t apiId, unsigned streamIndex);
 uint8_t getEdmaDebugCtxtId(uint8_t apiId, uint8_t isScaleOut, uint8_t slice);
 
 uint8_t getPdmaStreamCtxtId(bool isDownload, unsigned streamIndex);
+
+nic_edma_datatypes_t get_nic_edma_dtype(hcclDataType_t dataType, bool is16BitMemcpy, bool useCasting, bool isBFloat);

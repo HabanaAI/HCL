@@ -15,9 +15,6 @@
 #include <unordered_set>
 #include <sys/socket.h>
 
-#include "synapse_api_types.h"  // for synDeviceId
-#include "common/pci_ids.h"
-#include "hlthunk.h"
 #include "hcl_api_types.h"
 #include "hcl_log_manager.h"
 #include "hcl_defs.h"
@@ -52,6 +49,12 @@ struct GaudiNicAddressArray
     GaudiNicAddress nics[MAX_RANK_INFO_NICS];
 };
 
+struct NicQPs
+{
+    uint32_t qp[MAX_QPS_PER_CONNECTION_G3][QPS_ARRAY_LENGTH];
+    int8_t   nic;
+};
+
 /**
  * @brief gaudi NIC QPs holds QP data for MAX_COMPACT_RANK_INFO_NICS active nics
  *
@@ -60,13 +63,22 @@ struct GaudiNicAddressArray
  */
 struct GaudiNicQPs
 {
-    struct NicQPs
-    {
-        uint32_t qp[MAX_QPS_SETS_PER_CONNECTION][QPS_ARRAY_LENGTH];
-        uint8_t  nic;
-    } qp[MAX_COMPACT_RANK_INFO_NICS];
-
+    NicQPs  qp[MAX_COMPACT_RANK_INFO_NICS];
     NicQPs& operator[](uint8_t nic);
+};
+
+/**
+ * @brief backup gaudi NIC QPs holds QP data of valid (collective) nic's QPs
+ * in case migration QPs are assigned on this nic
+ *
+ * to access by nic use GaudiNicQPs[]
+ * to access by index use GaudiNicQPs.qp[]
+ */
+struct BackupGaudiNicQPs
+{
+    BackupGaudiNicQPs();
+    NicQPs  qp[MAX_COMPACT_RANK_BACKUP_NICS];
+    NicQPs& operator[](int8_t nic);
 };
 
 /**
@@ -112,20 +124,19 @@ struct RemoteInfo
     HostNicConnectInfo hostNicConns;
     struct  // for migration
     {
-        uint64_t sendCounter = 0;
-        uint64_t recvCounter = 0;
-    } sendRecvCounters;
+        uint64_t send = 0;
+        uint64_t recv = 0;
+    } counters;
 };
 
 /**
  * @brief holds device common fields for local and remote rank
  *        (RankInfo and RemoteDeviceConnectionInfo)
  *
- * COMM, NIC addresses
+ * NIC addresses. ports
  */
 struct DeviceInfo
 {
-    HCL_Comm             m_comm = HCL_INVALID_COMM;
     GaudiNicAddressArray gaudiNicAddresses;
 };
 
@@ -190,7 +201,8 @@ enum HclConfigType
     HLS1H       = 6,
     HLS2        = 7,
     HLS3        = 8,
-    HL338       = 9
+    HL338       = 9,
+    HL288       = 10,
 };
 
 using HclRankAndCommSet = std::set<std::pair<HCL_Comm, HCL_Rank>>;
@@ -218,3 +230,30 @@ std::ostream& operator<<(std::ostream& os, const std::unordered_set<uint32_t>& u
 }  // namespace std
 HLLOG_DEFINE_OSTREAM_FORMATTER(std::vector<uint32_t>);
 HLLOG_DEFINE_OSTREAM_FORMATTER(std::unordered_set<uint32_t>);
+
+using uint128_t = __uint128_t;
+
+enum class NicLkdEventsEnum
+{
+    NIC_LKD_EVENTS_UP = 0,
+    NIC_LKD_EVENTS_DOWN,
+    NIC_LKD_EVENTS_SHUTDOWN
+};
+
+enum class eIbvNicPhysicalState
+//
+// Based on internal values in rdma-core/libibmad/iba_types.h
+// Possible values
+// #define IB_PORT_PHYS_STATE_NO_CHANGE 0
+// #define IB_PORT_PHYS_STATE_SLEEP 1
+// #define IB_PORT_PHYS_STATE_POLLING 2
+// #define IB_PORT_PHYS_STATE_DISABLED 3
+// #define IB_PORT_PHYS_STATE_PORTCONFTRAIN 4
+// #define IB_PORT_PHYS_STATE_LINKUP 5
+// #define IB_PORT_PHYS_STATE_LINKERRRECOVER 6
+// #define IB_PORT_PHYS_STATE_PHYTEST 7
+{
+    Undefined = 0,  // All other states
+    Shutdown  = 1,  // NIC shutdown
+    LinkUp    = 2   // Link is up
+};

@@ -1,9 +1,9 @@
 
 #pragma once
 
-#include "platform/gen2_arch_common/nics_events_hanlder_callback.h"  // for NicLkdEventsEnum
-#include "platform/gen2_arch_common/nics_events_handler_impl.h"      // for NicsEventHandler
-#include "platform/gaudi3/gaudi3_base_server_connectivity.h"         // for Gaudi3BaseServerConnectivity
+#include "hcl_types.h"                                           // for NicLkdEventsEnum
+#include "platform/gen2_arch_common/nics_events_handler_impl.h"  // for NicsEventHandler
+#include "platform/gaudi3/gaudi3_base_server_connectivity.h"     // for Gaudi3BaseServerConnectivity
 
 #include <cstdint>  // for uint*
 
@@ -16,7 +16,7 @@ public:
     virtual ~NicsEventsHandlerGaudi3() = default;
 
     void nicStatusChange(const uint16_t nic, const NicLkdEventsEnum status)
-        override;  // This function is normally called in context of different thread then user thread
+        override;  // This function is normally called in context of different thread than user thread
 
 protected:
     void scaleoutNicStatusChange(const uint16_t nic, const NicLkdEventsEnum status);

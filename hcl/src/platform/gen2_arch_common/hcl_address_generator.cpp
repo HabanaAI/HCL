@@ -8,8 +8,14 @@
 #include "hcl_api_types.h"
 #include "platform/gen2_arch_common/device_buffer_manager.h"
 #include "hcl_math_utils.h"
+#include "explicit_addr_container.h"
 
-HclAddressGenerator::HclAddressGenerator() {}
+HclAddressGenerator::HclAddressGenerator()
+: m_addrContainer([&](CommonState& commonState, e_devicePoolID poolIdx, unsigned bufferOffset) {
+      return generateIntermediateAddress(commonState, poolIdx, bufferOffset);
+  })
+{
+}
 
 uint64_t HclAddressGenerator::generateScaleUpRecvIndices(CommonState& commonState, uint32_t streamId)
 {
@@ -23,7 +29,7 @@ uint64_t HclAddressGenerator::generateScaleUpRecvAddress(CommonState&     common
                                                          HCL_CollectiveOp currentOp,
                                                          uint64_t         offset)
 {
-    if (m_explicitSuRecvAddr > 0) return m_explicitSuRecvAddr;
+    if (uint64_t explicitAddr = m_addrContainer.consumeScaleUpRecvAddress(commonState)) return explicitAddr;
 
     uint64_t currentBoxRecvAddress = commonState.getRecvAddress(sliceIter) + boxNumInfo.m_boxNum *
                                                                                  commonState.m_boxStrideCount *
@@ -79,7 +85,8 @@ uint64_t HclAddressGenerator::generateScaleUpSendAddress(CommonState&     common
                                                          HCL_CollectiveOp currentOp,
                                                          uint64_t         offset)
 {
-    if (m_explicitSuSendAddr > 0) return m_explicitSuSendAddr;
+    if (uint64_t explicitAddr = m_addrContainer.consumeScaleUpSendAddress(commonState)) return explicitAddr;
+
     uint64_t currentBoxSendAddress = commonState.getSendAddress(sliceIter) + boxNumInfo.m_boxNum *
                                                                                  commonState.m_boxStrideCount *
                                                                                  commonState.m_dataTypeSizeInBytes;
@@ -171,17 +178,6 @@ uint64_t HclAddressGenerator::generateScaleUpSendAddress(CommonState&     common
     return addr;
 }
 
-uint64_t HclAddressGenerator::getAndReset_explicitSoSendAddress(CommonState& commonState)
-{
-    uint64_t addr = 0;
-    if (m_explicitSoSendAddr > 0)
-    {
-        addr                 = m_explicitSoSendAddr;
-        m_explicitSoSendAddr = 0;
-    }
-    return addr;
-}
-
 uint64_t HclAddressGenerator::generateScaleOutSendAddress(CommonState&     commonState,
                                                           unsigned         sliceIter,
                                                           BoxNumInfo&      boxNumInfo,
@@ -189,7 +185,7 @@ uint64_t HclAddressGenerator::generateScaleOutSendAddress(CommonState&     commo
                                                           uint64_t         offset)
 {
     VERIFY(boxNumInfo.m_orientation == BoxNumInfo::boxOrientation::NEXT_BOX);
-    if (uint64_t explicit_addr = getAndReset_explicitSoSendAddress(commonState)) return explicit_addr;
+    if (uint64_t explicitAddr = m_addrContainer.consumeSoSendAddress(commonState)) return explicitAddr;
 
     uint64_t currentBoxSendAddress = commonState.getSendAddress(sliceIter) + boxNumInfo.m_boxNum *
                                                                                  commonState.m_boxStrideCount *
@@ -255,9 +251,6 @@ uint64_t HclAddressGenerator::generateScaleOutSendAddress(CommonState&     commo
             addr = commonState.getSendAddress(sliceIter);
             break;
         case eHCLNoCollective:
-            addr = currentBoxSendAddress + offset;
-            break;
-
         case eHCLReduce:
         case eHCLAllReduce:
         case eHCLSinglePeerBroadcast:
@@ -269,44 +262,34 @@ uint64_t HclAddressGenerator::generateScaleOutSendAddress(CommonState&     commo
     return addr;
 }
 
-uint64_t HclAddressGenerator::getAndReset_explicitSoRecvAddress(CommonState& commonState)
-{
-    uint64_t addr = 0;
-    if (m_explicitSoRecvAddr > 0)
-    {
-        addr                 = m_explicitSoRecvAddr;
-        m_explicitSoRecvAddr = 0;
-    }
-    return addr;
-}
-
-uint64_t HclAddressGenerator::generateScaleOutRecvAddress(CommonState&     commonState,
+uint64_t HclAddressGenerator::generateScaleOutRecvAddress(SliceState&      sliceState,
                                                           unsigned         sliceIter,
                                                           BoxNumInfo&      boxNumInfo,
                                                           HCL_CollectiveOp currentOp,
                                                           uint64_t         offset)
 {
-    if (uint64_t explicit_address = getAndReset_explicitSoRecvAddress(commonState)) return explicit_address;
+    if (uint64_t explicit_address = m_addrContainer.consumeSoRecvAddress(sliceState)) return explicit_address;
 
-    uint64_t currentBoxRecvAddress = commonState.getRecvAddress(sliceIter) + boxNumInfo.m_boxNum *
-                                                                                 commonState.m_boxStrideCount *
-                                                                                 commonState.m_dataTypeSizeInBytes;
+    uint64_t currentBoxRecvAddress = sliceState.getRecvAddress(sliceIter) + boxNumInfo.m_boxNum *
+                                                                                sliceState.m_boxStrideCount *
+                                                                                sliceState.m_dataTypeSizeInBytes;
     uint64_t addr = 0;
 
     switch (currentOp)
     {
         case eHCLReduceScatter:
-            if (commonState.m_isGdr)
+            if (sliceState.m_isGdr && !sliceState.isRSContReduction())
             {
-                addr = generateIntermediateAddress(commonState, SCALEOUT_GDR_POOL, 0);
+                addr = generateIntermediateAddress(sliceState, SCALEOUT_GDR_POOL, 0);
             }
             else
             {
                 addr = generateIntermediateAddress(
-                    commonState,
-                    SCALEOUT_POOL,
-                    mod(commonState.calcBoxIterRecv(boxNumInfo), commonState.m_scaleoutBuffersAmount));
+                    sliceState,
+                    sliceState.calcScaleoutBufferPool(),
+                    mod(sliceState.calcBoxIterRecv(boxNumInfo), sliceState.m_scaleoutBuffersAmount));
             }
+            sliceState.m_execution.m_usedPool = SCALEOUT_POOL;
             break;
         case eHCLAllGather:
             addr = currentBoxRecvAddress + offset;
@@ -315,29 +298,27 @@ uint64_t HclAddressGenerator::generateScaleOutRecvAddress(CommonState&     commo
             addr = currentBoxRecvAddress;
             break;
         case eHCLGather:
-            if (commonState.isRoot())
+            if (sliceState.isRoot())
             {
                 addr = currentBoxRecvAddress + offset;
             }
             else
             {
-                addr = commonState.getIntermediateBuffer(REDUCE_POOL);
+                addr                              = sliceState.getIntermediateBuffer(REDUCE_POOL);
+                sliceState.m_execution.m_usedPool = REDUCE_POOL;
             }
             break;
         case eHCLScatter:
-            addr = commonState.getRecvAddress(sliceIter);
-            if (commonState.m_collectiveOp != eHCLSinglePeerBroadcast)
+            addr = sliceState.getRecvAddress(sliceIter);
+            if (sliceState.m_collectiveOp != eHCLSinglePeerBroadcast)
             {
                 addr += offset;
             }
             break;
         case eHCLSimpleBroadcast:
-            addr = commonState.getRecvAddress(sliceIter);
+            addr = sliceState.getRecvAddress(sliceIter);
             break;
         case eHCLNoCollective:
-            addr = currentBoxRecvAddress + offset;
-            break;
-
         case eHCLReduce:
         case eHCLAllReduce:
         case eHCLSinglePeerBroadcast:
@@ -349,25 +330,40 @@ uint64_t HclAddressGenerator::generateScaleOutRecvAddress(CommonState&     commo
     return addr;
 }
 
+uint64_t HclAddressGenerator::generateScaleOutSendAddress(NonCollectiveState& nonCollectiveState,
+                                                          unsigned            sliceIter,
+                                                          BoxNumInfo&         boxNumInfo,
+                                                          uint64_t            offset)
+{
+    uint64_t currentBoxSendAddress =
+        nonCollectiveState.getSendAddress(sliceIter) +
+        boxNumInfo.m_boxNum * nonCollectiveState.m_boxStrideCount * nonCollectiveState.m_dataTypeSizeInBytes;
+
+    return currentBoxSendAddress + offset;
+}
+
+uint64_t HclAddressGenerator::generateScaleOutRecvAddress(NonCollectiveState& nonCollectiveState,
+                                                          unsigned            sliceIter,
+                                                          BoxNumInfo&         boxNumInfo,
+                                                          uint64_t            offset)
+{
+    uint64_t currentBoxRecvAddress =
+        nonCollectiveState.getRecvAddress(sliceIter) +
+        boxNumInfo.m_boxNum * nonCollectiveState.m_boxStrideCount * nonCollectiveState.m_dataTypeSizeInBytes;
+
+    return currentBoxRecvAddress + offset;
+}
+
 uint64_t HclAddressGenerator::generateMemcpySrcAddress(CommonState& commonState,
                                                        unsigned     sliceIter,
                                                        BoxNumInfo&  boxNumInfo,
-                                                       bool         reductionSignalToCg,
                                                        uint64_t     offset,
-                                                       bool         isReduction,
-                                                       bool         useSibo,
                                                        bool         isForScaleOut,
-                                                       bool         isReductionStream,
-                                                       bool         isGDRMemcpy)
+                                                       bool         isGDRMemcpy,
+                                                       bool         isForContReduction)
 {
-    if (isForScaleOut)
-    {
-        if (m_explicitSoMemcpySrcAddr > 0) return m_explicitSoMemcpySrcAddr;
-    }
-    else
-    {
-        if (m_explicitSuMemcpySrcAddr > 0) return m_explicitSuMemcpySrcAddr;
-    }
+    if (uint64_t explicitAddr = m_addrContainer.consumeMemcpySrcAddr(commonState, isForScaleOut, isGDRMemcpy))
+        return explicitAddr;
 
     if (isGDRMemcpy)
     {
@@ -385,7 +381,21 @@ uint64_t HclAddressGenerator::generateMemcpySrcAddress(CommonState& commonState,
         case eHCLReduceScatter:
             if (isForScaleOut)
             {
-                addr = commonState.getIntermediateBuffer(SCALEOUT_POOL);
+                if (commonState.isRSContReduction())
+                {
+                    if (isForContReduction)
+                    {
+                        addr = commonState.getIntermediateBuffer(commonState.calcScaleoutBufferPool());
+                    }
+                    else
+                    {
+                        addr = commonState.getIntermediateBuffer(SCALEOUT_ACC_POOL);
+                    }
+                }
+                else
+                {
+                    addr = commonState.getIntermediateBuffer(SCALEOUT_POOL);
+                }
             }
             else
             {
@@ -422,35 +432,17 @@ uint64_t HclAddressGenerator::generateMemcpySrcAddress(CommonState& commonState,
 uint64_t HclAddressGenerator::generateMemcpyDstAddress(CommonState& commonState,
                                                        unsigned     sliceIter,
                                                        BoxNumInfo&  boxNumInfo,
-                                                       bool         reductionSignalToCg,
                                                        uint64_t     offset,
-                                                       bool         reductionIsFirstBoxMemcpy,
-                                                       bool         isReduction,
-                                                       bool         useSibo,
                                                        bool         isForScaleout,
-                                                       bool         isReductionStream,
-                                                       bool         isGDRMemcpy)
+                                                       bool         isGDRMemcpy,
+                                                       bool         isForContReduction)
 {
-    if (!isForScaleout)
-    {
-        if (m_explicitSuMemcpyDstAddr > 0) return m_explicitSuMemcpyDstAddr;
-    }
-    else
-    {
-        if (m_explicitSoMemcpyDstAddr > 0) return m_explicitSoMemcpyDstAddr;
-    }
+    if (uint64_t explicitAddr = m_addrContainer.consumeMemcpyDstAddr(commonState, isForScaleout, isGDRMemcpy))
+        return explicitAddr;
 
     if (isGDRMemcpy)
     {
-        unsigned bufferOffset = 0;
-        if (isGDRMemcpy)
-        {
-            bufferOffset = mod(commonState.calcBoxIterRecv(boxNumInfo), commonState.m_scaleoutBuffersAmount);
-        }
-        else
-        {
-            bufferOffset = useSibo ? 0 : commonState.m_dynamicComm.getRankInScaleupGroup();
-        }
+        unsigned bufferOffset = mod(commonState.calcBoxIterRecv(boxNumInfo), commonState.m_scaleoutBuffersAmount);
         return generateIntermediateAddress(commonState, isForScaleout, false, bufferOffset);
     }
 
@@ -496,7 +488,16 @@ uint64_t HclAddressGenerator::generateMemcpyDstAddress(CommonState& commonState,
             }
             else  // scaleout
             {
-                if (commonState.m_collectiveOp == eHCLReduce && !commonState.isRoot())
+                if (commonState.isRSContReduction() && isForContReduction)
+                {
+                    uint64_t intermediateBufferBaseAddress = commonState.getIntermediateBuffer(SCALEOUT_ACC_POOL);
+                    uint64_t sizeOfSlice =
+                        (commonState.calcScaleoutBufferPool() == SCALEOUT_POOL)
+                            ? 0
+                            : commonState.m_intermediateBufferManager.getSingleBufferSize(SCALEOUT_ACC_POOL);
+                    addr = intermediateBufferBaseAddress + sizeOfSlice;
+                }
+                else if (commonState.m_collectiveOp == eHCLReduce && !commonState.isRoot())
                 {
                     if (commonState.m_16BitReduction)
                     {

@@ -142,9 +142,53 @@ struct arc_fw_synapse_config_t {
 			 * This indicates whether runtime uses cme
 			 * or not.
 			 */
+			uint16_t scale_up_send_signals;
+			/**<
+			 * Num completion signals from scaleup send cmds
+			 */
+			uint16_t scale_up_recv_signals;
+			/**<
+			 * Num completion signals from scaleup recv cmds
+			 */
+			uint16_t scale_out_send_signals;
+			/**<
+			 * Num completion signals from scaleout send cmds
+			 */
+			uint16_t scale_out_recv_signals;
+			/**<
+			 * Num completion signals from scaleout recv cmds
+			 */
+			uint16_t nic_edma_signals;
+			/**<
+			 * Num completion signals from nic edma cmds
+			 */
+			uint16_t tpc_absent;
+			/**<
+			 * Debug indication whether TPC is present in compute program
+			 */
 		};
 		uint32_t synapse_params[ARC_FW_SYNAPSE_CONFIG_SIZE];
 	};
+};
+
+#define SO_SET_COUNT				16
+
+struct so_set_config_t {
+	uint32_t sob_start_id;
+	/**<
+	 * SOB start ID for Central SO set
+	 * Number of SOBs is NUM_SOS_PER_SO_SET while using
+	 * Gaudi2 specific Sync scheme, else it is NUM_SOS_PER_CENTRAL_SO_SET
+	 */
+	uint32_t mon_id;
+	/**<
+	 * Monitor ID to be used by this SO Set to detect the barrier
+	 * completion
+	 */
+	uint32_t mon_id_eof_ecb_list;
+	/**<
+	 * Monitor ID to be used by this SO Set to detect end of ECB list
+	 */
 };
 
 #define DCCM_QUEUE_COUNT	5
@@ -456,6 +500,15 @@ struct engine_config_t {
 	 * during the processing of Alloc Barrier command. One SOB per
 	 * Completion Group
 	 */
+	struct so_set_config_t so_set_config[SO_SET_COUNT];
+	/**<
+	 * SO Set configuration parameters for each SO Set
+	 */
+	uint32_t comp_sched_mon_resp_q_push_lbw_addr;
+	/**<
+	 * LBW Address of Compute Sched's Mon Resp Queue. Used by Ecb list completion
+	 * tracker Monitor
+	 */
 };
 
 #define COMP_SYNC_GROUP_CMAX_TARGET		0x4000
@@ -527,8 +580,6 @@ struct comp_sync_group_config_t {
 	 */
 };
 
-#define SO_SET_COUNT				16
-
 /*
  * Number of SOBs per SoSet based on Gaudi2 sync scheme
  */
@@ -557,19 +608,6 @@ struct comp_sync_group_config_t {
 #define SOB_COUNT_ROT_IN_SO_SET			16
 #define SOB_COUNT_DEBUG_IN_SO_SET		8
 #define SOB_COUNT_SEMAPHORE_SO_SET		8
-
-struct so_set_config_t {
-	uint32_t sob_start_id;
-	/**<
-	 * SOB start ID for Central SO set
-	 * Number of SOBs is NUM_SOS_PER_SO_SET while using
-	 * Gaudi2 specific Sync scheme, else it is NUM_SOS_PER_CENTRAL_SO_SET
-	 */
-	uint32_t mon_id;
-	/**<
-	 * Monitor ID to be used by this SO Set
-	 */
-};
 
 /**
  * \struct  mcid_set_config_t

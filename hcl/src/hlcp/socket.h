@@ -11,9 +11,10 @@ class socket_base_t;
 class socket_op_notify_t  // socket operations
 {
 public:
-    virtual void on_accept(socket_base_t& s, socketfd_t new_socket) _DEF_IMPL_;  // server only, new connected endpoint
-    virtual void on_disconnect(socket_base_t& s) _DEF_IMPL_;
-    virtual void on_error(socket_base_t& s) _DEF_IMPL_;
+    virtual void on_accept([[maybe_unused]] socket_base_t& s,
+                           [[maybe_unused]] socketfd_t new_socket) _DEF_IMPL_;  // server only, new connected endpoint
+    virtual void on_disconnect([[maybe_unused]] socket_base_t& s) _DEF_IMPL_;
+    virtual void on_error([[maybe_unused]] socket_base_t& s) _DEF_IMPL_;
 };
 
 class socket_base_t : public socket_op_notify_t
@@ -26,8 +27,8 @@ public:
 
     virtual ~socket_base_t() { close(); }
 
-    virtual bool send(void* data, size_t size) { return false; };
-    virtual bool recv(void* data, size_t size) { return false; };
+    virtual bool send([[maybe_unused]] void* data, [[maybe_unused]] size_t size) { return false; };
+    virtual bool recv([[maybe_unused]] void* data, [[maybe_unused]] size_t size) { return false; };
 
     bool close();
 
@@ -92,8 +93,10 @@ struct packet_t
 class socket_io_notify_t  // read / write notify
 {
 public:
-    virtual void on_send(const packet_t& p, socket_base_t& s) _DEF_IMPL_;  // send completed
-    virtual void on_recv(const packet_t& p, socket_base_t& s) _DEF_IMPL_;  // recv completed
+    virtual void on_send([[maybe_unused]] const packet_t& p,
+                         [[maybe_unused]] socket_base_t&  s) _DEF_IMPL_;  // send completed
+    virtual void on_recv([[maybe_unused]] const packet_t& p,
+                         [[maybe_unused]] socket_base_t&  s) _DEF_IMPL_;  // recv completed
 };
 
 class socket_io_t

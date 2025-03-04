@@ -6,10 +6,14 @@ hcclResult_t hccl_gaudi2_t::init_device(uint8_t apiId)
 {
     FOR_I(device_->getHal().getMaxStreams())
     {
-        collectives_.push_back(new HclCollectiveRoutinesGaudi2((HclDeviceGaudi2*)device_, i, new WqeTrackerGaudi2()));
+        collectives_.push_back(
+            new HclCollectiveRoutinesGaudi2((HclDeviceGaudi2*)device_, i, new WqeTrackerGaudi2(device_->getCgSize())));
     }
 
-    device_->getScalManager().initGlobalContext(device_, apiId);
+    if (g_ibv.has_ib_device())
+    {
+        device_->getScalManager().initGlobalContext(device_, apiId);
+    }
 
     LOG_HCL_DEBUG(HCL, "G2 device created");
 

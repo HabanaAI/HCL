@@ -164,40 +164,51 @@ void HclCollectiveRoutinesGaudi2::memsetIMBsIfNeeded(SliceState&      sendSliceS
     }
 }
 
-uint64_t RemainderCalculatorGaudi2::getBufferClearSize(HCL_CollectiveOp collective,
-                                                       uint64_t         originalSize,
-                                                       e_devicePoolID   bufferId,
-                                                       uint64_t         dataTypeSize,
-                                                       uint64_t         scaleOutSendCount,
-                                                       uint64_t         scaleOutRecvCount,
-                                                       bool             isRoot,
-                                                       bool             isBf16Reduction,
-                                                       BoxNumInfo&      sendBoxNumInfo,
-                                                       uint64_t         rootBox)
+void HclCollectiveRoutinesGaudi2::enqueueInternalCompletionSignals()
+{
+    HclCollectiveRoutinesGen2Arch::enqueueInternalCompletionSignals();
+
+    for (auto buffer_pool : m_memset_buffers)
+    {
+        if (!m_intermediateBufferManager.isPoolAllocated(buffer_pool)) continue;
+        m_memHandler->enqueueInternalCompletionMemsetSignals(m_signalsManager, buffer_pool);
+    }
+}
+
+uint64_t RemainderCalculatorGaudi2::getBufferClearSize([[maybe_unused]] HCL_CollectiveOp collective,
+                                                       uint64_t                          originalSize,
+                                                       [[maybe_unused]] e_devicePoolID   bufferId,
+                                                       [[maybe_unused]] uint64_t         dataTypeSize,
+                                                       [[maybe_unused]] uint64_t         scaleOutSendCount,
+                                                       [[maybe_unused]] uint64_t         scaleOutRecvCount,
+                                                       [[maybe_unused]] bool             isRoot,
+                                                       [[maybe_unused]] bool             isBf16Reduction,
+                                                       BoxNumInfo&                       sendBoxNumInfo,
+                                                       [[maybe_unused]] uint64_t         rootBox)
 {
     VERIFY(sendBoxNumInfo.m_orientation == BoxNumInfo::boxOrientation::NEXT_BOX);
     return originalSize;
 }
 
-uint64_t RemainderCalculatorGaudi2::getBoxCount(uint64_t nonRemainderBoxCount,
-                                                uint64_t numBoxes,
-                                                uint64_t ScaleupGroupSize,
-                                                uint64_t boxIndex,
-                                                uint64_t scaleUpCount,
-                                                uint64_t remainderCount)
+uint64_t RemainderCalculatorGaudi2::getBoxCount([[maybe_unused]] uint64_t nonRemainderBoxCount,
+                                                [[maybe_unused]] uint64_t numBoxes,
+                                                uint64_t                  ScaleupGroupSize,
+                                                uint64_t                  boxIndex,
+                                                uint64_t                  scaleUpCount,
+                                                uint64_t                  remainderCount)
 {
     return std::min((int)(scaleUpCount * ScaleupGroupSize),
                     (int)std::max(0, (int)(remainderCount - (boxIndex * ScaleupGroupSize * scaleUpCount))));
 }
 
-uint64_t RemainderCalculatorGaudi2::getScaleOutCount(uint64_t nonRemainderScaleOutCount,
-                                                     uint64_t numBoxes,
-                                                     uint64_t boxCount,
-                                                     uint64_t boxIndex,
-                                                     uint64_t myRankInScaleupGroup,
-                                                     uint64_t scaleUpCount,
-                                                     uint64_t remainderCount,
-                                                     bool     lastRankInScaleupGroup)
+uint64_t RemainderCalculatorGaudi2::getScaleOutCount([[maybe_unused]] uint64_t nonRemainderScaleOutCount,
+                                                     [[maybe_unused]] uint64_t numBoxes,
+                                                     uint64_t                  boxCount,
+                                                     [[maybe_unused]] uint64_t boxIndex,
+                                                     uint64_t                  myRankInScaleupGroup,
+                                                     uint64_t                  scaleUpCount,
+                                                     [[maybe_unused]] uint64_t remainderCount,
+                                                     [[maybe_unused]] bool     lastRankInScaleupGroup)
 {
     return std::min((int)scaleUpCount, std::max(0, (int)(boxCount - (myRankInScaleupGroup * scaleUpCount))));
 }
@@ -207,25 +218,27 @@ uint64_t RemainderCalculatorGaudi2::getDiv(uint64_t a, uint64_t b)
     return div_round_up(a, b);
 }
 
-uint64_t RemainderCalculatorGaudi2::getRemainderCount(uint64_t totalCount, uint64_t scaleUpCount, uint64_t commSize)
+uint64_t RemainderCalculatorGaudi2::getRemainderCount(uint64_t                  totalCount,
+                                                      [[maybe_unused]] uint64_t scaleUpCount,
+                                                      [[maybe_unused]] uint64_t commSize)
 {
     return totalCount;
 }
 
-bool RemainderCalculatorGaudi2::isValidSlicing(uint32_t originalBufferCount,
-                                               uint32_t sliceCount,
-                                               uint64_t collectiveCount,
-                                               uint32_t numSlices,
-                                               uint32_t numRanks,
-                                               uint32_t minBufferCount)
+bool RemainderCalculatorGaudi2::isValidSlicing([[maybe_unused]] uint32_t originalBufferCount,
+                                               uint32_t                  sliceCount,
+                                               [[maybe_unused]] uint64_t collectiveCount,
+                                               uint32_t                  numSlices,
+                                               [[maybe_unused]] uint32_t numRanks,
+                                               uint32_t                  minBufferCount)
 {
     return sliceCount >= minBufferCount || numSlices == 1;
 }
 
-bool RemainderCalculatorGaudi2::isSlicing(uint64_t totalCount,
-                                          uint64_t totalCountPerRank,
-                                          uint32_t bufferCount,
-                                          uint32_t numRanks)
+bool RemainderCalculatorGaudi2::isSlicing([[maybe_unused]] uint64_t totalCount,
+                                          uint64_t                  totalCountPerRank,
+                                          uint32_t                  bufferCount,
+                                          [[maybe_unused]] uint32_t numRanks)
 {
     return totalCountPerRank > bufferCount;
 }

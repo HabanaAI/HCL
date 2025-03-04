@@ -40,39 +40,44 @@ uint64_t HclGraphSyncGaudi2::getSyncManagerBase(unsigned smIdx)
     }
 }
 
-uint32_t HclGraphSyncGaudi2::getAddrMonPayAddrl(uint64_t smBase, unsigned Idx)
+uint32_t HclGraphSyncGaudi2::getAddrMonPayAddrl(uint64_t smBase, unsigned idx)
 {
-    return smBase + varoffsetof(gaudi2::block_sob_objs, mon_pay_addrl[Idx]);
+    return smBase + varoffsetof(gaudi2::block_sob_objs, mon_pay_addrl[idx]);
 }
 
-uint32_t HclGraphSyncGaudi2::getAddrMonPayAddrh(uint64_t smBase, unsigned Idx)
+uint32_t HclGraphSyncGaudi2::getAddrMonPayAddrh(uint64_t smBase, unsigned idx)
 {
-    return smBase + varoffsetof(gaudi2::block_sob_objs, mon_pay_addrh[Idx]);
+    return smBase + varoffsetof(gaudi2::block_sob_objs, mon_pay_addrh[idx]);
 }
 
-uint32_t HclGraphSyncGaudi2::getAddrMonPayData(uint64_t smBase, unsigned Idx)
+uint32_t HclGraphSyncGaudi2::getAddrMonPayData(uint64_t smBase, unsigned idx)
 {
-    return smBase + varoffsetof(gaudi2::block_sob_objs, mon_pay_data[Idx]);
+    return smBase + varoffsetof(gaudi2::block_sob_objs, mon_pay_data[idx]);
 }
 
-uint32_t HclGraphSyncGaudi2::getAddrMonConfig(uint64_t smBase, unsigned Idx)
+uint32_t HclGraphSyncGaudi2::getAddrMonConfig(uint64_t smBase, unsigned idx)
 {
-    return smBase + varoffsetof(gaudi2::block_sob_objs, mon_config[Idx]);
+    return smBase + varoffsetof(gaudi2::block_sob_objs, mon_config[idx]);
 }
 
-uint32_t HclGraphSyncGaudi2::getAddrSobObj(uint64_t smBase, unsigned Idx)
+uint32_t HclGraphSyncGaudi2::getAddrSobObj(uint64_t smBase, unsigned idx)
 {
-    return smBase + varoffsetof(gaudi2::block_sob_objs, sob_obj[Idx]);
+    return smBase + varoffsetof(gaudi2::block_sob_objs, sob_obj[idx]);
 }
 
-uint32_t HclGraphSyncGaudi2::getRegSobObj(uint64_t smBase, unsigned Idx)
+uint64_t HclGraphSyncGaudi2::getFullRegSobObj(uint64_t smBase, unsigned idx)
 {
-    return smBase + sizeof(gaudi2::sob_objs::reg_sob_obj) * Idx;
+    return smBase + sizeof(gaudi2::sob_objs::reg_sob_obj) * idx;
 }
 
-uint32_t HclGraphSyncGaudi2::getOffsetMonArm(unsigned Idx)
+uint32_t HclGraphSyncGaudi2::getRegSobObj(uint64_t smBase, unsigned idx)
 {
-    return varoffsetof(gaudi2::block_sob_objs, mon_arm[Idx]);
+    return smBase + sizeof(gaudi2::sob_objs::reg_sob_obj) * idx;
+}
+
+uint32_t HclGraphSyncGaudi2::getOffsetMonArm(unsigned idx)
+{
+    return varoffsetof(gaudi2::block_sob_objs, mon_arm[idx]);
 }
 
 uint32_t HclGraphSyncGaudi2::createMonConfig(bool isLong, unsigned soQuarter)

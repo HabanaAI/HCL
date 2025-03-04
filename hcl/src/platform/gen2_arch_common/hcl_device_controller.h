@@ -5,7 +5,7 @@
 
 #include "infra/scal/gen2_arch_common/scal_manager.h"  // for Gen2Arc...
 #include "platform/gen2_arch_common/hcl_graph_sync.h"  // for HclGraphSyncGen2Arch
-#include "platform/gen2_arch_common/types.h"           // for fence_info
+#include "platform/gen2_arch_common/types.h"           // for FenceInfo
 #include "device_buffer_manager.h"
 #include "llvm/small_vector.h"  // for SmallVector
 
@@ -50,6 +50,7 @@ struct ArchStreamSyncParams
     SchedState     m_schedulers[SCHED_NR];
     CreditManager* m_regularGPSOManager  = nullptr;
     CreditManager* m_longtermGPSOManager = nullptr;
+    CreditManager* m_hfcMonitorManager   = nullptr;
     std::mutex     m_streamLock;
 
     std::function<void(void)> m_signalFinalize = nullptr;
@@ -85,6 +86,14 @@ public:
 
     void setupMonitors(int archStreamId);
     void initDeviceForCollectiveRoutine(int archStreamId, hcl::syncInfo* longSo, hcl::syncInfo* longSoNullSubmit);
+    /**
+     * @brief Create credit manager for host fence counter monitors and perform an initial setup of the whole monitor
+     * pool.
+     *
+     * @param archStreamId user stream
+     * @param syncParams stream sync params
+     */
+    void setupHFCMonitors(int archStreamId, ArchStreamSyncParams& syncParams);
     void submitWork(int archStreamId, bool submitToHw = true);
 
     /**
@@ -108,28 +117,31 @@ public:
     void advanceProg(int archStreamId, bool nopOp);
     void addNop(int archStreamId);
 
-    /**
-     * @brief In most cases scalStream=arbitrator, and we use it to free streamsToInc when we have enough credits
-     * usually this method is used with waitForBarrierArm which blocks the stream
-     * this function does 3 things on the scalStream
-     * 1. if an external wait is needed it arms a monitor and decrements the fence on the arb stream.
-     * 2. wait for creditsNr to be available on the completion group, and acquire them.
-     * 3. increments the fences on all the streams in streamsToInc after receiving the credits.
-     * 4. performs the LBWs in lbwBurstData after receiving the credits.
-     **/
-    void addBarrierArm(hcl::ScalStream&                                               scalStream,
-                       bool                                                           external,
-                       unsigned                                                       creditsNr,
-                       const llvm_vecsmall::SmallVector<unsigned, MAX_STREAM_TO_INC>& streamsToInc,
-                       bool                                                           shouldAddWait = true,
-                       LBWBurstData_t* lbwBurstData = nullptr);  // external so address and cmax - completionSignals
+    inline void setOpExecutionConditions(hcl::ScalStream&                                               scalStream,
+                                         unsigned                                                       creditsNr,
+                                         const llvm_vecsmall::SmallVector<unsigned, MAX_STREAM_TO_INC>& streamsToInc,
+                                         bool            shouldAddWait = true,
+                                         LBWBurstData_t* lbwBurstData  = nullptr)
+    {
+        setExecutionConditions(scalStream, false, creditsNr, streamsToInc, shouldAddWait, lbwBurstData);
+    }
+
+    inline void setGcExecutionConditions(hcl::ScalStream&                                               scalStream,
+                                         unsigned                                                       creditsNr,
+                                         const llvm_vecsmall::SmallVector<unsigned, MAX_STREAM_TO_INC>& streamsToInc,
+                                         bool            shouldAddWait = true,
+                                         LBWBurstData_t* lbwBurstData  = nullptr)
+    {
+        setExecutionConditions(scalStream, true, creditsNr, streamsToInc, shouldAddWait, lbwBurstData);
+    }
+
     /**
      * @brief Each stream has two fences
      * the scheduler will mask the stream if one of its fence counters < 0
-     * This function decrements the fence counter and by doing so, blocks the stream until the barrier arm will
-     * increment the fence counter and release it.
+     * This function decrements the fence counter and by doing so, blocks the stream.
+     * The stream that set the conditions will increment the fence counter and release it once the condition are met.
      **/
-    void waitForBarrierArm(hcl::ScalStream& scalStream);
+    void waitForExecutionConditions(hcl::ScalStream& scalStream);
 
     unsigned int handleExtraCredits(int archStreamId, unsigned extraCreditsNeeded);
 
@@ -225,6 +237,22 @@ protected:
      * 2. Blocks the microArch stream by decrementing its fence counter.
      **/
     void addStreamWaitOnLongSo(hcl::ScalStream& scalStream, unsigned uarchStreamId);
+
+    /**
+     * @brief In most cases scalStream=arbitrator, and we use it to free streamsToInc when we have enough credits
+     * usually this method is used with waitForExecutionConditions which blocks the stream.
+     * this function does 3 things on the scalStream
+     * 1. if an external wait is needed it arms a monitor and decrements the fence on the arb stream.
+     * 2. wait for creditsNr to be available on the completion group, and acquires them.
+     * 3. increments the fences on all the streams in streamsToInc after receiving the credits.
+     * 4. performs the LBWs in lbwBurstData after receiving the credits.
+     **/
+    void setExecutionConditions(hcl::ScalStream&                                               scalStream,
+                                bool                                                           external,
+                                unsigned                                                       creditsNr,
+                                const llvm_vecsmall::SmallVector<unsigned, MAX_STREAM_TO_INC>& streamsToInc,
+                                bool                                                           shouldAddWait = true,
+                                LBWBurstData_t*                                                lbwBurstData  = nullptr);
 };
 
 class ScopedNullSubmit

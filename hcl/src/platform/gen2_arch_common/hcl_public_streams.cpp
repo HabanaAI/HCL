@@ -51,7 +51,7 @@ NotImplementedApiException::NotImplementedApiException(const std::string& apiNam
 {
 }
 
-HclPublicStreams::HclPublicStreams(scal_handle_t scal) {}
+HclPublicStreams::HclPublicStreams([[maybe_unused]] scal_handle_t scal) {}
 
 HclPublicStreams::~HclPublicStreams() {}
 
@@ -145,7 +145,9 @@ bool HclPublicStreams::DFA(DfaStatus& dfaStatus, void (*logFunc)(int, const char
     return DFA(dfaStatus, logFunc, DfaLogPhase::Main);
 }
 
-bool HclPublicStreams::DFA(DfaStatus& dfaStatus, void (*dfaLogFunc)(int, const char*), DfaLogPhase options)
+bool HclPublicStreams::DFA(DfaStatus& dfaStatus,
+                           [[maybe_unused]] void (*dfaLogFunc)(int, const char*),
+                           DfaLogPhase options)
 {
     DfaLoggersV3 dfaLoggers = getDfaLoggersV3();
 
@@ -181,7 +183,9 @@ bool HclPublicStreams::DFA(DfaStatus& dfaStatus, void (*dfaLogFunc)(int, const c
     }
 }
 
-bool HclPublicStreams::logDfaMain(DfaStatus& dfaStatus, void (*dfaLogFunc)(int, const char*), DfaLoggersV3& dfaLoggers)
+bool HclPublicStreams::logDfaMain(DfaStatus& dfaStatus,
+                                  [[maybe_unused]] void (*dfaLogFunc)(int, const char*),
+                                  DfaLoggersV3& dfaLoggers)
 {
     try
     {
@@ -469,11 +473,11 @@ void HclPublicStreams::printStreamQueuesDFALog(unsigned              archStream,
     printQueueDFALog(archStream, uarchStream, wait_outer_queue, logger, stream_name);
 }
 
-void HclPublicStreams::printQueueDFALog(unsigned              archStream,
-                                        size_t                uarchStream,
-                                        void*                 queue,
-                                        hl_logger::LoggerSPtr logger,
-                                        const std::string     stream_name)
+void HclPublicStreams::printQueueDFALog([[maybe_unused]] unsigned          archStream,
+                                        [[maybe_unused]] size_t            uarchStream,
+                                        void*                              queue,
+                                        hl_logger::LoggerSPtr              logger,
+                                        [[maybe_unused]] const std::string stream_name)
 {
     const unsigned   margin          = 8;
     spHostStreamFifo queue_obj       = *reinterpret_cast<spHostStreamFifo*>(queue);
@@ -668,7 +672,7 @@ void HclPublicStreams::dfaLogCommInfo(IHclDevice* iDev, DfaLoggersV3& dfaLoggers
                   "================================================================");
     HLLOG_UNTYPED(logger, HLLOG_LEVEL_INFO, "My moduleId {}", iDev->getDeviceConfig().getHwModuleId());
 
-    for (unsigned comm = 0; comm < DEFAULT_COMMUNICATORS_SIZE; comm++)
+    for (unsigned comm = 0; comm < iDev->getMaxCommNum(); comm++)
     {
         if (!iDev->isCommExist(comm))
         {
@@ -685,6 +689,8 @@ void HclPublicStreams::dfaLogCommInfo(IHclDevice* iDev, DfaLoggersV3& dfaLoggers
         HLLOG_UNTYPED(logger,
                       HLLOG_LEVEL_INFO,
                       "------------------------------------------------------------------------------");
+
+        hclDynamicCommunicator.m_dfaData.addDfaLog(logger, hclDynamicCommunicator.getApiCounters());
 
         for (uint8_t nic = 0; nic < iDev->getHal().getMaxNics(); nic++)
         {
@@ -710,7 +716,7 @@ void HclPublicStreams::dfaLogCommInfo(IHclDevice* iDev, DfaLoggersV3& dfaLoggers
                             {
                                 for (uint32_t j = 0; j < QPS_ARRAY_LENGTH; j++)
                                 {
-                                    GaudiNicQPs::NicQPs& nicQPs = rankInfo.remoteInfo[rank].gaudiNicQPs[activeNic];
+                                    NicQPs& nicQPs = rankInfo.remoteInfo[rank].gaudiNicQPs[activeNic];
                                     if (nicQPs.qp[qpSet][j] != 0)
                                     {
                                         qpNums.push_back(nicQPs.qp[qpSet][j]);
@@ -731,6 +737,14 @@ void HclPublicStreams::dfaLogCommInfo(IHclDevice* iDev, DfaLoggersV3& dfaLoggers
 
                                         qpList += fmt::format(FMT_COMPILE("{:6}"), nicQPs.qp[qpSet][j]);
                                         validQps++;
+                                        if (hclDynamicCommunicator.isDfaNicExists(nic, rank))
+                                        {
+                                            NicQPs* dfaNicQPs =
+                                                &(hclDynamicCommunicator.m_backupRankQPs[rank][activeNic]);
+                                            qpNums.push_back(dfaNicQPs->qp[qpSet][j]);
+                                            qpList += fmt::format(FMT_COMPILE("{:6}"), dfaNicQPs->qp[qpSet][j]);
+                                            validQps++;
+                                        }
                                     }
                                 }
                             }

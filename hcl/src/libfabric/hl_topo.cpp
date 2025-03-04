@@ -247,9 +247,9 @@ static hwloc_obj_t getCommonAncestorObj(const hwloc_obj_t obj1, const hwloc_obj_
     VERIFY(false, "Failed to find common ancestor");
 }
 
-static HwObjMatrix createConnectionMatrix(const hwloc_topology_t          topology,
-                                          const std::vector<hwloc_obj_t>& oams,
-                                          const std::vector<hwloc_obj_t>& hnics)
+static HwObjMatrix createConnectionMatrix([[maybe_unused]] const hwloc_topology_t topology,
+                                          const std::vector<hwloc_obj_t>&         oams,
+                                          const std::vector<hwloc_obj_t>&         hnics)
 {
     HwObjMatrix connectionMatrix;
     for (const auto& oam : oams)

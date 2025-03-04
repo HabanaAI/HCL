@@ -74,34 +74,31 @@ public:
     int    init();
     int    nOFIDevices() const { return m_nOFIDevices; }
     size_t getOFIDevice() const { return m_ofi_device; }
-    int    listen(int ofiDevice, void* handle, listenComm_t** listenComm, unsigned hostConnIdx, uint16_t qpSetIndex);
+    int    listen(int ofiDevice, void* handle, listenComm_t* listenComm, unsigned hostConnIdx, uint16_t qpSetIndex);
     int    connect(int         ofiDevice,
                    const void* handle,
-                   ofiComm_t** ofiComm,
+                   ofiComm_t*  ofiComm,
                    void*       localAddr,
                    unsigned    hostConnIdx,
                    uint16_t    qpSetIndex);
-    int    accept(listenComm_t* listenComm, ofiComm_t** ofiComm);
-    int    isend(ofiComm_t*             ofiComm,
-                 void*                  data,
-                 size_t                 size,
-                 fid_mr*                mHandle,
-                 ofi_req_t**            request,
+    int    accept(listenComm_t* listenComm, ofiComm_t* ofiComm);
+    int    isend(ofiComm_t* const       ofiComm,
+                 void* const            data,
+                 const size_t           size,
+                 ofi_req_t** const      request,
                  OfiCompCallbackParams& compParams);
-    int    irecv(ofiComm_t*             ofiComm,
-                 void*                  data,
-                 size_t                 size,
-                 fid_mr*                mHandle,
-                 ofi_req_t**            request,
+    int    irecv(ofiComm_t* const       ofiComm,
+                 void* const            data,
+                 const size_t           size,
+                 ofi_req_t** const      request,
                  OfiCompCallbackParams& compParams);
     int    test(ofi_req_t* request, int* done, size_t* size);
-    int    close(ofiComm_t* ofiComm);
-    int    close(listenComm_t* listenComm);
+    int    close(const ofiComm_t& ofiComm);
+    int    close(const listenComm_t& listenComm);
     bool   is_initialized() const { return m_is_initialized; }
     ofi_component_t* getOfiComponent(int ofiDevice);
     void             releaseOfiComponent(int ofiDevice);
 
-    static bool     isHmemMR() { return s_hmemMR; }
     static bool     isMRLocal() { return s_mrLocal; }
     static bool     isGaudiDirect() { return s_gaudiDirect; }
     static bool     isVerbs() { return s_verbs; }
@@ -163,7 +160,6 @@ private:
 
 private:
     static bool s_mrLocal;
-    static bool s_hmemMR;
     static bool s_gaudiDirect;
     static bool s_verbs;
 
@@ -171,7 +167,7 @@ private:
     int                           m_hw_module_id;
     int                           m_nOFIDevices;
     size_t                        m_ofi_device;
-    pthread_mutex_t               m_ofi_lock;
+    FutexLock                     m_ofi_lock;
     bool                          m_is_initialized;
     std::vector<ofi_component_t*> m_components;
     struct fi_info*               m_fi_getinfo_result;

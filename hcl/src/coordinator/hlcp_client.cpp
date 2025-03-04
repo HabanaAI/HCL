@@ -17,11 +17,12 @@
 #include "hcl_types.h"                 // for RankInfo
 #include "coordinator/qp_migration.h"  // for IMigrationCallback
 
-hlcp_client_t::hlcp_client_t(const uint32_t              nranks,
+hlcp_client_t::hlcp_client_t(const HCL_Comm              comm,
+                             const uint32_t              nranks,
                              const HCL_Rank              rank,
                              const internal_unique_id_t* internalUniqueId,
                              IMigrationCallback&         migrationCb)
-: rank_(rank), ranks_(nranks)
+: comm_id_(comm), rank_(rank), ranks_(nranks)
 {
     if (GCFG_HCL_NULL_SUBMIT.value()) return;
 
@@ -42,19 +43,19 @@ hlcp_client_t::hlcp_client_t(const uint32_t              nranks,
 
 void hlcp_client_t::reset()
 {
-    non_peers_.clear();
     rank_addr_.clear();
-
-    non_peers_.resize(ranks_);
     rank_addr_.resize(ranks_);
+
+    non_peers_.clear();
+    non_peers_.resize(ranks_);
 }
 
-void hlcp_client_t::on_hlcp_comm_data(hlcp_cmd_comm_data_t& cmd)
+void hlcp_client_t::on_hlcp_comm_data([[maybe_unused]] hlcp_cmd_comm_data_t& cmd)
 {
     cmd_comm_data_.completed_ = true;
 }
 
-void hlcp_client_t::on_hlcp_qps_conf(hlcp_cmd_qps_conf_t& cmd)
+void hlcp_client_t::on_hlcp_qps_conf([[maybe_unused]] hlcp_cmd_qps_conf_t& cmd)
 {
     cmd_qps_conf_.completed_ = true;
 }
@@ -108,7 +109,7 @@ bool hlcp_client_t::exchangeRankInfo(int nranks, const RankInfoHeader& myRankInf
     cmd_comm_data_.payload_size_ = nranks * sizeof(RankInfoHeader);
     cmd_comm_data_.completed_    = false;
 
-    hlcp_cmd_rank_data_t cmd({myRankInfo, srv_.local_addr.port(), (uint32_t)nranks});
+    hlcp_cmd_rank_data_t cmd({myRankInfo, srv_.local_addr.port(), (uint32_t)nranks, comm_id_});
 
     HLCP_INF("rank: {} hlcp_port: {} comm_size:{}",
              cmd.param_.info.hcclRank,
@@ -168,6 +169,11 @@ bool hlcp_client_t::exchangeMigrationData(int                   nranks,
                                           uint32_t              rankInfoBufferSize,
                                           remote_devices_t&     remoteDevicesInfo)
 {
+    // we are in migration. so need to clean local non_peer_ data for
+    // SendRecvRemoteRanks to succeed after comm update
+    non_peers_.clear();
+    non_peers_.resize(ranks_);
+
     return xchg_qps_conf(nranks, myRankInfo, rankInfoBufferSize, remoteDevicesInfo);
 }
 
@@ -269,15 +275,6 @@ hcclResult_t hlcp_client_t::sendCollectiveLog(const HCL_CollectiveOp op,
     return hcclSuccess;
 }
 
-hcclResult_t hlcp_client_t::sendCollectiveLogErr()
-{
-    CollectiveLogMessage msg {rank_, true};
-
-    if (!send_log_msg(msg)) return hcclInternalError;
-
-    return hcclSuccess;
-}
-
 bool hlcp_client_t::sendNicStateChange(const NicState& nicState)
 {
     HLCP_LOG("nic: {}, state: {}", nicState.nic, nicState.state ? "up" : "down");
@@ -297,7 +294,7 @@ bool hlcp_client_t::send_to_srv(const hlcp_command_t& cmd)
 
     RET_ON_FALSE(hlcp.send_command(cmd, gcfg_.op_timeout));
 
-    HLCP_LOG("{}", cmd);
+    HLCP_LOG("[comm:{}] {}", comm_id_, cmd);
 
     hlcp.recv_ack();
 
@@ -317,6 +314,16 @@ bool hlcp_client_t::send_log_msg(CollectiveLogMessage& msg)
     hlcp_cmd_log_msg_t cmd(msg);
 
     return send_to_srv(cmd);
+}
+
+void hlcp_client_t::on_hlcp_log_msg(hlcp_cmd_log_msg_t& cmd)
+{
+    const CollectiveLogMessage& msg = cmd.param_;
+
+    if (msg.customError)
+    {
+        HLCP_ERR("Coordinator server reported an error: {}", msg.errorString);
+    }
 }
 
 void hlcp_client_t::on_command(hlcp_command_t& cmd, hlcp_t& connection)
@@ -347,6 +354,10 @@ void hlcp_client_t::on_command(hlcp_command_t& cmd, hlcp_t& connection)
             on_hlcp_nic_state(static_cast<hlcp_cmd_nic_state_t&>(cmd));
             break;
 
+        case HLCP_LOG_MSG:  // collective log
+            on_hlcp_log_msg(static_cast<hlcp_cmd_log_msg_t&>(cmd));
+            break;
+
         default:
             HLCP_ERR("Unknown command id: {}", cmd.id());
             break;
@@ -355,7 +366,7 @@ void hlcp_client_t::on_command(hlcp_command_t& cmd, hlcp_t& connection)
 
 void hlcp_client_t::on_message(const hlcp_message_t& msg, hlcp_t& connection)
 {
-    HLCP_LOG("{}", msg.id);
+    HLCP_LOG("{}", msg);
 
     switch (msg.id)
     {
@@ -376,22 +387,29 @@ void hlcp_client_t::on_message(const hlcp_message_t& msg, hlcp_t& connection)
 
         case HLCP_NON_PEERS:
         {
-            hlcp_cmd_non_peers_t& np_cmd = *(new hlcp_cmd_non_peers_t(msg));
+            auto& command = *(new hlcp_cmd_non_peers_t(msg));
 
-            HCL_Rank rank = np_cmd.param_;
+            HCL_Rank rank = command.param_;
 
             VERIFY(!non_peers_[rank].initialized, "non peer {} already initialized", rank);
 
-            np_cmd.payload_      = &non_peers_[rank].data;
-            np_cmd.payload_size_ = msg.payload_size;
+            command.payload_      = &non_peers_[rank].data;
+            command.payload_size_ = msg.payload_size;
 
-            connection.receive_payload(np_cmd);
+            connection.receive_payload(command);
             break;
         }
 
         case HLCP_NIC_STATE:
         {
             hlcp_cmd_nic_state_t command(msg);
+            on_command(command, connection);
+            break;
+        }
+
+        case HLCP_LOG_MSG:  // collective log
+        {
+            hlcp_cmd_log_msg_t command(msg);
             on_command(command, connection);
             break;
         }

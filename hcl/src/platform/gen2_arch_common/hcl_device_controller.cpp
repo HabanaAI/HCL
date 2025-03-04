@@ -24,6 +24,7 @@ HclDeviceControllerGen2Arch::~HclDeviceControllerGen2Arch()
     {
         if (m_streamSyncParams[i].m_regularGPSOManager != nullptr) delete m_streamSyncParams[i].m_regularGPSOManager;
         if (m_streamSyncParams[i].m_longtermGPSOManager != nullptr) delete m_streamSyncParams[i].m_longtermGPSOManager;
+        if (m_streamSyncParams[i].m_hfcMonitorManager != nullptr) delete m_streamSyncParams[i].m_hfcMonitorManager;
     }
 
     delete[] m_streamSyncParams;
@@ -93,6 +94,8 @@ void HclDeviceControllerGen2Arch::initDeviceForCollectiveRoutine(int            
 
     syncParams.m_regularGPSOManager = new CreditManager(m_graphSync[archStreamId]->getSoPoolSize(GpsoPool::GPSO_0));
 
+    setupHFCMonitors(archStreamId, syncParams);
+
     for (unsigned poolSizeIndex = 0; poolSizeIndex < intermediateBufferManager.getPoolAmount(); poolSizeIndex++)
     {
         m_scalManager->addStaticBufferAddrAndSize(intermediateBufferManager.getBufferBaseAddr(poolSizeIndex),
@@ -119,6 +122,23 @@ void HclDeviceControllerGen2Arch::initDeviceForCollectiveRoutine(int            
     setupMonitors(archStreamId);
 
     setupCompCfg(archStreamId);
+}
+
+void HclDeviceControllerGen2Arch::setupHFCMonitors(int archStreamId, ArchStreamSyncParams& syncParams)
+{
+    // doesn't really matter the scalStream, as we don't have a dedicated stream for init
+    hcl::ScalStream&      scalStream = getScalStream(archStreamId,
+                                                (unsigned)hcl::SchedulersIndex::sendScaleOut,
+                                                (unsigned)hcl::NetworkStreams::arbitrator);
+    HclGraphSyncGen2Arch& graphSync  = getGraphSync(archStreamId);
+    const int64_t         cgSize     = graphSync.getCgData(false).size;
+    syncParams.m_hfcMonitorManager   = new CreditManager(cgSize);
+    unsigned int        numMonitors  = syncParams.m_hfcMonitorManager->getPoolSize();
+    unsigned int        smIdx        = syncParams.m_smInfo.monitorSmIndex;
+    unsigned int        monitorBase  = syncParams.m_smInfo.hfcMonitorBaseIdx;
+    hcl::HostFenceInfo& fenceInfo    = getGen2ArchScalManager().getHostFenceInfo(archStreamId, 0).hostFenceInfo;
+    uint64_t fenceAddr = graphSync.getFullRegSobObj(graphSync.getSyncManagerBase(fenceInfo.smDcore), fenceInfo.smIndex);
+    graphSync.addSetupHFCMonitors(scalStream, monitorBase, numMonitors, graphSync.getSyncManagerBase(smIdx), fenceAddr);
 }
 
 void HclDeviceControllerGen2Arch::allocAllExternalBarrier(int archStreamId)
@@ -251,11 +271,11 @@ void HclDeviceControllerGen2Arch::addNop(int archStreamId)
     arbStream.setTargetValue(targetValue);
     garbageCollectorStream.setTargetValue(targetValue);
 
-    addBarrierArm(arbStream, false, requiredCredits, {0});
+    setOpExecutionConditions(arbStream, requiredCredits, {0});
 
     int additionalSignalInternal = m_graphSync[archStreamId]->isForceOrder(false) ? 1 : 0;
-    waitForBarrierArm(garbageCollectorStream);
-    addBarrierArm(garbageCollectorStream, true, 1, {});
+    waitForExecutionConditions(garbageCollectorStream);
+    setGcExecutionConditions(garbageCollectorStream, 1, {});
 
     m_commands->serializeLbwWriteCommand(
         garbageCollectorStream,
@@ -271,8 +291,8 @@ void HclDeviceControllerGen2Arch::addNop(int archStreamId)
     sendStream.setTargetValue(targetValue);
     arbitratorStreamSend.setTargetValue(targetValue);
 
-    addBarrierArm(arbitratorStreamSend, false, requiredCredits, {0});
-    waitForBarrierArm(sendStream);
+    setOpExecutionConditions(arbitratorStreamSend, requiredCredits, {0});
+    waitForExecutionConditions(sendStream);
     int additionalSignalExternal = m_graphSync[archStreamId]->isForceOrder(true) ? 1 : 0;
 
     m_commands->serializeLbwWriteCommand(
@@ -287,24 +307,24 @@ void HclDeviceControllerGen2Arch::addNop(int archStreamId)
     auto& arbitratorStreamRecv = m_scalManager->getScalStream(archStreamId, schedIdx, ARB_STREAM_IDX);
     recvStream.setTargetValue(targetValue);
     arbitratorStreamRecv.setTargetValue(targetValue);
-    addBarrierArm(arbitratorStreamRecv, false, requiredCredits, {0});
-    waitForBarrierArm(recvStream);
+    setOpExecutionConditions(arbitratorStreamRecv, requiredCredits, {0});
+    waitForExecutionConditions(recvStream);
 
     schedIdx                      = (unsigned)hcl::SchedulersIndex::sendScaleOut;
     auto& sendOutStream           = m_scalManager->getScalStream(archStreamId, schedIdx, 0);
     auto& arbitratorStreamSendOut = m_scalManager->getScalStream(archStreamId, schedIdx, ARB_STREAM_IDX);
     sendOutStream.setTargetValue(targetValue);
     arbitratorStreamSendOut.setTargetValue(targetValue);
-    addBarrierArm(arbitratorStreamSendOut, false, requiredCredits, {0});
-    waitForBarrierArm(sendOutStream);
+    setOpExecutionConditions(arbitratorStreamSendOut, requiredCredits, {0});
+    waitForExecutionConditions(sendOutStream);
 
     schedIdx                      = (unsigned)hcl::SchedulersIndex::recvScaleOut;
     auto& recvOutStream           = m_scalManager->getScalStream(archStreamId, schedIdx, 0);
     auto& arbitratorStreamRecvOut = m_scalManager->getScalStream(archStreamId, schedIdx, ARB_STREAM_IDX);
     recvOutStream.setTargetValue(targetValue);
     arbitratorStreamRecvOut.setTargetValue(targetValue);
-    addBarrierArm(arbitratorStreamRecvOut, false, requiredCredits, {0});
-    waitForBarrierArm(recvOutStream);
+    setOpExecutionConditions(arbitratorStreamRecvOut, requiredCredits, {0});
+    waitForExecutionConditions(recvOutStream);
 }
 
 void HclDeviceControllerGen2Arch::submitWork(int archStreamId, bool submitToHw)
@@ -365,7 +385,7 @@ void HclDeviceControllerGen2Arch::streamAddWait(hcl::ScalStream&            scal
         useEqual);
 }
 
-void HclDeviceControllerGen2Arch::addBarrierArm(
+void HclDeviceControllerGen2Arch::setExecutionConditions(
     hcl::ScalStream&                                               scalStream,
     bool                                                           external,
     unsigned                                                       creditsNr,
@@ -391,6 +411,11 @@ void HclDeviceControllerGen2Arch::addBarrierArm(
             fences.push_back(getFenceIdx(archStreamIdx, streamsToInc[i], FENCE_BARRIER_IDX));
         }
 
+        /* the AllocBarrierCommand waits for credits on the required CG.
+        in order to deal with scheduler command limits, we also allowed to append fence increments and LBWs to it.
+        the fence Incs are usually related and free streams that used waitForExecutionAuthorization.
+        the LBWs are usually related to the CG and are used to signal the completion of the CG.
+        */
         m_commands->serializeAllocBarrierCommand(scalStream,
                                                  schedIdx,
                                                  cgInfo.cgIdx[schedIdx],
@@ -406,10 +431,17 @@ void HclDeviceControllerGen2Arch::addBarrierArm(
                                                  schedIdx,
                                                  getFenceIdx(archStreamIdx, streamsToInc[i], FENCE_BARRIER_IDX));
         }
+        if (lbwBurstData)
+        {
+            m_commands->serializeLbwWriteCommand(scalStream,
+                                                 schedIdx,
+                                                 (*lbwBurstData)[0].addr,
+                                                 (*lbwBurstData)[0].data);
+        }
     }
 }
 
-void HclDeviceControllerGen2Arch::waitForBarrierArm(hcl::ScalStream& scalStream)
+void HclDeviceControllerGen2Arch::waitForExecutionConditions(hcl::ScalStream& scalStream)
 {
     m_commands->serializeFenceDecCommand(
         scalStream,
@@ -452,13 +484,13 @@ void HclDeviceControllerGen2Arch::setHostFences(int     archStreamId,
                                                 llvm_vecsmall::SmallVector<FenceInfo, HOST_FENCES_NR>& scaleoutFences)
 {
     /*
+        ---------------------------------------------------
+        |      | RS uarchStreamIdx=0 | AG uarchStreamIdx=1 |
         ----------------------------------------------
-        |      | uarchStreamIdx=0 | uarchStreamIdx=1 |
+        | Send |    Fence=0,4,8      | Fence=2,6,10        |
         ----------------------------------------------
-        | Send | Fence=0,4,8,12   | Fence=2,6,10,14  |
-        ----------------------------------------------
-        | Recv | Fence=1,5,9,13   | Fence=3,7,11,15  |
-        ----------------------------------------------
+        | Recv |    Fence=1,5,9      | Fence=3,7,11        |
+        ---------------------------------------------------
      */
     VERIFY(scaleoutInternalFences <= 1, "Can only provide 1 Host fence per send/recv slice");
     for (uint8_t i = 0; i < scaleoutInternalFences; i++)

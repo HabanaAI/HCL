@@ -9,11 +9,16 @@
 #include "platform/gen2_arch_common/collective_states.h"
 #include "platform/gen2_arch_common/hcl_device.h"
 #include "hccl_context.h"
-#include "collective_interface/graph_collectives.h"
+#include "hccl_prim_collectives.h"
+#include "hccl_api_inc.h"  // for HCCL_CHECK_STOP*
 
 ApiAggregatorGen2Arch::ApiAggregatorGen2Arch(HclCollectiveRoutinesGen2Arch* collectiveRoutines)
 : m_collectiveRoutines(collectiveRoutines)
 {
+    if (GCFG_HCCL_PRIM_COLLECTIVE_MASK.value() != 0)
+    {
+        HcclPrimitives::initPrimitiveImpl();
+    }
 }
 
 hcclResult_t ApiAggregatorGen2Arch::addGroupStart()
@@ -33,11 +38,14 @@ hcclResult_t ApiAggregatorGen2Arch::onGroupEnd()
 
     for (auto comm : m_comms)
     {
+        LOG_HCL_TRACE(HCL, "Started comm={}", comm);
+        hccl_device()->getComm(comm).updateApiSendRecvCounters();
         m_collectiveRoutines->sendRecv(m_groupCalls[comm],
                                        m_sendRecvMemCpyVec,
                                        comm,
-                                       m_remoteRanks,
+                                       m_remoteRanks[comm],
                                        hccl_ctx.generateApiId());
+        LOG_HCL_TRACE(HCL, "Finished comm={}", comm);
     }
 
     m_groupCalls.clear();
@@ -238,7 +246,7 @@ hcclResult_t ApiAggregatorGen2Arch::addSendRecvApiCall(HCL_Rank myRank, const Se
     {
         LOG_HCL_TRACE(HCL, "addSendRecvApiCall to m_sendRecvStack");
         m_sendRecvStack.push_back(entry);
-        m_remoteRanks.insert(entry.remoteRank);
+        m_remoteRanks[entry.comm].insert(entry.remoteRank);
     }
 
     return addGroupEnd();
@@ -250,7 +258,7 @@ hcclResult_t ApiAggregatorGen2Arch::addCollectiveApiCall(HclCollectiveParams& pa
     {
         if (CHECK_PRIM_IMPL(params.m_collectiveOp))
         {
-            return run(m_collectiveRoutines, params);
+            return HcclPrimitives::run(m_collectiveRoutines, params);
         }
         else
         {
@@ -283,7 +291,6 @@ hcclResult_t ApiAggregatorGen2Arch::addGroupEnd()
     }
 
     if (m_comms.size() == 0) return hcclSuccess;
-    ;
 
     checkGroupCollectiveDependency();
 
@@ -304,7 +311,7 @@ hcclResult_t ApiAggregatorGen2Arch::addGroupEnd()
         m_collectiveStack.pop_front();
     }
 
-    onGroupEnd();
+    onGroupEnd();  // Process send/recv
 
     m_calls = 0;
 

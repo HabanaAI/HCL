@@ -23,7 +23,7 @@
 #include "platform/gen2_arch_common/hcl_device.h"         // for HclDevi...
 #include "hcl_math_utils.h"
 
-void HclCollectiveRoutinesGen2Arch::determineCompletionSO(SliceState& sliceState, bool isFirstBox, bool isLastBox)
+void HclCollectiveRoutinesGen2Arch::determineCompletionSO(SliceState& sliceState, bool isFirstBox)
 {
     sliceState.m_execution.m_scaleoutCompletionWaitEvent  = WaitEvent::GENERAL_COMPLETION_EVENT;
     sliceState.m_execution.m_scaleoutCompletionWaitMethod = WaitMethod::EXTERNAL_CG_SO;
@@ -45,7 +45,8 @@ void HclCollectiveRoutinesGen2Arch::determineCompletionSO(SliceState& sliceState
               (sliceState.m_currentOp == eHCLGather && !isFirstBox) || sliceState.m_currentOp == eHCLSimpleBroadcast) &&
              ScaleupGroupSize != 1);
 
-        if (m_scaleoutProvider->isGaudiDirect() && sliceState.m_currentOp == eHCLReduceScatter)
+        if (m_scaleoutProvider->isGaudiDirect() && !sliceState.isRSContReduction() &&
+            sliceState.m_currentOp == eHCLReduceScatter)
         {
             sliceState.m_execution.m_scaleoutCompletionWaitEvent  = WaitEvent::GDR_MEMCPY_WAIT_FOR_HNIC_RECV;
             sliceState.m_execution.m_scaleoutCompletionWaitMethod = WaitMethod::GPSO_1;
@@ -58,19 +59,26 @@ void HclCollectiveRoutinesGen2Arch::determineCompletionSO(SliceState& sliceState
             }
             else
             {
-                bool     isEdgeIteration = sliceState.isEdgeIteration(sliceState.m_boxNumInfo);
-                unsigned boxIter         = sliceState.calcBoxIterRecv(sliceState.m_boxNumInfo);
-                int      longtermOffset  = isEdgeIteration ? sliceState.m_scaleoutLongtermAmount - 1
-                                                           : boxIter % sliceState.m_scaleoutBuffersAmount;
-
-                if (isEdgeIteration)
+                if (sliceState.isRSContReduction())
                 {
-                    sliceState.m_execution.m_scaleoutCompletionWaitEvent = WaitEvent::RS_SO_WAIT_FOR_ALL_RECV;
+                    sliceState.m_execution.m_scaleoutCompletionWaitEvent = sliceState.getWaitEventForFullBuffer();
                 }
                 else
                 {
-                    sliceState.m_execution.m_scaleoutCompletionWaitEvent =
-                        (WaitEvent)((unsigned)WaitEvent::RS_SO_RECV_WAIT_FOR_PREV_RECV_BASE + longtermOffset);
+                    bool     isEdgeIteration = sliceState.isEdgeIteration(sliceState.m_boxNumInfo);
+                    unsigned boxIter         = sliceState.calcBoxIterRecv(sliceState.m_boxNumInfo);
+                    int      longtermOffset  = isEdgeIteration ? sliceState.m_scaleoutLongtermAmount - 1
+                                                               : boxIter % sliceState.m_scaleoutBuffersAmount;
+
+                    if (isEdgeIteration)
+                    {
+                        sliceState.m_execution.m_scaleoutCompletionWaitEvent = WaitEvent::RS_SO_WAIT_FOR_ALL_RECV;
+                    }
+                    else
+                    {
+                        sliceState.m_execution.m_scaleoutCompletionWaitEvent =
+                            (WaitEvent)((unsigned)WaitEvent::RS_SO_RECV_WAIT_FOR_PREV_RECV_BASE + longtermOffset);
+                    }
                 }
             }
 
@@ -88,18 +96,36 @@ void HclCollectiveRoutinesGen2Arch::determineCompletionSO(SliceState& sliceState
         }
         else if (sliceState.m_collectiveOp == eHCLBroadcast)
         {
-            if (m_scaleoutProvider->isHostNic() && !m_scaleoutProvider->isGaudiDirect() && !sliceState.m_isSend)
+            bool isPeersOnly = sliceState.m_isMultiScaleupGroup && sliceState.m_dynamicComm.getScaleupGroupSize() == 1;
+            unsigned nextBox = getNextBox(sliceState.m_dynamicComm.getMyScaleupGroup(), sliceState.m_boxIterations);
+
+            if (!isPeersOnly)  // in this case we have two events waiting for scaleout recv : scaleout send & AG
             {
-                sliceState.m_execution.m_scaleoutCompletionWaitEvent  = WaitEvent::HNIC_SIGNAL_SPLIT_WAIT_FOR_PDMA;
-                sliceState.m_execution.m_scaleoutCompletionWaitMethod = WaitMethod::GPSO_1;
+                if (m_scaleoutProvider->isHostNic() && !m_scaleoutProvider->isGaudiDirect() && !sliceState.m_isSend)
+                {
+                    sliceState.m_execution.m_scaleoutCompletionWaitEvent  = WaitEvent::HNIC_SIGNAL_SPLIT_WAIT_FOR_PDMA;
+                    sliceState.m_execution.m_scaleoutCompletionWaitMethod = WaitMethod::GPSO_1;
+                }
+                else
+                {
+                    sliceState.m_execution.m_scaleoutCompletionWaitEvent =
+                        WaitEvent::COMPLEX_BCAST_SO_SEND_AND_AG_SU_WAIT_FOR_SO_RECV;
+                    sliceState.m_execution.m_scaleoutCompletionWaitMethod = WaitMethod::GPSO_LONGTERM;
+                }
             }
-            else
+            else if (!(isPeersOnly && nextBox == sliceState.rootBox()))  // in this case we don't do AG & only need to
+                                                                         // continue the Scatter scaleout send chain
             {
-                // This is a unique case, where two streams wait for Scale-Out Recv: the Scale-Out Send (to continue the
-                // ring) and the Scale-Up Send (to do eHCLAllGather for 7 non-peer-ranks).
                 sliceState.m_execution.m_scaleoutCompletionWaitEvent =
-                    WaitEvent::COMPLEX_BCAST_SO_SEND_AND_AG_SU_WAIT_FOR_SO_RECV;
-                sliceState.m_execution.m_scaleoutCompletionWaitMethod = WaitMethod::GPSO_LONGTERM;
+                    WaitEvent::COMPLEX_BCAST_SO_SEND_WAIT_FOR_SO_RECV;
+                if (m_scaleoutProvider->isHostNic() && !m_scaleoutProvider->isGaudiDirect() && !sliceState.m_isSend)
+                {
+                    sliceState.m_execution.m_scaleoutCompletionWaitMethod = WaitMethod::GPSO_1;
+                }
+                else
+                {
+                    sliceState.m_execution.m_scaleoutCompletionWaitMethod = WaitMethod::GPSO_0;
+                }
             }
         }
         else if (sliceState.m_collectiveOp == eHCLSinglePeerBroadcast && sliceState.isRootPeer())
@@ -141,7 +167,7 @@ void HclCollectiveRoutinesGen2Arch::provideScaleoutResources(SliceState& sliceSt
     {
         WaitMethod waitMethod = WaitMethod::WAIT_METHOD_MAX;
         WaitEvent  waitEvent;
-        if (sliceState.m_currentOp == eHCLReduceScatter && !sliceState.m_isSend)
+        if (sliceState.m_currentOp == eHCLReduceScatter && !sliceState.m_isSend && !sliceState.isRSContReduction())
         {
             waitMethod = WaitMethod::GPSO_1;
             if (!m_scaleoutProvider->isGaudiDirect())
@@ -184,16 +210,20 @@ void HclCollectiveRoutinesGen2Arch::provideScaleoutResources(SliceState& sliceSt
 
                 if (sliceState.m_currentOp == eHCLScatter)
                 {
-                    unsigned nextBox =
-                        getNextBox(sliceState.m_dynamicComm.getMyScaleupGroup(), sliceState.m_boxIterations);
-                    unsigned int numFences = (nextBox == sliceState.rootBox()) ? 1 : 2;
-
-                    m_signalsManager->enqueueWait(WaitEvent::COMPLEX_BCAST_SO_SEND_AND_AG_SU_WAIT_FOR_SO_RECV,
-                                                  {SignalEvent::SIGNAL_TO_LONGTERM},
-                                                  WaitMethod::GPSO_LONGTERM,
-                                                  0,
-                                                  numFences);
-                    m_signalsManager->enqueueCompletion({SignalEvent::SIGNAL_TO_CG});
+                    bool isPeersOnly =
+                        sliceState.m_isMultiScaleupGroup && sliceState.m_dynamicComm.getScaleupGroupSize() == 1;
+                    if (!isPeersOnly)
+                    {
+                        unsigned nextBox =
+                            getNextBox(sliceState.m_dynamicComm.getMyScaleupGroup(), sliceState.m_boxIterations);
+                        unsigned int numFences = (nextBox == sliceState.rootBox()) ? 1 : 2;
+                        m_signalsManager->enqueueWait(WaitEvent::COMPLEX_BCAST_SO_SEND_AND_AG_SU_WAIT_FOR_SO_RECV,
+                                                      {SignalEvent::SIGNAL_TO_LONGTERM},
+                                                      WaitMethod::GPSO_LONGTERM,
+                                                      0,
+                                                      numFences);
+                        m_signalsManager->enqueueCompletion({SignalEvent::SIGNAL_TO_CG});
+                    }
                 }
             }
         }
@@ -391,15 +421,16 @@ void HclCollectiveRoutinesGen2Arch::getDeviceToRemoteIndex(CommonState&   common
     }
 }
 
-unsigned int HclCollectiveRoutinesGen2Arch::calcRequiredCreditAmount(CommonState&     commonState,
-                                                                     BoxNumInfo&      nexBoxNumInfo,
-                                                                     BoxNumInfo&      prevBoxNumInfo,
-                                                                     unsigned         sliceIter,
-                                                                     unsigned         boxIter,
-                                                                     const unsigned   firstBoxIter,
-                                                                     bool             isFirstOp,
-                                                                     HCL_CollectiveOp currentOp,
-                                                                     int64_t          dependencyTargetVal)
+unsigned int HclCollectiveRoutinesGen2Arch::calcRequiredCreditAmount(CommonState&                      commonState,
+                                                                     BoxNumInfo&                       nexBoxNumInfo,
+                                                                     BoxNumInfo&                       prevBoxNumInfo,
+                                                                     unsigned                          sliceIter,
+                                                                     unsigned                          boxIter,
+                                                                     const unsigned                    firstBoxIter,
+                                                                     bool                              isFirstOp,
+                                                                     [[maybe_unused]] HCL_CollectiveOp currentOp,
+                                                                     int64_t dependencyTargetVal,
+                                                                     bool    ignoreLongterm)
 {
     const int64_t cgSize               = m_graphSync.getCgData(false).size;
     hcl_flags_t   flags                = commonState.m_userFlags;
@@ -426,7 +457,8 @@ unsigned int HclCollectiveRoutinesGen2Arch::calcRequiredCreditAmount(CommonState
                                                               m_graphSync.getLtuData());
     }
 
-    if (m_scaleoutProvider->isGaudiDirect() && boxIter > 0 && commonState.m_currentOp == eHCLReduceScatter)
+    if (m_scaleoutProvider->isGaudiDirect() && boxIter > 0 && commonState.m_currentOp == eHCLReduceScatter &&
+        !commonState.isRSContReduction())
     {
         unsigned continuousTargets = 0;
         if (commonState.m_collectiveOp != eHCLReduce)
@@ -543,7 +575,21 @@ unsigned int HclCollectiveRoutinesGen2Arch::calcRequiredCreditAmount(CommonState
             std::max((unsigned)((signalDiff < cgSize) ? (cgSize - signalDiff) : 0), (unsigned)requiredExtraCredits);
     }
 
-    if (commonState.isLongtermGPSORequired(boxIter))
+    // alloc HFC monitor credits
+    if (m_scaleoutProvider->isGaudiDirect())
+    {
+        lastTargetVal =
+            m_deviceController.getSyncParams(m_streamId).m_hfcMonitorManager->allocNextCredit(m_longSo.targetValue);
+        if (lastTargetVal != 0)
+        {
+            VERIFY(m_longSo.targetValue > lastTargetVal, "No available host fence counter monitors");
+            int64_t signalDiff = m_longSo.targetValue - lastTargetVal;
+            requiredExtraCredits =
+                std::max((unsigned)((signalDiff < cgSize) ? (cgSize - signalDiff) : 0), (unsigned)requiredExtraCredits);
+        }
+    }
+
+    if (commonState.isLongtermGPSORequired(boxIter) && !ignoreLongterm)
     {
         uint64_t lastTargetValLongTerm = 0;
         int64_t  signalDiff            = 0;
@@ -635,5 +681,13 @@ void HclCollectiveRoutinesGen2Arch::addScaleoutInternalSOB(SliceState& sliceStat
     if (method != WaitMethod::GPSO_LONGTERM)
     {
         m_signalsManager->markMethodForCleanup(method);
+    }
+}
+
+void HclCollectiveRoutinesGen2Arch::enqueueInternalCompletionSignals()
+{
+    if (m_graphSync.isForceOrder(false))
+    {
+        m_signalsManager->enqueueInternalCompletion(SignalEvent::FORCE_ORDER);
     }
 }

@@ -2,7 +2,7 @@
 
 #include <cstdint>                                              // for uint64_t, uint32_t
 #include "infra/scal/gen2_arch_common/cyclic_buffer_manager.h"  // for CyclicBufferManager
-#include "infra/scal/gaudi_common/factory_types.h"              // for CyclicBufferType
+#include "factory_types.h"                                      // for CyclicBufferType
 
 namespace hcl
 {

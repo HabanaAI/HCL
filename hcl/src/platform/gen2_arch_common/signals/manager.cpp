@@ -48,13 +48,15 @@ SignalsManager::SignalWaitEvent::SignalWaitEvent(WaitEvent                      
                                                  WaitMethod                                       waitMethod,
                                                  WaitPhase                                        waitPhase,
                                                  unsigned                                         longtermSyncObjIdx,
-                                                 bool                                             accSignals)
+                                                 bool                                             accSignals,
+                                                 bool                                             expectAnotherPhase_)
 : event(waitEvent),
   signals(signalDescs),
   method(waitMethod),
   currentPhase(waitPhase),
   longtermIdx(longtermSyncObjIdx),
   accumulateSignals(accSignals),
+  expectAnotherPhase(expectAnotherPhase_),
   numSignals(0),
   numExecutedFences(0),
   numExpectedFences(1),
@@ -106,12 +108,13 @@ SignalsManager::FenceCheckResult SignalsManager::SignalWaitEvent::wasFenced(bool
         }
         currentEvent = currentEvent->nextPhaseEvent;
     } while (currentEvent && checkPhases);
+
     return {true, WaitEvent::WAIT_EVENT_MAX};
 }
 
 bool SignalsManager::SignalWaitEvent::wasCompleted() const
 {
-    return wasSignalled() && wasFenced().isFenced;
+    return wasSignalled() && wasFenced().isFenced && !expectAnotherPhase;
 }
 
 SignalsManager::SignalsManager(HclGraphSyncGen2Arch& graphSync,
@@ -181,26 +184,36 @@ void SignalsManager::initialize(CommonState* commonState, uint64_t cuid)
 
 bool SignalsManager::updateGraph(uint64_t cuid, CommonState* commonState)
 {
-    bool isCreated = false;
-    m_usingCache   = isCachingRequired(*commonState) && cuid != 0;
+    bool           isCreated = false;
+    const HCL_Comm comm      = commonState->m_comm;
+    m_usingCache             = isCachingRequired(*commonState) && cuid != 0;
     if (m_usingCache)
     {
-        if (unlikely(m_cache.count(cuid) == 0))
+        if (comm >= m_cache.size())
         {
-            m_cache[cuid];  // allocate a new graph, without invoking a copy constructor.
-            uint64_t cache_size = m_cache.size();
+            const uint32_t newCommsCountInCache =
+                std::min(std::max((uint32_t)(comm + 1), (uint32_t)(m_cache.size() * 2)), (uint32_t)(2 << 16));
+            LOG_HCL_DEBUG(HCL, "resizing m_cache for comm {}, new size {}", comm, newCommsCountInCache);
+            m_cache.resize(newCommsCountInCache);
+        }
+        if (unlikely(m_cache[comm].count(cuid) == 0))
+        {
+            m_cache[comm][cuid];  // allocate a new graph, without invoking a copy constructor.
+            const uint64_t cache_size = m_cache[comm].size();
             LOG_HCL_DEBUG(HCL,
-                          "Can't find cached Graph for cuid 0x{:x}. Allocating new one. cache size {} elements",
+                          "Can't find cached Graph for comm {} cuid 0x{:x}. Allocating new one. cache size {} elements",
+                          comm,
                           cuid,
                           cache_size);
             isCreated = true;
         }
     }
 
-    m_graph = m_usingCache ? &m_cache.at(cuid) : &m_nonCachedGraph;
+    m_graph = m_usingCache ? &m_cache[comm].at(cuid) : &m_nonCachedGraph;
 
     LOG_HCL_DEBUG(HCL,
-                  "Using a cached graph for cuid 0x{:x} is {} (graph addr = 0x{:x}). Current cache size: {}",
+                  "Using a cached graph for comm {} cuid 0x{:x} is {} (graph addr = 0x{:x}). Current cache size: {}",
+                  comm,
                   cuid,
                   m_usingCache ? "allowed" : "not allowed",
                   (uint64_t)m_graph,
@@ -398,16 +411,24 @@ void SignalsManager::resetGraph()
     }
 }
 
+void SignalsManager::newCollective(const HCL_Comm comm)
+{
+    LOG_HCL_DEBUG(HCL, "comm {}", comm);
+    if (comm >= m_cache.size() || m_cache[comm].empty())
+    {
+        LOG_HCL_DEBUG(HCL, "deleting m_graph");
+        m_graph = nullptr;
+    }
+}
+
 void SignalsManager::enqueueCompletion(llvm_vecsmall::SmallVector<SignalDescription, 8>&& signalEvents)
 {
     enqueueWait(WaitEvent::GENERAL_COMPLETION_EVENT, std::move(signalEvents), WaitMethod::EXTERNAL_CG_SO);
 }
 
-uint32_t SignalsManager::enqueueInternalCompletion(SignalEvent signalEvent)
+void SignalsManager::enqueueInternalCompletion(SignalEvent signalEvent)
 {
     enqueueWait(WaitEvent::GENERAL_INTERNAL_COMPLETION_EVENT, {{signalEvent, true}}, WaitMethod::INTERNAL_CG_SO);
-
-    return getSoAddress(WaitMethod::INTERNAL_CG_SO);
 }
 
 void SignalsManager::enqueueWait(WaitEvent                                          waitEvent,
@@ -416,7 +437,8 @@ void SignalsManager::enqueueWait(WaitEvent                                      
                                  WaitPhase                                          waitPhase,
                                  unsigned                                           numExpectedFences,
                                  unsigned                                           longtermIdx,
-                                 bool                                               accSignals)
+                                 bool                                               accSignals,
+                                 bool                                               expectAnotherPhase)
 {
     if (likely((!m_graph->m_firstUse && !isReusableEvent(waitEvent)) ||
                (isReusableEvent(waitEvent) && !m_graph->m_firstCollective)))
@@ -446,15 +468,16 @@ void SignalsManager::enqueueWait(WaitEvent                                      
     // Retrieve the SignalWaitEvent instance associated with waitEvent. If one doesn't exist - create one.
     if (!hasWaitEvent(waitEvent))
     {
-        m_graph->m_events[(unsigned)waitEvent] = {waitEvent, {}, effectiveMethod, waitPhase, longtermIdx, accSignals};
+        m_graph->m_events[(unsigned)waitEvent] =
+            {waitEvent, {}, effectiveMethod, waitPhase, longtermIdx, accSignals, expectAnotherPhase};
     }
     else if (isLongTerm(effectiveMethod))
     {
         m_graph->m_events[(unsigned)waitEvent].longtermIdx = longtermIdx;
         if (isReusableEvent(waitEvent))
         {
-            VERIFY(numExpectedFences == 1,
-                   "Expected fences for each reusable event update is {} but should be exactly 1");
+            VERIFY(numExpectedFences <= 1,
+                   "Expected fences for each reusable event update is {} but should be either 1 or 0");
             m_graph->m_events[(unsigned)waitEvent].numExpectedFences += numExpectedFences;
         }
     }
@@ -484,6 +507,7 @@ void SignalsManager::enqueueWait(WaitEvent                                      
         queue.push_back(&desc.signals.back());
         m_graph->m_requestedEventsBitmap |= 1 << ((unsigned int)desc.signals.back().event);
     }
+    desc.expectAnotherPhase                                            = expectAnotherPhase;
     m_graph->m_methods[(unsigned)effectiveMethod][waitPhase].waitEvent = &desc;
 }
 
@@ -549,7 +573,8 @@ void SignalsManager::allocateResources()
             // of the event. We know the resource (desc->method) and we know the numSignals (calculateNumSignals()).
             // In case this is not the first re-use of a GPSO, numSignals will increment appropriately (hence +=).
 
-            if (!isReusableEvent(desc->event) || (isReusableEvent(desc->event) && phases[j].signalsPerPhase == 0))
+            if (!isReusableEvent(desc->event) ||
+                (isReusableEvent(desc->event) && (phases[j].signalsPerPhase == 0 || lastPhaseForMethod == j)))
             {
                 numSignals = desc->accumulateSignals ? numSignals + calculateNumSignals(desc->event) : numSignals;
                 phases[j].signalsPerPhase = numSignals;
@@ -630,6 +655,19 @@ void SignalsManager::printGraph()
                 LOG_HCL_TRACE(HCL, "signal {} should add {}", signalDesc.event, calculateNumSignals(signalDesc));
             }
         }
+    }
+}
+
+void SignalsManager::invalidateCommCache(const HCL_Comm comm)
+{
+    if (comm < m_cache.size())
+    {
+        LOG_HCL_INFO(HCL, "deleting comm {} cache, size {}", comm, m_cache[comm].size());
+        m_cache[comm].clear();
+    }
+    else
+    {
+        LOG_HCL_INFO(HCL, "no cache yet for comm {}, no need to delete", comm);
     }
 }
 
@@ -785,6 +823,7 @@ void SignalsManager::DFA(uint64_t deviceTargetValue)
     HclCollectiveRoutinesGen2Arch* inst = hccl_device().collectives[m_archStream];
     if (deviceTargetValue == inst->getCurrentTargetValue())
     {
+        HLLOG_INFO_FORCE(HCL, "Nothing inflight, not dumping extra info for archStream {}", m_archStream);
         return;
     }
     SignalsManager::CompletionTracker& tracker = m_completionTracker[(deviceTargetValue + 1) & (m_cgSize - 1)];
@@ -801,9 +840,19 @@ void SignalsManager::DFA(uint64_t deviceTargetValue)
         if (entry.sob.dcore == 0) continue;
 
         uint64_t addr = m_utils->calculateSoAddressFromIdxAndSM(entry.sob.dcore, entry.sob.sobId);
-        uint32_t val;
+        uint32_t val  = 0;
         int rc = hlthunk_device_memory_read_block_experimental(hccl_device()->getFd(), &val, addr, sizeof(uint32_t), 0);
-        VERIFY(rc == 0);
+        if (rc != 0)
+        {
+            LOG_HCL_CRITICAL(HCL,
+                             "failed to read SOB value from fd {} 0x{:x} with rc {} errno {} {}. NOTE: calculation "
+                             "below are using val of 0",
+                             hccl_device()->getFd(),
+                             addr,
+                             rc,
+                             errno,
+                             strerror(errno));
+        }
 
         WaitMethod waitMethod = (WaitMethod)i;
         switch (waitMethod)
@@ -830,6 +879,8 @@ void SignalsManager::DFA(uint64_t deviceTargetValue)
             case WaitMethod::GPSO_LONGTERM_6:
             case WaitMethod::GPSO_LONGTERM_7:
             case WaitMethod::GPSO_LONGTERM_8:
+            case WaitMethod::INTERNAL_CG_SO:
+
                 LOG_HCL_CRITICAL(
                     HCL,
                     "expecting resource {} ({}) to reach value {}. current value: {} -- missing {} signals:",
@@ -840,7 +891,8 @@ void SignalsManager::DFA(uint64_t deviceTargetValue)
                     entry.value - val);
                 break;
             default:
-                VERIFY(false);
+                LOG_HCL_CRITICAL(HCL, "unexpected waitMethod: {}", waitMethod);
+                break;
         }
 
         LOG_CONTEXT_INIT(HCL);  // manually open log context to indent by 4

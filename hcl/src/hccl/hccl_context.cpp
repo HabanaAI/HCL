@@ -33,7 +33,8 @@
 #include "hcl_dynamic_communicator.h"   // for HclDynamicCommunicator
 #include "platform/gen2_arch_common/server_def.h"
 #include "coordinator/qp_migration.h"  // for NicState
-
+#include "ibverbs/hcl_ibverbs.h"       // for g_ibv.has_ib_device()
+#include "fault_tolerance_inc.h"       // for HLFT.* macros
 
 void hccl_context::generateGlobalUniqueId(hcclUniqueId& unique_id)
 {
@@ -54,11 +55,7 @@ void hccl_context::generateGlobalUniqueId(hcclUniqueId& unique_id)
 // This function is used to init a comm.
 // It is also called when doing re-init to a comm. In this case, the caller should give the previous handle
 // so the re-init comm has the same handle (and the init is transparent to the user).
-hcclResult_t hccl_context::comm_init_rank(hcclComm_t*   comm_handle,
-                                          unsigned int  nranks,
-                                          hcclUniqueId& comm_id,
-                                          int           rank,
-                                          hcclComm_t    reInitCommHandle)
+hcclResult_t hccl_context::comm_init_rank(hcclComm_t* comm_handle, unsigned int nranks, hcclUniqueId& comm_id, int rank)
 {
     // This function must be called after the device was already initialized. For that to happen
     // the environment variable 'INIT_HCCL_ON_ACQUIRE' must be set to true, and for all HCL uses
@@ -80,6 +77,13 @@ hcclResult_t hccl_context::comm_init_rank(hcclComm_t*   comm_handle,
 
     RETURN_ON_NULL_ARG(comm_handle);
 
+    // For single device case, only nranks==1 makes sense
+    if (!g_ibv.has_ib_device() && (nranks > 1))
+    {
+        LOG_HCL_ERR(HCL, "No ibv device and number of ranks > 1");
+        return hcclInvalidArgument;
+    }
+
     if (nranks < 1 || nranks > GCFG_HCL_MAX_RANKS.value() || nranks > MAX_SUPPORTED_RANKS)
     {
         LOG_HCL_ERR(
@@ -98,27 +102,21 @@ hcclResult_t hccl_context::comm_init_rank(hcclComm_t*   comm_handle,
         return hcclInternalError;
     }
 
-    spHcclComm->setIDs(comm_handle, &comm_id);  // Save this info. It is used in case of comm re-init
-
-    if (spHcclComm->initialize(internal_id, m_failedScaleOutPortsMask) != hcclSuccess)
+    if (spHcclComm->initialize(internal_id) != hcclSuccess)
     {
         LOG_HCL_ERR(HCL, "Initialization of hccl communicator failed.");
-        if (!spHcclComm->sendCollectiveLogErr())
-        {
-            LOG_HCL_ERR(HCL, "sendCollectiveLogErr failed.");
-        }
         return hcclInternalError;
     }
 
     // for re-init case, use previous key
-    *comm_handle = reInitCommHandle ? reInitCommHandle : spHcclComm.get();
+    *comm_handle = spHcclComm.get();
 
     // create a map entry as a pair of hcclComm key and hclComm key
     hccl_communicators_[*comm_handle] = spHcclComm;
-    if (!first_comm_init)
+    if (!first_comm_init_)
     {
-        first_comm_init      = true;
-        first_coordinator_launched = true;
+        first_comm_init_            = true;
+        first_coordinator_launched_ = true;
     }
 
     // log process memory
@@ -152,7 +150,7 @@ hcclResult_t hccl_context::get_unique_id(hcclUniqueId* unique_id)
 {
     RETURN_ON_NULL_ARG(unique_id);
 
-    bool use_hccl_comm_id_env_var = !first_coordinator_launched && !get_global_comm_id().empty();
+    bool use_hccl_comm_id_env_var = !first_coordinator_launched_ && !get_global_comm_id().empty();
 
     // create coordinator and run it
     auto coordinator = IHcclCoordinator::create(use_hccl_comm_id_env_var);
@@ -164,7 +162,7 @@ hcclResult_t hccl_context::get_unique_id(hcclUniqueId* unique_id)
 
     if (use_hccl_comm_id_env_var)
     {
-        first_coordinator_launched = true;
+        first_coordinator_launched_ = true;
     }
 
     // generate the coordinator unique ID
@@ -183,13 +181,12 @@ hcclResult_t hccl_context::get_unique_id(hcclUniqueId* unique_id)
 const internal_unique_id_t* hccl_context::get_internal_id(const hcclUniqueId& unique_id) const
 {
     VERIFY((sizeof(internal_unique_id_t) == unique_id.length) || GCFG_HCL_NULL_SUBMIT.value(),
-           "Invalid unique_id length={} : {}. Please make sure that HCCL_COMM_ID env var is set",
-           unique_id.length,
-           sizeof(internal_unique_id_t));
+           "Invalid unique_id length={}. Please make sure that HCCL_COMM_ID env var is set",
+           unique_id.length);
     return reinterpret_cast<const internal_unique_id_t*>(unique_id.internal);
 }
 
-hcclResult_t hccl_context::comm_destroy(hcclComm_t comm_handle, bool destroyCoord)
+hcclResult_t hccl_context::comm_destroy(hcclComm_t comm_handle)
 {
     auto* hcclComm = communicator(comm_handle);
     if (hcclComm == nullptr)
@@ -219,17 +216,14 @@ hcclResult_t hccl_context::comm_destroy(hcclComm_t comm_handle, bool destroyCoor
         return hcclInternalError;
     }
 
-    if (destroyCoord)
+    // clean mapped resources and handles
+    // check if this is comm coordinator
+    auto it = coordinators_.find(id);
+    if (it != coordinators_.end())
     {
-        // clean mapped resources and handles
-        // check if this is comm coordinator
-        auto it = coordinators_.find(id);
-        if (it != coordinators_.end())
-        {
-            // remove coordinator from list
-            LOG_HCL_DEBUG(HCL, "Removing coordinator, unique ID({})", id);
-            coordinators_.erase(id);
-        }
+        // remove coordinator from list
+        LOG_HCL_DEBUG(HCL, "Removing coordinator, unique ID({})", id);
+        coordinators_.erase(id);
     }
 
     // remove communicator from list
@@ -247,8 +241,8 @@ std::string hccl_context::unique_id_to_string(const hcclUniqueId& id)
 
 hcclResult_t hccl_context::init_device(const uint8_t apiId, void* device, void* context)
 {
-    LOG_HCL_DEBUG(HCL, "Started, m_deviceAcquired={}, apiId={}", m_deviceAcquired, apiId);
-    if (m_deviceAcquired)
+    LOG_HCL_DEBUG(HCL, "Started, m_deviceAcquired={}, apiId={}", device_acquired_, apiId);
+    if (device_acquired_)
     {
         LOG_HCL_DEBUG(HCL,
                       "HCL device was already initialized. skipping initialization. "
@@ -258,20 +252,20 @@ hcclResult_t hccl_context::init_device(const uint8_t apiId, void* device, void* 
 
     hclPrintVersionToLog();
 
-    m_hclDeviceConfig = HclDeviceConfigFactory::createDeviceConfig(device, context);
-    m_hclDeviceConfig->init();
+    device_config_ = HclDeviceConfigFactory::createDeviceConfig(device, context);
+    device_config_->init();
 
-    hccl_device_t::create(*m_hclDeviceConfig, apiId);
+    hccl_device_t::create(*device_config_, apiId);
 
-    m_deviceAcquired = true;
+    device_acquired_ = true;
 
     return hcclSuccess;
 }
 
 hcclResult_t hccl_context::destroy_device()
 {
-    LOG_HCL_DEBUG(HCL, "Started, m_deviceAcquired={}", m_deviceAcquired);
-    if (!m_deviceAcquired)
+    LOG_HCL_DEBUG(HCL, "Started, m_deviceAcquired={}", device_acquired_);
+    if (!device_acquired_)
     {
         LOG_HCL_DEBUG(HCL,
                       "HCL device was not initialized for device. skipping destruction. "
@@ -281,15 +275,15 @@ hcclResult_t hccl_context::destroy_device()
 
     hccl_device().destroy();
 
-    m_hclDeviceConfig->destroy();
+    device_config_->destroy();
 
-    m_deviceAcquired = false;
+    device_acquired_ = false;
     return hcclSuccess;
 }
 
 int hccl_context::hccl_lookup_dma_buff_ctx()
 {
-    return hccl_device()->getOfiComponent()->get_mr()->getDmabufFd();
+    return hccl_device()->getOfiComponent()->getDmabufFd();
 }
 
 void hccl_context::dfaLog(hl_logger::LoggerSPtr logger)
@@ -381,119 +375,4 @@ uint8_t hccl_context::generateApiId()
         LOG_WARN(HCL, "synGenerateApiId failed, using default value {}", HCL_DEFAULT_API_ID);
     }
     return apiId;
-}
-
-void hccl_context::faultHandleScaleoutPortUp(const uint16_t port)
-{
-    if (!hccl_device()->supportNicFaultTolerance())
-    {
-        LOG_HCL_ERR(HCL_FAILOVER, "Device Not supported, port={}", port);
-        return;
-    }
-
-    LOG_HCL_INFO(HCL_FAILOVER, "port={}", port);
-
-    for (auto& comm : hccl_communicators_)
-    {
-        hccl_communicator&            hcclCommunicator(*(comm.second.get()));
-        const HclDynamicCommunicator& dynamicComm(*(hcclCommunicator.getDynamicComm()));
-        const HCL_Comm                commId = dynamicComm;
-        LOG_HCL_DEBUG(HCL_FAILOVER, "Need to handle comm {}, myRank={}", commId, dynamicComm.getMyRank());
-        const NicState nicState = {dynamicComm.getMyRank(), port, true};
-        hcclCommunicator.getCoordClient()->sendNicStateChange(nicState);
-    }
-}
-
-void hccl_context::faultHandleScaleoutPortShutdown(const uint16_t port)
-{
-    if (!hccl_device()->supportNicFaultTolerance())
-    {
-        LOG_HCL_ERR(HCL_FAILOVER, "Device Not supported, port={}", port);
-        return;
-    }
-
-    LOG_HCL_INFO(HCL_FAILOVER, "port={}", port);
-
-    for (auto& comm : hccl_communicators_)
-    {
-        hccl_communicator&            hcclCommunicator(*(comm.second.get()));
-        const HclDynamicCommunicator& dynamicComm(*(hcclCommunicator.getDynamicComm()));
-        const HCL_Comm                commId = dynamicComm;
-        LOG_HCL_DEBUG(HCL_FAILOVER, "Need to handle comm {}, myRank={}", commId, dynamicComm.getMyRank());
-        const NicState nicState = {dynamicComm.getMyRank(), port, false};
-        hcclCommunicator.getCoordClient()->sendNicStateChange(nicState);
-    }
-}
-
-void hccl_context::portDown(uint16_t portNum)
-{
-    m_failedScaleOutPortsMask.set(portNum);
-    updatePortsAndComms();
-}
-
-void hccl_context::portUp(uint16_t portNum)
-{
-    m_failedScaleOutPortsMask.clear(portNum);
-    updatePortsAndComms();
-}
-
-void hccl_context::updatePortsAndComms()
-{
-    std::vector<hcclComm_t> commHandles;
-    unsigned                commHandleIndex = 0;
-
-    LOG_HCL_TRACE(HCL_FAILOVER, "start, number of comms {}", hccl_communicators_.size());
-    // We later loop and destroy/init comms. hccl_communicators_ is modified during this
-    // loop, so we need to save the handles first
-    commHandles.resize(hccl_communicators_.size());
-    for (const auto& comm_pair : hccl_communicators_)
-    {
-        commHandles[commHandleIndex] = comm_pair.first;
-        commHandleIndex++;
-    }
-    LOG_HCL_TRACE(HCL_FAILOVER, "closed connections");
-
-    for (const auto commHandleIterator : commHandles)
-    {
-        LOG_TRACE(HCL_FAILOVER,
-                  "updating ports masks, m_failedScaleOutPortsMask binary {:b}",
-                  (uint64_t)m_failedScaleOutPortsMask);
-
-        size_t                  commSize     = hccl_communicators_[commHandleIterator]->getCommSize();
-        HCL_Rank                rank         = hccl_communicators_[commHandleIterator]->user_rank();
-        hcclComm_t*             commHandle   = hccl_communicators_[commHandleIterator]->getCommHandle();
-        hcclUniqueId            commUniqueId = *(hccl_communicators_[commHandleIterator]->getCommId());
-        spHcclCoordinatorClient coordClient  = hccl_communicators_[commHandleIterator]->getCoordClient();
-
-        LOG_HCL_TRACE(HCL_FAILOVER, "comm destroy");
-        comm_destroy(commHandleIterator, false);
-        LOG_HCL_TRACE(HCL_FAILOVER, "init comm");
-        comm_init_rank(commHandle, commSize, commUniqueId, rank, *commHandle);
-    }
-}
-
-void hccl_context::dbgCheckDrop()
-{
-    if (!m_portDropped && GCFG_HCL_DBG_DYNAMIC_LAG_DROPPED_PORT_NUM.value() != 0xFF)
-    {
-        LOG_HCL_INFO(HCL_FAILOVER, "drop requested port {}", GCFG_HCL_DBG_DYNAMIC_LAG_DROPPED_PORT_NUM.value());
-        m_portDropped = true;
-        portDown(GCFG_HCL_DBG_DYNAMIC_LAG_DROPPED_PORT_NUM.value());
-        LOG_HCL_TRACE(HCL_FAILOVER, "drop done");
-    }
-}
-
-void hccl_context::dbgCheckRestore()
-{
-    m_numAGIterations++;
-    LOG_TRACE(HCL_FAILOVER,
-              "check port restore ({}) {} : {}",
-              m_portDropped,
-              m_numAGIterations,
-              GCFG_HCL_DBG_DYNAMIC_LAG_NUM_ITERATIONS.value());
-    if (m_portDropped && m_numAGIterations == GCFG_HCL_DBG_DYNAMIC_LAG_NUM_ITERATIONS.value())
-    {
-        portUp(GCFG_HCL_DBG_DYNAMIC_LAG_DROPPED_PORT_NUM.value());
-        LOG_TRACE(HCL_FAILOVER, "restore done");
-    }
 }

@@ -643,7 +643,7 @@ void serializeNicNopCommand(hcl::ScalStreamBase& scalStream,
 }
 
 void serializeGlobalDmaCommand(hcl::ScalStreamBase&                  scalStream,
-                               uint32_t                              soAddressLSB,
+                               [[maybe_unused]] uint32_t             soAddressLSB,
                                const std::vector<sibAddressAndSize>& sibAddressesAndSizes,
                                uint32_t                              fwStrideSize,
                                uint64_t                              fwBaseAddress,
@@ -829,11 +829,13 @@ void serializeAllocBarrierCommand(hcl::ScalStreamBase&                          
     SET_FIELD(command->comp_group_index, completionGroupIndex);
     SET_FIELD(command->required_sobs, requiredSobs);
 
-    SET_FIELD(command->cmd_size_bytes, cmdSize);
+    SET_FIELD(command->cmd_size_dwords, cmdSize >> 2);
     SET_FIELD(command->fence_count, fenceCnt);
+
+    uint8_t* fence_arr_ptr = (uint8_t*)command + sizeof(g3fw::sched_arc_cmd_alloc_nic_barrier_t);
     for (unsigned i = 0; i < fenceCnt; i++)
     {
-        SET_FIELD(((uint8_t*)command->fence_arr)[i], (*fences)[i]);
+        SET_FIELD(fence_arr_ptr[i], (*fences)[i]);
     }
 
     SET_FIELD(command->num_lbw_write, lbwBurstCnt);
@@ -894,7 +896,10 @@ void serializeFenceDecCommand(hcl::ScalStreamBase& scalStream, unsigned schedIdx
                        (uint32_t)command->fence_id);
 }
 
-void serializeFenceIncCommand(hcl::ScalStreamBase& scalStream, unsigned schedIdx, uint32_t fenceIndex, uint32_t target)
+void serializeFenceIncCommand(hcl::ScalStreamBase&      scalStream,
+                              unsigned                  schedIdx,
+                              uint32_t                  fenceIndex,
+                              [[maybe_unused]] uint32_t target)
 {
     g3fw::sched_arc_cmd_acp_fence_inc_immediate_t* command =
         reinterpret_cast<g3fw::sched_arc_cmd_acp_fence_inc_immediate_t*>(
@@ -1013,28 +1018,28 @@ void serializeLbwBurstWriteCommand(hcl::ScalStreamBase& scalStream, unsigned sch
     }
 }
 
-void serializeDmaCommand(hcl::ScalStreamBase& scalStream,
-                         unsigned             schedIdx,
-                         uint32_t             dmaType,
-                         uint32_t             soAddressLSB,
-                         uint32_t             size,
-                         uint64_t             destAddress,
-                         uint64_t             srcAddress,
-                         hcclRedOp_t          reduceOp,
-                         uint8_t              streamCtxtID,
-                         hcclDataType_t       dataType,
-                         uint32_t             poolId,
-                         bool                 isForScaleout,
-                         bool                 useCasting,
-                         uint32_t             numberOfRanks,
-                         uint32_t             numberOfSubBuffers,
-                         uint32_t             indexOfSubBuffer,
-                         bool                 is16BitMemcpy,
-                         uint32_t             secondSoAddress,
-                         bool                 isBFloat,
-                         bool                 useReductionInd,
-                         bool                 isFirstWrite,
-                         uint32_t             memsetValue)
+void serializeDmaCommand(hcl::ScalStreamBase&            scalStream,
+                         unsigned                        schedIdx,
+                         uint32_t                        dmaType,
+                         uint32_t                        soAddressLSB,
+                         uint32_t                        size,
+                         uint64_t                        destAddress,
+                         uint64_t                        srcAddress,
+                         hcclRedOp_t                     reduceOp,
+                         uint8_t                         streamCtxtID,
+                         [[maybe_unused]] hcclDataType_t dataType,
+                         uint32_t                        poolId,
+                         bool                            isForScaleout,
+                         bool                            useCasting,
+                         uint32_t                        numberOfRanks,
+                         uint32_t                        numberOfSubBuffers,
+                         uint32_t                        indexOfSubBuffer,
+                         bool                            is16BitMemcpy,
+                         uint32_t                        secondSoAddress,
+                         bool                            isBFloat,
+                         bool                            useReductionInd,
+                         bool                            isFirstWrite,
+                         uint32_t                        memsetValue)
 {
     size_t sizeInBytes = sizeof(g3fw::sched_arc_cmd_nic_edma_ops_t);
     switch (dmaType)
@@ -1133,8 +1138,8 @@ void serializeDmaCommand(hcl::ScalStreamBase& scalStream,
         SET_FIELD(edma_ops->local_class_type, DEFAULT_CACHE_CLASS);
         SET_FIELD(edma_ops->output_hbw_axcache, DEFAULT_CACHE_ALLOC);
         SET_FIELD(edma_ops->output_class_type, DEFAULT_CACHE_CLASS);
-        SET_FIELD(edma_ops->dtype, ((is16BitMemcpy || useCasting) && isBFloat) ? 3 : 2);  // BF / FP
-        SET_FIELD(edma_ops->reduction_ind, 1);
+        SET_FIELD(edma_ops->dtype, get_nic_edma_dtype(dataType, is16BitMemcpy, useCasting, isBFloat));  // BF / FP
+        SET_FIELD(edma_ops->reduction_ind, (useReductionInd ? 1 : 0));
         SET_FIELD(edma_ops->context_id, streamCtxtID);
 
         PRINT_PACKET_TRACE(
@@ -1202,9 +1207,10 @@ void serializeDmaCommand(hcl::ScalStreamBase& scalStream,
         SET_FIELD(edma_ops->dst_addr_hi, destAddress >> 32);
         SET_FIELD(edma_ops->src_addr_lo, srcAddress & 0xffffffff);
         SET_FIELD(edma_ops->src_addr_hi, (srcAddress >> 32) & 0xffffff);
-        SET_FIELD(edma_ops->input_datasize, is16BitMemcpy ? 1 : 2);                       // 16bit / 32bit
-        SET_FIELD(edma_ops->output_datasize, (is16BitMemcpy && !useCasting) ? 1 : 2);     // 16bit / 32bit
-        SET_FIELD(edma_ops->dtype, ((is16BitMemcpy || useCasting) && isBFloat) ? 3 : 2);  // BF / FP
+        SET_FIELD(edma_ops->input_datasize, is16BitMemcpy ? 1 : 2);  // 16bit / 32bit
+        SET_FIELD(edma_ops->output_datasize,
+                  (is16BitMemcpy && !useCasting) || (!is16BitMemcpy && useCasting) ? 1 : 2);  // 16bit / 32bit
+        SET_FIELD(edma_ops->dtype, ((is16BitMemcpy || useCasting) && isBFloat) ? 3 : 2);      // BF / FP
         SET_FIELD(edma_ops->reduction_ind, useReductionInd ? 1 : 0);
         SET_FIELD(edma_ops->context_id, streamCtxtID);
 
@@ -1283,20 +1289,20 @@ void serializeDmaCommand(hcl::ScalStreamBase& scalStream,
     }
 }
 
-void serializePdmaCommand(hcl::ScalStreamBase& scalStream,
-                          unsigned             schedIdx,
-                          bool                 isDownload,
-                          uint64_t             hostAddress,
-                          uint64_t             deviceAddress,
-                          uint32_t             size,
-                          bool                 isReduction,
-                          hcclRedOp_t          reduceOp,
-                          bool                 isCastUp,
-                          uint8_t              apiId,
-                          unsigned             streamIndex,
-                          uint8_t              streamCtxtID,
-                          hcclDataType_t       dataType,
-                          uint32_t             sobAddr)
+void serializePdmaCommand(hcl::ScalStreamBase&            scalStream,
+                          unsigned                        schedIdx,
+                          bool                            isDownload,
+                          uint64_t                        hostAddress,
+                          uint64_t                        deviceAddress,
+                          uint32_t                        size,
+                          bool                            isReduction,
+                          hcclRedOp_t                     reduceOp,
+                          bool                            isCastUp,
+                          uint8_t                         apiId,
+                          [[maybe_unused]] unsigned       streamIndex,
+                          uint8_t                         streamCtxtID,
+                          [[maybe_unused]] hcclDataType_t dataType,
+                          uint32_t                        sobAddr)
 {
     static const unsigned opcodes[(unsigned)hcl::SchedulersIndex::count] = {
         g3fw::SCHED_GC_REDUCTION_ARC_CMD_COUNT,

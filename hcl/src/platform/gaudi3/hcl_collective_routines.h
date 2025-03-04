@@ -96,11 +96,11 @@ public:
                                                   const HCL_Comm comm) override;
 
     // we don't have to memset the buffers since we write for the first time and then perform reduction
-    virtual void memsetIMBsIfNeeded(SliceState&      sendSliceState,
-                                    SliceState&      recvSliceState,
-                                    unsigned int     sizeInBytes,
-                                    hcclDataType_t   dataType,
-                                    hcl::ScalStream* garbageStream) override {};
+    virtual void memsetIMBsIfNeeded([[maybe_unused]] SliceState&      sendSliceState,
+                                    [[maybe_unused]] SliceState&      recvSliceState,
+                                    [[maybe_unused]] unsigned int     sizeInBytes,
+                                    [[maybe_unused]] hcclDataType_t   dataType,
+                                    [[maybe_unused]] hcl::ScalStream* garbageStream) override {};
 
     HclDeviceGaudi3& getDevice() { return *(reinterpret_cast<HclDeviceGaudi3*>(m_device)); }
 

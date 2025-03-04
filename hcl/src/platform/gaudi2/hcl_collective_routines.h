@@ -101,6 +101,8 @@ public:
                                     hcclDataType_t   dataType,
                                     hcl::ScalStream* garbageStream) override;
 
+    virtual void enqueueInternalCompletionSignals() override;
+
 private:
     SendRecvAggregator m_sendRecvAggr;
     HclCommandsGaudi2& m_gaudi2Commands;

@@ -14,7 +14,7 @@
 #include "hcl_log_manager.h"                      // for LOG_ERR, LOG_DEBUG, LOG_INFO
 #include "infra/hcl_debug_stats.h"                // for DEBUG_STATS_...
 
-ofi_communicator::ofi_communicator(std::shared_ptr<MemoryRegion> mr) : my_rank_(-1), m_mr(mr) {}
+ofi_communicator::ofi_communicator() : my_rank_(-1) {}
 
 bool ofi_communicator::initializeCommunicator(int                       hcclRank,
                                               int                       nranks,
@@ -96,7 +96,7 @@ bool ofi_communicator::updateConnections(const HCL_Rank outerRank, const HostNic
             }
             else
             {
-                status = m_ofi_->accept(m_peerRankToConnectionInfo[outerRank][qpSetIndex][hostConnIdx].listenComm,
+                status = m_ofi_->accept(&m_peerRankToConnectionInfo[outerRank][qpSetIndex][hostConnIdx].listenComm,
                                         &m_peerRankToConnectionInfo[outerRank][qpSetIndex][hostConnIdx].recvComm);
                 if (status)
                 {
@@ -122,7 +122,7 @@ bool ofi_communicator::updateConnections(const HCL_Rank outerRank, const HostNic
             }
             else
             {
-                status = m_ofi_->accept(m_peerRankToConnectionInfo[outerRank][qpSetIndex][hostConnIdx].listenComm,
+                status = m_ofi_->accept(&m_peerRankToConnectionInfo[outerRank][qpSetIndex][hostConnIdx].listenComm,
                                         &m_peerRankToConnectionInfo[outerRank][qpSetIndex][hostConnIdx].recvComm);
                 if (status)
                 {
@@ -153,10 +153,9 @@ hcclResult_t ofi_communicator::sendAsync(void*                  sendbuff,
     }
 
     int status = ofiCommOp(CommOp::SEND,
-                           m_peerRankToConnectionInfo[peer][qpSetIndex][hostConnIdx].sendComm,
+                           &m_peerRankToConnectionInfo[peer][qpSetIndex][hostConnIdx].sendComm,
                            sendbuff,
                            size,
-                           m_mr ? m_mr->getMRHandle() : NULL,
                            &handle->ofi.req,
                            m_ofi_,
                            compParams);
@@ -189,10 +188,9 @@ hcclResult_t ofi_communicator::recvAsync(void*                  recvbuff,
     }
 
     int status = ofiCommOp(CommOp::RECV,
-                           m_peerRankToConnectionInfo[peer][qpSetIndex][hostConnIdx].recvComm,
+                           &m_peerRankToConnectionInfo[peer][qpSetIndex][hostConnIdx].recvComm,
                            recvbuff,
                            size,
-                           m_mr ? m_mr->getMRHandle() : NULL,
                            &handle->ofi.req,
                            m_ofi_,
                            compParams);
@@ -229,24 +227,27 @@ bool ofi_communicator::waitForCompletionNb(void* handle, int& done)
 
 bool ofi_communicator::destroy()
 {
-    for (const auto& peerRankConnections : m_peerRankToConnectionInfo)
+    for (auto& peerRankConnections : m_peerRankToConnectionInfo)
     {
         for (uint32_t i = 0; i < m_qpSetCount; ++i)
         {
-            const auto& qpSet = peerRankConnections[i];
-            for (const auto& hnicConn : qpSet)
+            auto& qpSet = peerRankConnections[i];
+            for (auto& hnicConn : qpSet)
             {
-                if (hnicConn.listenComm)
+                if (hnicConn.listenComm.isInitialized)
                 {
                     m_ofi_->close(hnicConn.listenComm);
+                    hnicConn.listenComm.isInitialized = false;
                 }
-                if (hnicConn.sendComm)
+                if (hnicConn.sendComm.isInitialized)
                 {
                     m_ofi_->close(hnicConn.sendComm);
+                    hnicConn.sendComm.isInitialized = false;
                 }
-                if (hnicConn.recvComm)
+                if (hnicConn.recvComm.isInitialized)
                 {
                     m_ofi_->close(hnicConn.recvComm);
+                    hnicConn.recvComm.isInitialized = false;
                 }
             }
         }

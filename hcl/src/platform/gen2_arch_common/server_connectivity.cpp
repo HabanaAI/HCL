@@ -114,37 +114,40 @@ void Gen2ArchServerConnectivity::readDeviceLkdPortsMask()
     m_lkdPortsMaskValid = true;
 }
 
-int Gen2ArchServerConnectivity::getRemoteDevice(const uint16_t port, const HCL_Comm hclCommId) const
+int Gen2ArchServerConnectivity::getRemoteDevice(const uint16_t port, [[maybe_unused]] const HCL_Comm hclCommId) const
 {
     return m_commsRuntimeConnectivity[DEFAULT_COMM_ID]->getRemoteDevice(port);
 }
 
-uint16_t Gen2ArchServerConnectivity::getPeerPort(const uint16_t port, const HCL_Comm hclCommId) const
+uint16_t Gen2ArchServerConnectivity::getPeerPort(const uint16_t port, [[maybe_unused]] const HCL_Comm hclCommId) const
 {
     return m_commsRuntimeConnectivity[DEFAULT_COMM_ID]->getPeerPort(port);
 }
 
-uint16_t Gen2ArchServerConnectivity::getSubPortIndex(const uint16_t port, const HCL_Comm hclCommId) const
+uint16_t Gen2ArchServerConnectivity::getSubPortIndex(const uint16_t                  port,
+                                                     [[maybe_unused]] const HCL_Comm hclCommId) const
 {
     return m_commsRuntimeConnectivity[DEFAULT_COMM_ID]->getSubPortIndex(port);
 }
 
-uint16_t Gen2ArchServerConnectivity::getScaleoutNicFromSubPort(const uint16_t subPort, const HCL_Comm hclCommId) const
+uint16_t Gen2ArchServerConnectivity::getScaleoutNicFromSubPort(const uint16_t                  subPort,
+                                                               [[maybe_unused]] const HCL_Comm hclCommId) const
 {
     return m_commsRuntimeConnectivity[DEFAULT_COMM_ID]->getScaleoutNicFromSubPort(subPort);
 }
 
-bool Gen2ArchServerConnectivity::isScaleoutPort(const uint16_t port, const HCL_Comm hclCommId) const
+bool Gen2ArchServerConnectivity::isScaleoutPort(const uint16_t port, [[maybe_unused]] const HCL_Comm hclCommId) const
 {
     return m_commsRuntimeConnectivity[DEFAULT_COMM_ID]->isScaleoutPort(port);
 }
 
-uint16_t Gen2ArchServerConnectivity::getMaxSubPort(const bool isScaleoutPort, const HCL_Comm hclCommId) const
+uint16_t Gen2ArchServerConnectivity::getMaxSubPort(const bool isScaleoutPort) const
 {
     return m_commsRuntimeConnectivity[DEFAULT_COMM_ID]->getMaxSubPort(isScaleoutPort);
 }
 
-nics_mask_t Gen2ArchServerConnectivity::getAllPortsGlbl(const int deviceId, const HCL_Comm hclCommId) const
+nics_mask_t Gen2ArchServerConnectivity::getAllPortsGlbl(const int                       deviceId,
+                                                        [[maybe_unused]] const HCL_Comm hclCommId) const
 {
     return m_commsRuntimeConnectivity[DEFAULT_COMM_ID]->getAllPortsGlbl(deviceId);
 }
@@ -155,42 +158,43 @@ nics_mask_t Gen2ArchServerConnectivity::getAllPorts(const int         deviceId,
     return m_commsRuntimeConnectivity[DEFAULT_COMM_ID]->getAllPorts(deviceId, enabledExternalPortsMask);
 }
 
-nics_mask_t Gen2ArchServerConnectivity::getScaleOutPortsGlbl(const HCL_Comm hclCommId) const
+nics_mask_t Gen2ArchServerConnectivity::getScaleOutPortsGlbl([[maybe_unused]] const HCL_Comm hclCommId) const
 {
     return m_commsRuntimeConnectivity[DEFAULT_COMM_ID]->getScaleOutPortsGlbl();
 }
 
-nics_mask_t Gen2ArchServerConnectivity::getScaleUpPorts(const HCL_Comm hclCommId) const
+nics_mask_t Gen2ArchServerConnectivity::getScaleUpPorts([[maybe_unused]] const HCL_Comm hclCommId) const
 {
     return m_commsRuntimeConnectivity[DEFAULT_COMM_ID]->getScaleUpPorts();
 }
 
-uint16_t Gen2ArchServerConnectivity::getDefaultScaleUpPort(const HCL_Comm hclCommId) const
+uint16_t Gen2ArchServerConnectivity::getDefaultScaleUpPort([[maybe_unused]] const HCL_Comm hclCommId) const
 {
     return m_commsRuntimeConnectivity[DEFAULT_COMM_ID]->getDefaultScaleUpPort();
 }
 
-uint64_t Gen2ArchServerConnectivity::getExternalPortsMaskGlbl(const HCL_Comm hclCommId) const
+uint64_t Gen2ArchServerConnectivity::getExternalPortsMaskGlbl([[maybe_unused]] const HCL_Comm hclCommId) const
 {
     return m_commsRuntimeConnectivity[DEFAULT_COMM_ID]->getExternalPortsMaskGlbl();
 }
 
-uint16_t Gen2ArchServerConnectivity::getNumScaleUpPorts(const HCL_Comm hclCommId) const
+uint16_t Gen2ArchServerConnectivity::getNumScaleUpPorts([[maybe_unused]] const HCL_Comm hclCommId) const
 {
     return m_commsRuntimeConnectivity[DEFAULT_COMM_ID]->getNumScaleUpPorts();
 }
 
-uint16_t Gen2ArchServerConnectivity::getNumScaleOutPortsGlbl(const HCL_Comm hclCommId) const
+uint16_t Gen2ArchServerConnectivity::getNumScaleOutPortsGlbl([[maybe_unused]] const HCL_Comm hclCommId) const
 {
     return m_commsRuntimeConnectivity[DEFAULT_COMM_ID]->getNumScaleOutPortsGlbl();
 }
 
-uint16_t Gen2ArchServerConnectivity::getScaleoutSubPortIndexGlbl(const uint16_t port, const HCL_Comm hclCommId) const
+uint16_t Gen2ArchServerConnectivity::getScaleoutSubPortIndexGlbl(const uint16_t                  port,
+                                                                 [[maybe_unused]] const HCL_Comm hclCommId) const
 {
     return m_commsRuntimeConnectivity[DEFAULT_COMM_ID]->getScaleoutSubPortIndexGlbl(port);
 }
 
-bool Gen2ArchServerConnectivity::isUpdateScaleOutGlobalContextRequired(const HCL_Comm hclCommId) const
+bool Gen2ArchServerConnectivity::isUpdateScaleOutGlobalContextRequired([[maybe_unused]] const HCL_Comm hclCommId) const
 {
     return m_commsRuntimeConnectivity[DEFAULT_COMM_ID]->isUpdateScaleOutGlobalContextRequired();
 }
@@ -200,17 +204,18 @@ uint16_t Gen2ArchServerConnectivity::getDefaultScaleOutPortByIndex(const uint16_
     return m_lkdEnabledScaleoutPorts(nicIdx);
 }
 
-const nics_mask_t Gen2ArchServerConnectivity::getAllScaleoutPorts(const HCL_Comm hclCommId) const
+const nics_mask_t Gen2ArchServerConnectivity::getAllScaleoutPorts([[maybe_unused]] const HCL_Comm hclCommId) const
 {
     return m_commsRuntimeConnectivity[DEFAULT_COMM_ID]->getAllScaleoutPorts();
 }
 
-uint32_t Gen2ArchServerConnectivity::getBackpressureOffset(const uint16_t nic, const HCL_Comm hclCommId) const
+uint32_t Gen2ArchServerConnectivity::getBackpressureOffset(const uint16_t                  nic,
+                                                           [[maybe_unused]] const HCL_Comm hclCommId) const
 {
     return m_commsRuntimeConnectivity[DEFAULT_COMM_ID]->getBackpressureOffset(nic);
 }
 
-uint16_t Gen2ArchServerConnectivity::getMaxNumScaleUpPortsPerConnection(const HCL_Comm hclCommId) const
+uint16_t Gen2ArchServerConnectivity::getMaxNumScaleUpPortsPerConnection([[maybe_unused]] const HCL_Comm hclCommId) const
 {
     return m_commsRuntimeConnectivity[DEFAULT_COMM_ID]->getMaxNumScaleUpPortsPerConnection();
 }

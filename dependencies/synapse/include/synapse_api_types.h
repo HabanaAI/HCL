@@ -70,8 +70,10 @@ struct SectionHandleExternal; // this is a type that is not defined, used to cre
 struct InternalStreamHandle;
 struct InternalGraphHandle;
 struct EventInterfaceExternal;
+struct ErrorInterfaceExternal;
 
 typedef struct EventInterfaceExternal*  synEventHandle;
+typedef struct ErrorInterfaceExternal*  synErrorHandle;
 typedef struct InternalRecipeHandle*    synRecipeHandle;
 
 typedef struct SectionHandleExternal*   synSectionHandle;

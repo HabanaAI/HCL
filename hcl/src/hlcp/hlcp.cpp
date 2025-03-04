@@ -34,7 +34,7 @@ bool hlcp_t::send_payload()
     return transport_->send(tx_.cmd->payload(), tx_.cmd->payload_size());
 }
 
-void hlcp_t::on_send(const packet_t& p, socket_base_t& s)
+void hlcp_t::on_send([[maybe_unused]] const packet_t& p, [[maybe_unused]] socket_base_t& s)
 {
     if (tx_.state == header)  // header send complete
     {
@@ -128,7 +128,7 @@ bool hlcp_t::check_payload()
 {
     if (rx_.packet.msg.payload_size > rx_.cmd->payload_size())
     {
-        // network packet payload has more data then user expects
+        // network packet payload has more data than user expects
         notify_->on_error(rx_.cmd, rx_.packet, (*this), "payload size mismatch");
         return false;
     }
@@ -136,7 +136,7 @@ bool hlcp_t::check_payload()
     return (rx_.cmd->payload_size() > 0);
 }
 
-void hlcp_t::on_recv(const packet_t& p, socket_base_t& s)
+void hlcp_t::on_recv([[maybe_unused]] const packet_t& p, socket_base_t& s)
 {
     HLCP_LOG("{}:{} state: {} {}", s, rx_.packet, rx_.state, rx_.cmd);
 

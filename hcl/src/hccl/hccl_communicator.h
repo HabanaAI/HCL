@@ -12,43 +12,35 @@
 
 #pragma once
 
-#include <cstddef>                                // for size_t
-#include <cstdint>                                // for uint64_t, uint8_t
-#include <map>                                    // for map
-#include <memory>                                 // for unique_ptr
-#include <utility>                                // for move
-#include <vector>                                 // for vector
+#include <cstddef>  // for size_t
+#include <cstdint>  // for uint*
+#include <vector>   // for vector
+#include <mutex>    // for mutex, condition_variable
+
 #include "hccl_types.h"                           // for hcclResult_t, hcclD...
 #include "hcl_api_types.h"                        // for HCL_CollectiveOp
 #include "interfaces/hcl_idevice.h"               // for IHclDevice
 #include "ofi_communicator.h"                     // for host_communicator_h...
 #include "interfaces/hcl_unique_sorted_vector.h"  // for UniqueSortedVector
-#include "hcl_dynamic_communicator.h"
-#include "coordinator/qp_migration.h"  // for IMigrationCallback
+#include "hcl_dynamic_communicator.h"             // for HclDynamicCommunicator
+#include "coordinator/qp_migration.h"             // for IMigrationCallback
 #include "coordinator_defs.h"
-
-class ofi_component_t;
-
-struct hcclHandle;
-struct hcclOpParams;
-struct internal_unique_id_t;
-
-struct RankInfo;
 
 class hccl_communicator : public IMigrationCallback
 {
 public:
     hccl_communicator(int rank, int comm_size);
+    virtual ~hccl_communicator() = default;
 
-    hcclResult_t initialize(const internal_unique_id_t* comm_unique_id,
-                            const nics_mask_t           failedScaleOutPortsMask,
-                            spHcclCoordinatorClient     coordClient = nullptr);
+    hcclResult_t initialize(const internal_unique_id_t* comm_unique_id);
 
     hcclResult_t sendCollectiveLogErr();
 
     bool destroy();
 
     void finalize(bool lockStreams = true);
+
+    hcclResult_t update_comm();
 
     hcclResult_t comm_count(int* count);
 
@@ -113,12 +105,8 @@ public:
 
     // * * * Point-to-point
 
-    hcclResult_t hccl_receive(void*          recvbuff,
-                              size_t         count,
-                              hcclDataType_t datatype,
-                              int            peer,
-                              void*          stream_handle,
-                              uint8_t        apiId);
+    hcclResult_t
+    hccl_receive(void* recvbuff, size_t count, hcclDataType_t datatype, int peer, void* stream_handle, uint8_t apiId);
 
     hcclResult_t hccl_send(const void*    sendbuff,
                            size_t         count,
@@ -134,31 +122,31 @@ public:
 
     spHcclCoordinatorClient getCoordClient() { return m_coordClient; };
 
-    const uint64_t getCollectiveCtr();
+    const uint64_t getCollectiveCtr() const;
     void           incCollectiveCtr();
 
-    const uint64_t getSendCtr(int peer);
-    const uint64_t incSendCtr(int peer);
-    const uint64_t getRecvCtr(int peer);
-    const uint64_t incRecvCtr(int peer);
-
-    void          deleteCommConnections();
-    hcclComm_t*   getCommHandle();
-    hcclUniqueId* getCommId();
-    void          setIDs(hcclComm_t* commHandle, hcclUniqueId* commId);
+    const uint64_t getSendCtr(const HCL_Rank peer) const;
+    const uint64_t incSendCtr(const HCL_Rank peer);
+    const uint64_t getRecvCtr(const HCL_Rank peer) const;
+    const uint64_t incRecvCtr(const HCL_Rank peer);
 
     HclDynamicCommunicator*       getDynamicComm();
     const HclDynamicCommunicator& getDynamicCommConst() const;
 
     virtual void mcNicStateChange(const NicState& nicState) override;
 
+    void checkFaultToleranceStopCommCollApiUntil();  // called by HCL API functions to check if to stop comm specific
+                                                     // collectives API's
+
+    void checkFaultToleranceStopCommSendRecvApiUntil();  // called by HCL API group end to check if to stop comm
+                                                         // specific S/R API's
+
 private:
     hcclResult_t openConnections(bool isLoopbackModeOrNullSubmission);
 
-    hcclResult_t firstHandShakeAtInit(RankInfoHeader& header, std::vector<RankInfoHeader>& hcclRankInfoHeaders);
+    hcclResult_t exchangeRankData(RankInfoHeader& header, std::vector<RankInfoHeader>& hcclRankInfoHeaders);
 
-    hcclResult_t secondHandShakeAtInit(std::vector<RemoteDeviceConnectionInfo>& hcclRemoteDevices,
-                                       bool                                     isLoopbackModeOrNullSubmission);
+    hcclResult_t exchangeQpsData(bool isLoopbackModeOrNullSubmission);
 
     void initializeRanks(std::vector<RankInfoHeader>& hcclRankInfoHeaders,
                          uint32_t                     commSize,
@@ -166,11 +154,10 @@ private:
 
     hcclResult_t initializeConnections(bool isLoopbackModeOrNullSubmission);
 
-    hcclResult_t finalizeInitialization(std::vector<RemoteDeviceConnectionInfo>& hcclRemoteDevices,
-                                        bool                                     isLoopbackModeOrNullSubmission);
+    hcclResult_t finalizeInitialization(bool isLoopbackModeOrNullSubmission);
 
-    void buildSecondHandShakeRemoteInfoBuffer(RankInfoBuffer& rankInfoBuffer) const;
-    void prepareSendRecvCountersRemoteInfoBuffer(RankInfoBuffer& rankInfoBuffer) const;
+    void prepareQPsInfo(RankInfoBuffer& rankInfoBuffer) const;
+    void buildMigrationAndCountersDataExchangeBuffer(remote_devices_t& remoteDevicesData, const bool failover);
 
     bool rendezvous();
 
@@ -178,7 +165,26 @@ private:
 
     void     updateRemoteDevices(std::vector<RankInfoHeader>& hcclRankInfo);
     void     updateRemoteDevices(std::vector<RemoteDeviceConnectionInfo>& hcclRemoteDevices);
-    uint64_t getAccumulatedMask(const std::vector<RankInfoHeader>& hcclRankInfoHeaders) const;
+    uint64_t getAccumulatedMask(const std::vector<RankInfoHeader>& RankInfoHeaders) const;
+
+    hcclResult_t updateScaleoutPortMask(const std::vector<RankInfoHeader>& RankInfoHeaders);
+
+    void faultToleranceStopAllApis() const;  // Stop all API's globally (done once for all comms)
+    void faultToleranceStopCommApisUntil(
+        const RankApiCounters& stopUntil);     // Stop all collectives and S/R API's until specific counters set
+    void faultToleranceStopCommAllApis();      // Stop all collective and S/R API calls
+    void faultToleranceResumeAllApis() const;  // Resumes all API's globally (done once for all comms)
+    void faultToleranceResumeCommApis();       // Resume all collective and S/R API calls
+    void faultTolerancePrepareMySendRecvCounters(RankInfoBuffer& rankInfoBuffer) const;
+    void faultTolerancePrepareMyCollectivesApiCounter(RankInfoBuffer& rankInfoBuffer) const;
+    void faultToleranceCalcAllRanksMaxCounters(RankApiCounters&        maxRankApiCountersData,
+                                               const remote_devices_t& hcclRemoteDevices);
+    void faultTolerancePollUntilApiReach(const RankApiCounters& maxRankApiCountersData);
+    void mcNicStateShutdown(const uint32_t logicalPort);
+    void mcNicStateUp(const uint32_t logicalPort);
+    void stopApis();
+    void resumeUntil(const RankApiCounters& maxRankApiCountersData);
+    void resumeApis();
 
     spHcclCoordinatorClient m_coordClient;
     int                     m_boxSize;
@@ -187,6 +193,11 @@ private:
 
     HclDynamicCommunicator* m_comm = nullptr;
 
-    hcclComm_t*  m_commHandle = nullptr;
-    hcclUniqueId m_commId;
+    std::condition_variable m_faultsStopCommApiCv;        // CV to block user API threads on specific comm
+    std::mutex              m_faultsStopCommApiMutex;     // Mutex for above CV
+    RankApiCounters         m_faultStopUntilApiCounters;  // To stop collective and S/R API calls until this limit.
+                                                          // When ULLONG_MAX its unblocked.
+                                                          // when 0 its blocked unconditionally
+
+    nics_mask_t m_lkdBadMask = 0;
 };

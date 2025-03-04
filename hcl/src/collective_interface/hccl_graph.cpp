@@ -16,46 +16,52 @@ void HcclGraph::addWait(hcclPrim_t signaler, hcclPrim_t waiter)
 
 void HcclGraph::setupExecSets()
 {
-    m_executionSets.emplace_back();
+    m_completionSets.emplace_back();
     uint8_t prevTypeMask = 0, typeMask = 0;
-    for (hcclPrim_t prim : m_prims)
+    for (hcclPrim_t extractedPrim : m_prims)
     {
-        if (prim->execSet() >= 0) continue;  // already set
+        typeMask = 0;
+        if (extractedPrim->execSet() >= 0) continue;
         else
         {
-            std::queue<hcclPrim_t>  prims;
-            std::vector<hcclPrim_t> subGraph;
-            prims.push(prim);
+            std::vector<hcclPrim_t> primsToSet;
+            bool                    allocatedNewSet = false;
+            std::vector<hcclPrim_t> subGraph        = {extractedPrim};
 
-            while (!prims.empty())
+            for (hcclSyncInfo* sync : extractedPrim->waiters())
             {
-                auto temp = prims.front();
-                typeMask |= (1 << temp->type());
-                for (hcclSyncInfo* sync : temp->waiters())
-                {
-                    prims.push(sync->m_waiter);
-                }
-                prims.pop();
+                subGraph.push_back(sync->m_waiter);
+            }
 
-                if ((prevTypeMask & (1 << temp->type())) == 0)
+            for (hcclPrim_t prim : subGraph)
+            {
+                if (((typeMask | prevTypeMask) & (1 << prim->type())) == 0)
                 {
-                    subGraph.push_back(temp);
+                    typeMask |= (1 << prim->type());
+                    primsToSet.push_back(prim);
                 }
                 else
                 {
-                    typeMask &= (~prevTypeMask);
-                    if (temp->isHead()) subGraph.push_back(temp);
-                    m_executionSets.emplace_back();
-                    break;
+                    if (!allocatedNewSet)
+                    {
+                        m_completionSets.emplace_back();
+                        allocatedNewSet = true;
+                        prevTypeMask    = 0;
+                    }
+                    if (((typeMask & (1 << prim->type())) == 0))
+                    {
+                        typeMask |= (1 << prim->type());
+                        primsToSet.push_back(prim);
+                    }
                 }
             }
 
-            prevTypeMask = typeMask;
+            prevTypeMask |= typeMask;
 
-            for (hcclPrim_t primToSet : subGraph)
+            for (hcclPrim_t primToSet : primsToSet)
             {
-                m_executionSets.back().emplace(primToSet->type(), primToSet);
-                primToSet->setExecSet(m_executionSets.size() - 1);
+                m_completionSets.back().prims.push_back(primToSet);
+                primToSet->setExecSet(m_completionSets.size() - 1);
                 LOG_HCL_DEBUG(HCL,
                               "set prim {} of type {} to exec set {}",
                               primToSet->primIdx(),
@@ -70,14 +76,14 @@ hcclResult_t HcclGraph::submit()
 {
     setupExecSets();
     uint64_t startVal = m_graphEngine->initGraph(this);
-    for (size_t j = 0; j < m_executionSets.size(); j++)
+    for (size_t j = 0; j < m_completionSets.size(); j++)
     {
-        std::map<int, hcclPrim_t>& exec = m_executionSets[j];
+        PrimCompletionDescriptor exec = m_completionSets[j];
         m_graphEngine->initExec(this, j);
         m_requestedWaits = 0;
-        for (const std::pair<int, hcclPrim_t> pair : exec)
+        for (hcclPrim_t prim : exec.prims)
         {
-            pair.second->process(m_graphEngine);
+            prim->process(m_graphEngine);
         }
         m_graphEngine->finalizeExec(this, j);
     }
@@ -90,4 +96,19 @@ int HcclGraph::getWaits(bool incRequests)
     int oldVal = m_requestedWaits;
     m_requestedWaits += incRequests;
     return oldVal;
+}
+
+BufferToken HcclGraph::generateBufferToken(BufferType type)
+{
+    return bufferGenerator.generateBufferToken(type);
+}
+
+bool HcclGraph::checkTypeAllocation(BufferType type)
+{
+    return bufferGenerator.checkTypeAllocation(type);
+}
+
+void HcclGraph::verifyHandle(const BufferToken& handle)
+{
+    return bufferGenerator.verifyHandle(handle);
 }

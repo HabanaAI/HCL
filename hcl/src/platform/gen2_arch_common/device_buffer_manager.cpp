@@ -8,33 +8,32 @@
 #include "hcl_log_manager.h"  // for LOG_*
 #include "hcl_math_utils.h"
 #include "infra/scal/gen2_arch_common/scal_manager.h"  // for getHBMBaseVAAddress
+#include "infra/buffer_handle_generator.h"
 #include "platform/gen2_arch_common/buffer_manager_base.h"
 #include "platform/gen2_arch_common/intermediate_buffer_container.h"  // for IntermediateBufferContainer
 
 DeviceBufferManager::DeviceBufferManager(std::array<BufferParams, MAX_NUM_POOL_SIZES> bufferParams,
-                                         const std::vector<unsigned>&                 sizes)
+                                         const std::map<e_devicePoolID, unsigned>&    sizes)
 : BufferManagerBase(bufferParams, sizes)
 {
-    unsigned poolIndex = 0;
-    for (size_t index = 0; index < m_bufferParams.size(); index++)
+    unsigned gcfgFactor                   = GCFG_HCL_SCALEOUT_BUFFER_FACTOR.value();
+    unsigned poolBase[MAX_NUM_POOL_SIZES] = {0, 0};
+    for (auto const& sizeEntry : m_poolSizes)
     {
-        unsigned poolBase = 0;
-        for (size_t internalPoolIndex = 0; internalPoolIndex < m_bufferParams[index].m_numPoolTypes;
-             internalPoolIndex++)
-        {
-            m_poolBases.push_back(poolBase);
-            m_creditManagers.emplace_back(m_poolSizes[poolIndex] / getFactor(static_cast<e_devicePoolID>(poolIndex)));
-            poolBase += m_poolSizes[poolIndex];
-            poolIndex++;
-        }
+        e_devicePoolID poolIndex = sizeEntry.first;
+        m_poolBases.emplace(poolIndex, poolBase[getPoolSizeIndex((e_devicePoolID)poolIndex)]);
+        m_creditManagers.emplace(poolIndex,
+                                 m_poolSizes.at(poolIndex) / getFactor(static_cast<e_devicePoolID>(poolIndex)));
+        poolBase[getPoolSizeIndex((e_devicePoolID)poolIndex)] += m_poolSizes.at(poolIndex);
     }
-    VERIFY(GCFG_HCL_SCALEOUT_BUFFER_FACTOR.value() <= MAX_SCALEOUT_FACTOR,
+    VERIFY(gcfgFactor <= MAX_SCALEOUT_FACTOR,
            "HCL_SCALEOUT_BUFFER_FACTOR({}) is expected to be <= {}",
-           GCFG_HCL_SCALEOUT_BUFFER_FACTOR.value(),
+           gcfgFactor,
            MAX_SCALEOUT_FACTOR);
-    VERIFY(GCFG_HCL_SCALEOUT_BUFFER_FACTOR.value() > 1,
-           "HCL_SCALEOUT_BUFFER_FACTOR({}) is expected to be > 1",
-           GCFG_HCL_SCALEOUT_BUFFER_FACTOR.value());
+    VERIFY(gcfgFactor > MIN_SCALEOUT_FACTOR,
+           "HCL_SCALEOUT_BUFFER_FACTOR({}) is expected to be > {}",
+           gcfgFactor,
+           MIN_SCALEOUT_FACTOR);
 }
 
 const unsigned DeviceBufferManager::getFactor(const e_devicePoolID poolIdx)
@@ -44,15 +43,49 @@ const unsigned DeviceBufferManager::getFactor(const e_devicePoolID poolIdx)
     {
         factor = s_scaleupFactor;
     }
-    else if (poolIdx == SCALEOUT_POOL)
+    else if ((poolIdx == SCALEOUT_POOL) ||
+             ((poolIdx == SCALEOUT_POOL_1) && (GCFG_HCL_RS_SO_RECV_CONT_REDUCTION.value())))
     {
-        factor = DeviceBufferManager::s_gcfgFactor;
+        factor = GCFG_HCL_SCALEOUT_BUFFER_FACTOR.value();
+    }
+    else if (poolIdx == SCALEOUT_ACC_POOL)
+    {
+        factor = RS_CONT_REDUC_SO_POOL_AMOUNT;
     }
 
     return factor;
 }
 
-unsigned DeviceBufferManager::s_gcfgFactor = GCFG_HCL_SCALEOUT_BUFFER_FACTOR.value();
+e_devicePoolID DeviceBufferManager::fetchPool(const BufferToken& bufferHandle)
+{
+    e_devicePoolID ret;
+    switch (bufferHandle.bufferType)
+    {
+        case TEMP_BUFFER:
+            ret = SCALEUP_AND_ALL2ALL_POOL;
+            break;
+
+        case STATIC_BUFFER:
+            ret = PRIMITIVE_POOL;
+            break;
+
+        default:
+            ret = NO_POOL;
+            break;
+    }
+    return ret;
+}
+
+bool DeviceBufferManager::isPoolAllocated(e_devicePoolID poolIdx)
+{
+    return m_poolSizes.count(poolIdx) > 0;
+}
+
+bool DeviceBufferManager::isSiboPool(e_devicePoolID poolIdx)
+{
+    return poolIdx == SCALEOUT_POOL || poolIdx == SCALEOUT_POOL_1 || poolIdx == SCALEOUT_ACC_POOL ||
+           poolIdx == SCALEUP_AND_ALL2ALL_POOL;
+}
 
 uint32_t DeviceBufferManager::getSliceId(e_devicePoolID poolIdx, uint32_t streamId)
 {
@@ -84,7 +117,7 @@ uint64_t DeviceBufferManager::getBufferBaseAddr(const unsigned index) const
 
 unsigned DeviceBufferManager::getPoolBufferSize(const e_devicePoolID poolIdx) const
 {
-    return m_poolSizes[poolIdx] / getFactor(poolIdx);
+    return m_poolSizes.at(poolIdx) / getFactor(poolIdx);
 }
 
 uint64_t DeviceBufferManager::getSingleBufferSize(const e_devicePoolID poolIdx) const
@@ -110,16 +143,17 @@ uint64_t DeviceBufferManager::getCurrentBuffer(const e_devicePoolID poolIdx)
     return getBufferBaseAddr(poolIdx) + (((idx * factor) + m_poolBases[poolIdx]) * getSingleBufferSize(poolIdx));
 }
 
-int64_t DeviceBufferManager::getCurrentTargetValue(const e_devicePoolID poolIdx, const hcclRedOp_t reduceOp)
+int64_t DeviceBufferManager::getCurrentTargetValue(const e_devicePoolID               poolIdx,
+                                                   [[maybe_unused]] const hcclRedOp_t reduceOp)
 {
     return m_creditManagers[poolIdx].getCurrentTargetValue();
 }
 
 void DeviceBufferManager::advanceProg(uint64_t currTargetValue)
 {
-    for (CreditManager& creditManager : m_creditManagers)
+    for (auto& creditManagerEntry : m_creditManagers)
     {
-        creditManager.advanceProg(currTargetValue);
+        creditManagerEntry.second.advanceProg(currTargetValue);
     }
 }
 
@@ -135,16 +169,17 @@ uint64_t DeviceBufferManager::allocNextBuffer(uint64_t targetValue, const e_devi
 
 unsigned DeviceBufferManager::getPoolSizeIndex(const e_devicePoolID poolIdx)
 {
-    if (poolIdx == SCALEOUT_POOL)
+    if ((poolIdx == SCALEOUT_POOL && !GCFG_HCL_RS_SO_RECV_CONT_REDUCTION.value()) || poolIdx == SCALEOUT_ACC_POOL ||
+        poolIdx == PRIMITIVE_POOL)
     {
-        return 0;
+        return DOUBLE_SLICE_SIZE_POOL_IDX;
     }
     else if (poolIdx == NO_POOL)
     {
         VERIFY(false, "Unsupported poolIdx");
     }
 
-    return 1;
+    return STANDARD_SLICE_SIZE_POOL_IDX;
 }
 
 unsigned DeviceBufferManager::getPoolSizeIndexByAddr(uint64_t address)

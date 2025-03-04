@@ -12,14 +12,18 @@
 
 #pragma once
 
-#include <cstddef>               // for size_t
-#include <cstdint>               // for uint32_t
-#include <memory>                // for shared_ptr
-#include <vector>                // for vector
-#include "hccl_internal_defs.h"  // for hccl_rank_discovery_data_t (ptr only)
-#include "hccl_types.h"          // for hcclResult_t
+#include <cstddef>         // for size_t
+#include <cstdint>         // for uint32_t
+#include <memory>          // for shared_ptr
+#include <vector>          // for vector
+#include "hccl_types.h"    // for hcclResult_t
+#include "qp_migration.h"  // for NicState
 #include "collective_logger.h"
 #include "interfaces/hcl_unique_sorted_vector.h"
+#include "futex.h"
+
+using futex_t  = FutexLock;
+using locker_t = std::lock_guard<futex_t>;
 
 class IHcclCoordinatorClient
 {
@@ -42,8 +46,6 @@ public:
                                            const HCL_Rank         peer,
                                            const HCL_Rank         root) = 0;
 
-    virtual hcclResult_t sendCollectiveLogErr() = 0;
-
     virtual hcclResult_t sendRecvFromRanks(UniqueSortedVector& nonPeerRemoteRanks,
                                            std::vector<void*>& recvBuffers,
                                            std::vector<void*>& sendBuffers,
@@ -51,7 +53,7 @@ public:
 
     virtual bool rendezvous(const UniqueSortedVector& remoteRanks) = 0;
 
-    virtual bool sendNicStateChange(const class NicState& nicState)         = 0;
+    virtual bool sendNicStateChange(const NicState& nicState)               = 0;
     virtual bool exchangeMigrationData(int                   nranks,
                                        const RankInfoBuffer& myInfo,
                                        uint32_t              rankInfoBufferSize,

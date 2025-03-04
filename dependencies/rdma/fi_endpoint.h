@@ -67,8 +67,17 @@ enum {
 	FI_OPT_TX_SIZE,
 	FI_OPT_RX_SIZE,
 	FI_OPT_FI_HMEM_P2P,		/* int */
-	FI_OPT_XPU_TRIGGER,		/* struct fi_trigger_xpu */
+	FI_OPT_XPU_TRIGGER,		/* reserved for compatibility */
 	FI_OPT_CUDA_API_PERMITTED,	/* bool */
+	FI_OPT_SHARED_MEMORY_PERMITTED, /* bool */
+	FI_OPT_MAX_MSG_SIZE,		/* size_t */
+	FI_OPT_MAX_TAGGED_SIZE,		/* size_t */
+	FI_OPT_MAX_RMA_SIZE,		/* size_t */
+	FI_OPT_MAX_ATOMIC_SIZE,		/* size_t */
+	FI_OPT_INJECT_MSG_SIZE,		/* size_t */
+	FI_OPT_INJECT_TAGGED_SIZE,	/* size_t */
+	FI_OPT_INJECT_RMA_SIZE,		/* size_t */
+	FI_OPT_INJECT_ATOMIC_SIZE,	/* size_t */
 };
 
 /*

@@ -23,8 +23,7 @@
 #include <unordered_set>     // for unordered_set, unordered_set...
 #include <vector>            // for vector
 #include <future>            // for future
-#include "infra/futex.h"     // for Futex
-#include <mutex>             // for mutex
+#include "infra/get_class_name.hpp"
 
 #include "hccl_types.h"       // for hcclResult_t
 #include "hcl_api_types.h"    // for HCL_CollectiveOp
@@ -33,11 +32,10 @@
 #include "hcl_global_conf.h"  // for GCFG_HCL_ALIVE_ON_FAILURE
 #include "hcl_types.h"        // for HCL_MAC_BYTE_SIZE, SRAM_REDU...
 #include "hcl_log_manager.h"  // for LOG_ERR, LogManager, LOG_CRI...
-#include "version.h"          // for HL_DRIVER_MAJOR, HL_DRIVER_M...
-#include <cxxabi.h>
 
-#include "internal/dfa_defines.hpp"  // for DfaPhase
-#include "internal/hcl_api.hpp"      // for hclNotifyFailure
+#include "internal/hcl_api.hpp"  // for hclNotifyFailure
+
+#include "version.h"  // for HL_DRIVER_MAJOR, HL_DRIVER_M...
 
 #define IS_DEVICE_GAUDI2(deviceType)   (deviceType == synDeviceGaudi2)
 #define IS_DEVICE_GAUDI3(deviceType)   (deviceType == synDeviceGaudi3)
@@ -52,63 +50,21 @@
  *
  */
 #define _ALIGN_DOWN(base, size) ((base) & (~((size) - 1)))
-/**
- * LOG_HCL_COMMON will invoke typeid(*this).name() and demangle the returned value (i.e. "7MyClass" -> "MyClass").
- * However, abi::__cxa_demangle (a libstdc++ function) is a bit costly (does a malloc, executes strcmp(), etc). In
- * order to not pay the price, each invocation will create a new code-scope in which the static 'event->name()' and
- * 'hasDemangled' are declared, and the calculation is done ONCE, on the first execution of the log.
- *
- * In other words:
- *
- * void example()
- * {
- *     for (int i = 0; i < 1000; i++)
- *     {
- *         LOG_HCL_INFO(HCL, "abi::__cxa_demangle will only execute once, even though this code is in a 'for'");
- *     }
- *     LOG_HCL_INFO(HCL, "abi::__cxa_demangle will execute once more, since it's a different code invocation :-)");
- * }
- */
-extern volatile hcclResult_t g_status;
 
-#define LOG_HCL_COMMON                                                                                                 \
-    static std::string __class__;                                                                                      \
-    static bool        __hasDemangled = false;                                                                         \
-    if (!__hasDemangled)                                                                                               \
-    {                                                                                                                  \
-        static FutexLock            __futex;                                                                           \
-        std::unique_lock<FutexLock> __lk(__futex);                                                                     \
-        int                         __status;                                                                          \
-        size_t                      __size   = 128;                                                                    \
-        char*                       __buffer = static_cast<char*>(std::malloc(__size));                                \
-        VERIFY(nullptr != abi::__cxa_demangle(typeid(*this).name(), __buffer, &__size, &__status),                     \
-               "Demangling typeid().name() failed");                                                                   \
-        __class__    = std::string(__buffer);                                                                          \
-        size_t __pos = __class__.find('<');                                                                            \
-        if (__pos != std::string::npos)                                                                                \
-        {                                                                                                              \
-            __class__ = std::string(__buffer).substr(0, __pos);                                                        \
-        }                                                                                                              \
-        std::free(__buffer);                                                                                           \
-        __hasDemangled = true;                                                                                         \
-    }
+extern volatile hcclResult_t g_status;
 
 /**
  * LOG_HCL_INFO(HCL, "msg") will produce a log line such as:
  * [info] MyClass::run msg
  */
-
 #define _HCL_LOG_(KIND, log_type, msg, ...)                                                                            \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        LOG_HCL_COMMON                                                                                                 \
-        LOG_##KIND(log_type,                                                                                           \
-                   "{}{}::{} " msg,                                                                                    \
-                   std::string(g_logContext[(unsigned)HLLOG_ENUM_TYPE_NAME::log_type], ' '),                           \
-                   __class__,                                                                                          \
-                   __func__,                                                                                           \
-                   ##__VA_ARGS__);                                                                                     \
-    } while (false)
+    LOG_##KIND(log_type,                                                                                               \
+               "{:{}}{}::{} " msg,                                                                                     \
+               "",                                                                                                     \
+               g_logContext[(unsigned)HLLOG_ENUM_TYPE_NAME::log_type],                                                 \
+               CLASS_NAME,                                                                                             \
+               __func__,                                                                                               \
+               ##__VA_ARGS__);
 
 #define LOG_HCL_TRACE(log_type, msg, ...)    _HCL_LOG_(TRACE, log_type, msg, ##__VA_ARGS__)
 #define LOG_HCL_DEBUG(log_type, msg, ...)    _HCL_LOG_(DEBUG, log_type, msg, ##__VA_ARGS__)
@@ -172,95 +128,71 @@ private:
     _HCL_LOG_(CRITICAL, log_type, msg, ##__VA_ARGS__);                                                                 \
     LOG_CONTEXT_INIT(log_type)
 
-#define LOG_HCL_HEADER(log_type)                                                                                       \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        LOG_HCL_COMMON                                                                                                 \
-        LOG_TRACE(HCL, "{}::{}", __class__, __func__);                                                                 \
-    } while (false)
+#define LOG_HCL_HEADER(log_type) LOG_TRACE(HCL, "{}::{}", CLASS_NAME, __func__);
 
 /**
  * LOG_HCL_EVENT_INFO(HCL, event, "msg") will produce a log line such as:
  * [info] MyClass::run(->1) eventID(2) queueOffset(3) msg
  */
 #define LOG_HCL_EVENT_TRACE(log_type, event, msg, ...)                                                                 \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        LOG_HCL_COMMON                                                                                                 \
-        LOG_TRACE(log_type,                                                                                            \
-                  "{}::{}(->{}) eventID({}) queueOffset({}) " msg,                                                     \
-                  event->name(),                                                                                       \
-                  __func__,                                                                                            \
-                  event->m_remoteRank,                                                                                 \
-                  event->eventId(),                                                                                    \
-                  event->m_physicalQueueOffset,                                                                        \
-                  ##__VA_ARGS__);                                                                                      \
-    } while (false)
+    LOG_TRACE(log_type,                                                                                                \
+              "{}::{}(->{}) eventID({}) queueOffset({}) " msg,                                                         \
+              event->name(),                                                                                           \
+              __func__,                                                                                                \
+              event->m_remoteRank,                                                                                     \
+              event->eventId(),                                                                                        \
+              event->m_physicalQueueOffset,                                                                            \
+              ##__VA_ARGS__);
+
 #define LOG_HCL_EVENT_DEBUG(log_type, event, msg, ...)                                                                 \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        LOG_HCL_COMMON                                                                                                 \
-        LOG_DEBUG(log_type,                                                                                            \
-                  "{}::{}(->{}) eventID({}) queueOffset({}) " msg,                                                     \
-                  event->name(),                                                                                       \
-                  __func__,                                                                                            \
-                  event->m_remoteRank,                                                                                 \
-                  event->eventId(),                                                                                    \
-                  event->m_physicalQueueOffset,                                                                        \
-                  ##__VA_ARGS__);                                                                                      \
-    } while (false)
+    LOG_DEBUG(log_type,                                                                                                \
+              "{}::{}(->{}) eventID({}) queueOffset({}) " msg,                                                         \
+              event->name(),                                                                                           \
+              __func__,                                                                                                \
+              event->m_remoteRank,                                                                                     \
+              event->eventId(),                                                                                        \
+              event->m_physicalQueueOffset,                                                                            \
+              ##__VA_ARGS__);
+
 #define LOG_HCL_EVENT_INFO(log_type, event, msg, ...)                                                                  \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        LOG_HCL_COMMON                                                                                                 \
-        LOG_INFO(log_type,                                                                                             \
-                 "{}::{}(->{}) eventID({}) queueOffset({}) " msg,                                                      \
-                 event->name(),                                                                                        \
-                 __func__,                                                                                             \
-                 event->m_remoteRank,                                                                                  \
-                 event->eventId(),                                                                                     \
-                 event->m_physicalQueueOffset,                                                                         \
-                 ##__VA_ARGS__);                                                                                       \
-    } while (false)
+    LOG_INFO(log_type,                                                                                                 \
+             "{}::{}(->{}) eventID({}) queueOffset({}) " msg,                                                          \
+             event->name(),                                                                                            \
+             __func__,                                                                                                 \
+             event->m_remoteRank,                                                                                      \
+             event->eventId(),                                                                                         \
+             event->m_physicalQueueOffset,                                                                             \
+             ##__VA_ARGS__);
+
 #define LOG_HCL_EVENT_WARN(log_type, event, msg, ...)                                                                  \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        LOG_HCL_COMMON                                                                                                 \
-        LOG_WARN(log_type,                                                                                             \
+    LOG_WARN(log_type,                                                                                                 \
+             "{}::{}(->{}) eventID({}) queueOffset({}) " msg,                                                          \
+             event->name(),                                                                                            \
+             __func__,                                                                                                 \
+             event->m_remoteRank,                                                                                      \
+             event->eventId(),                                                                                         \
+             event->m_physicalQueueOffset,                                                                             \
+             ##__VA_ARGS__);
+
+#define LOG_HCL_EVENT_ERR(log_type, event, msg, ...)                                                                   \
+    LOG_ERR(log_type,                                                                                                  \
+            "{}::{}(->{}) eventID({}) queueOffset({}) " msg,                                                           \
+            event->name(),                                                                                             \
+            __func__,                                                                                                  \
+            event->m_remoteRank,                                                                                       \
+            event->eventId(),                                                                                          \
+            event->m_physicalQueueOffset,                                                                              \
+            ##__VA_ARGS__);
+
+#define LOG_HCL_EVENT_CRITICAL(log_type, event, msg, ...)                                                              \
+    LOG_CRITICAL(log_type,                                                                                             \
                  "{}::{}(->{}) eventID({}) queueOffset({}) " msg,                                                      \
                  event->name(),                                                                                        \
                  __func__,                                                                                             \
                  event->m_remoteRank,                                                                                  \
                  event->eventId(),                                                                                     \
                  event->m_physicalQueueOffset,                                                                         \
-                 ##__VA_ARGS__);                                                                                       \
-    } while (false)
-#define LOG_HCL_EVENT_ERR(log_type, event, msg, ...)                                                                   \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        LOG_HCL_COMMON                                                                                                 \
-        LOG_ERR(log_type,                                                                                              \
-                "{}::{}(->{}) eventID({}) queueOffset({}) " msg,                                                       \
-                event->name(),                                                                                         \
-                __func__,                                                                                              \
-                event->m_remoteRank,                                                                                   \
-                event->eventId(),                                                                                      \
-                event->m_physicalQueueOffset,                                                                          \
-                ##__VA_ARGS__);                                                                                        \
-    } while (false)
-#define LOG_HCL_EVENT_CRITICAL(log_type, event, msg, ...)                                                              \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        LOG_HCL_COMMON                                                                                                 \
-        LOG_CRITICAL(log_type,                                                                                         \
-                     "{}::{}(->{}) eventID({}) queueOffset({}) " msg,                                                  \
-                     event->name(),                                                                                    \
-                     __func__,                                                                                         \
-                     event->m_remoteRank,                                                                              \
-                     event->eventId(),                                                                                 \
-                     event->m_physicalQueueOffset,                                                                     \
-                     ##__VA_ARGS__);                                                                                   \
-    } while (false)
+                 ##__VA_ARGS__);
 
 #define LOG_LEVEL_RATELIMITTER_CHECK(log_type, rate, loglevel, msg, ...)                                               \
     do                                                                                                                 \
@@ -303,52 +235,62 @@ private:
     LOG_LEVEL_RATELIMITTER_CHECK(log_type, rate, 5, msg, ##__VA_ARGS__);
 
 #define LOG_HCL_RATELIMITTER_EVENT_TRACE(log_type, rate, event, msg, ...)                                              \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        LOG_HCL_COMMON                                                                                                 \
-        LOG_TRACE_RATELIMITTER(log_type,                                                                               \
-                               rate,                                                                                   \
-                               "{}::{}(->{}) eventID({}) queueOffset({}) " msg,                                        \
-                               event->name(),                                                                          \
-                               __func__,                                                                               \
-                               event->m_remoteRank,                                                                    \
-                               event->eventId(),                                                                       \
-                               event->m_physicalQueueOffset,                                                           \
-                               ##__VA_ARGS__);                                                                         \
-    } while (false)
+    LOG_TRACE_RATELIMITTER(log_type,                                                                                   \
+                           rate,                                                                                       \
+                           "{}::{}(->{}) eventID({}) queueOffset({}) " msg,                                            \
+                           event->name(),                                                                              \
+                           __func__,                                                                                   \
+                           event->m_remoteRank,                                                                        \
+                           event->eventId(),                                                                           \
+                           event->m_physicalQueueOffset,                                                               \
+                           ##__VA_ARGS__);
+
 #define LOG_HCL_RATELIMITTER_EVENT_DEBUG(log_type, rate, event, msg, ...)                                              \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        LOG_HCL_COMMON                                                                                                 \
-        LOG_DEBUG_RATELIMITTER(log_type,                                                                               \
-                               rate,                                                                                   \
-                               "{}::{}(->{}) eventID({}) queueOffset({}) " msg,                                        \
-                               event->name(),                                                                          \
-                               __func__,                                                                               \
-                               event->m_remoteRank,                                                                    \
-                               event->eventId(),                                                                       \
-                               event->m_physicalQueueOffset,                                                           \
-                               ##__VA_ARGS__);                                                                         \
-    } while (false)
+    LOG_DEBUG_RATELIMITTER(log_type,                                                                                   \
+                           rate,                                                                                       \
+                           "{}::{}(->{}) eventID({}) queueOffset({}) " msg,                                            \
+                           event->name(),                                                                              \
+                           __func__,                                                                                   \
+                           event->m_remoteRank,                                                                        \
+                           event->eventId(),                                                                           \
+                           event->m_physicalQueueOffset,                                                               \
+                           ##__VA_ARGS__);
+
 #define LOG_HCL_RATELIMITTER_EVENT_INFO(log_type, rate, event, msg, ...)                                               \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        LOG_HCL_COMMON                                                                                                 \
-        LOG_INFO_RATELIMITTER(log_type,                                                                                \
-                              rate,                                                                                    \
-                              "{}::{}(->{}) eventID({}) queueOffset({}) " msg,                                         \
-                              event->name(),                                                                           \
-                              __func__,                                                                                \
-                              event->m_remoteRank,                                                                     \
-                              event->eventId(),                                                                        \
-                              event->m_physicalQueueOffset,                                                            \
-                              ##__VA_ARGS__);                                                                          \
-    } while (false)
+    LOG_INFO_RATELIMITTER(log_type,                                                                                    \
+                          rate,                                                                                        \
+                          "{}::{}(->{}) eventID({}) queueOffset({}) " msg,                                             \
+                          event->name(),                                                                               \
+                          __func__,                                                                                    \
+                          event->m_remoteRank,                                                                         \
+                          event->eventId(),                                                                            \
+                          event->m_physicalQueueOffset,                                                                \
+                          ##__VA_ARGS__);
+
 #define LOG_HCL_RATELIMITTER_EVENT_WARN(log_type, rate, event, msg, ...)                                               \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        LOG_HCL_COMMON                                                                                                 \
-        LOG_WARN_RATELIMITTER(log_type,                                                                                \
+    LOG_WARN_RATELIMITTER(log_type,                                                                                    \
+                          rate,                                                                                        \
+                          "{}::{}(->{}) eventID({}) queueOffset({}) " msg,                                             \
+                          event->name(),                                                                               \
+                          __func__,                                                                                    \
+                          event->m_remoteRank,                                                                         \
+                          event->eventId(),                                                                            \
+                          event->m_physicalQueueOffset,                                                                \
+                          ##__VA_ARGS__);
+
+#define LOG_HCL_RATELIMITTER_EVENT_ERR(log_type, rate, event, msg, ...)                                                \
+    LOG_ERR_RATELIMITTER(log_type,                                                                                     \
+                         rate,                                                                                         \
+                         "{}::{}(->{}) eventID({}) queueOffset({}) " msg,                                              \
+                         event->name(),                                                                                \
+                         __func__,                                                                                     \
+                         event->m_remoteRank,                                                                          \
+                         event->eventId(),                                                                             \
+                         event->m_physicalQueueOffset,                                                                 \
+                         ##__VA_ARGS__);
+
+#define LOG_HCL_RATELIMITTER_EVENT_CRITICAL(log_type, rate, event, msg, ...)                                           \
+    LOG_CRITICAL_RATELIMITTER(log_type,                                                                                \
                               rate,                                                                                    \
                               "{}::{}(->{}) eventID({}) queueOffset({}) " msg,                                         \
                               event->name(),                                                                           \
@@ -356,36 +298,7 @@ private:
                               event->m_remoteRank,                                                                     \
                               event->eventId(),                                                                        \
                               event->m_physicalQueueOffset,                                                            \
-                              ##__VA_ARGS__);                                                                          \
-    } while (false)
-#define LOG_HCL_RATELIMITTER_EVENT_ERR(log_type, rate, event, msg, ...)                                                \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        LOG_HCL_COMMON                                                                                                 \
-        LOG_ERR_RATELIMITTER(log_type,                                                                                 \
-                             rate,                                                                                     \
-                             "{}::{}(->{}) eventID({}) queueOffset({}) " msg,                                          \
-                             event->name(),                                                                            \
-                             __func__,                                                                                 \
-                             event->m_remoteRank,                                                                      \
-                             event->eventId(),                                                                         \
-                             event->m_physicalQueueOffset,                                                             \
-                             ##__VA_ARGS__);                                                                           \
-    } while (false)
-#define LOG_HCL_RATELIMITTER_EVENT_CRITICAL(log_type, rate, event, msg, ...)                                           \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        LOG_HCL_COMMON                                                                                                 \
-        LOG_CRITICAL_RATELIMITTER(log_type,                                                                            \
-                                  rate,                                                                                \
-                                  "{}::{}(->{}) eventID({}) queueOffset({}) " msg,                                     \
-                                  event->name(),                                                                       \
-                                  __func__,                                                                            \
-                                  event->m_remoteRank,                                                                 \
-                                  event->eventId(),                                                                    \
-                                  event->m_physicalQueueOffset,                                                        \
-                                  ##__VA_ARGS__);                                                                      \
-    } while (false)
+                              ##__VA_ARGS__);
 
 #define VERIFY_1(dfa, dfaMsg, condition) VERIFY_2(dfa, dfaMsg, condition, "")
 #define VERIFY_2(dfa, dfaMsg, condition, msg)                                                                          \
@@ -394,7 +307,7 @@ private:
         if (unlikely(!(condition)))                                                                                    \
         {                                                                                                              \
             std::stringstream _ss;                                                                                     \
-            _ss << __FILE__ << "::" << __LINE__ << "(" << __func__ << "): The condition [ " << #condition              \
+            _ss << __FILE__ << ":" << __LINE__ << "(" << __func__ << "): The condition [ " << #condition               \
                 << " ] failed. " << msg << " ";                                                                        \
             std::string error = _ss.str();                                                                             \
             std::cerr << error << std::endl;                                                                           \
@@ -477,7 +390,7 @@ inline bool checkReductionOp(hcclRedOp_t reduceOp)
     return false;
 }
 
-inline unsigned dataTypeSizeInBytes(hcclDataType_t type, bool packed = false)
+inline unsigned dataTypeSizeInBytes(hcclDataType_t type, [[maybe_unused]] bool packed = false)
 {
     switch (type)
     {
@@ -533,9 +446,15 @@ inline int64_t getEnvInt(const char* s, int64_t val = 0)
 
 inline std::string ip2str(uint32_t ip)
 {
-    struct in_addr addr;
-    addr.s_addr = ip;        // s_addr must be in network byte order
+    in_addr addr = {};
+    addr.s_addr  = ip;       // s_addr must be in network byte order
     return inet_ntoa(addr);  // --> "10.1.2.3"
+}
+
+inline std::string ip2str(uint128_t ip6)
+{
+    char ips[INET6_ADDRSTRLEN] = {};
+    return inet_ntop(AF_INET6, &ip6, ips, sizeof(ips));
 }
 
 // Extend std namespace
@@ -607,7 +526,7 @@ inline uint32_t parseIpv4(const std::string& ip)
     return out;
 }
 
-inline void setLogContext(uint32_t deviceId, std::string hostName, uint64_t thread_id)
+inline void setLogContext(uint32_t deviceId, std::string hostName, [[maybe_unused]] uint64_t thread_id)
 {
     hcl::LogManager::instance().setLogContext("host[" + hostName + "] device[" + std::to_string(deviceId) + "]");
     LOG_TRACE(HCL, "Set log context to device {} in host {}", deviceId, hostName);

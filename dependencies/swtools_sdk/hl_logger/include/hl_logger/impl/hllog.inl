@@ -143,6 +143,8 @@ public:
     LazyLogItem() = default;
     LazyLogItem(LazyLogItem const&) = delete;
     LazyLogItem(LazyLogItem&& other) = delete;
+    LazyLogItem& operator=(LazyLogItem const&) = delete;
+    LazyLogItem& operator=(LazyLogItem&&) = delete;
     ~LazyLogItem()
     {
         if (reinterpret_cast<void*>(m_formatter) != m_tupleBuffer)

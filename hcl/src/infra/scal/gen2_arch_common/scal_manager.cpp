@@ -21,7 +21,9 @@ using namespace hcl;
 
 Gen2ArchScalManager::~Gen2ArchScalManager() {}
 
-Gen2ArchScalManager::Gen2ArchScalManager(int fd, HclCommandsGen2Arch& commands) : m_commands(commands) {}
+Gen2ArchScalManager::Gen2ArchScalManager([[maybe_unused]] int fd, HclCommandsGen2Arch& commands) : m_commands(commands)
+{
+}
 
 SmInfo Gen2ArchScalManager::getSmInfo(unsigned archStreamIdx)
 {
@@ -125,7 +127,7 @@ uint64_t Gen2ArchScalManager::getMonitorPayloadAddr(SchedulersIndex schedIdx, un
     return m_scalWrapper->getMonitorPayloadAddr(m_scalNames.schedulersNames[(SchedulersIndex)schedIdx], fenceIdx);
 }
 
-void Gen2ArchScalManager::initGlobalContext(HclDeviceGen2Arch* device, uint8_t apiId)
+void Gen2ArchScalManager::initGlobalContext([[maybe_unused]] HclDeviceGen2Arch* device, [[maybe_unused]] uint8_t apiId)
 {
     LOG_HCL_ERR(HCL_SCAL, "initGlobalContext has not been implemented on this device");
 }
@@ -135,7 +137,7 @@ Gen2ArchScalWrapper::CgComplex Gen2ArchScalManager::getCgInfo(const std::string&
     return m_scalWrapper->getCgInfo(cgName);
 }
 
-void Gen2ArchScalManager::initSimb(HclDeviceGen2Arch* device, uint8_t apiID)
+void Gen2ArchScalManager::initSimb([[maybe_unused]] HclDeviceGen2Arch* device, [[maybe_unused]] uint8_t apiID)
 {
     LOG_HCL_ERR(HCL_SCAL, "initSimb has not been implemented on this device");
 }
@@ -229,7 +231,10 @@ std::string Gen2ArchScalManager::prettyPrint() const
            << " monitorSmIndex=" << m_smInfoArray[i].monitorSmIndex << " monitorSize=" << m_smInfoArray[i].monitorSize
            << " longMonitorBaseIdx=" << m_smInfoArray[i].longMonitorBaseIdx
            << " longMonitorSmIndex=" << m_smInfoArray[i].longMonitorSmIndex
-           << " longMonitorSize=" << m_smInfoArray[i].longMonitorSize << std::endl;
+           << " longMonitorSize=" << m_smInfoArray[i].longMonitorSize
+           << " hfcMonitorBaseIdx=" << m_smInfoArray[i].hfcMonitorBaseIdx
+           << " hfcMonitorSmIndex=" << m_smInfoArray[i].hfcMonitorSmIndex
+           << " hfcMonitorSize=" << m_smInfoArray[i].hfcMonitorSize << std::endl;
 
         ss << "  Internal Completion Groups Info:" << std::endl;
 

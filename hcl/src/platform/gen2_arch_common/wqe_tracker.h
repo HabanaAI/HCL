@@ -23,7 +23,7 @@ typedef std::array<std::vector<std::vector<WqeWraparoundBits>>, (unsigned)QpType
 class WqeTracker
 {
 public:
-    WqeTracker()          = default;
+    WqeTracker(unsigned cgSize = 0) : m_recvWqeEntriesNum(cgSize >> 1) {}
     virtual ~WqeTracker() = default;
 
     WqeTracker(WqeTracker&&)                 = default;  // ALLOW move ctor
@@ -31,9 +31,15 @@ public:
     WqeTracker& operator=(WqeTracker&&)      = delete;
     WqeTracker& operator=(const WqeTracker&) = delete;
 
-    virtual void              incWqe(const HCL_Comm commId, const unsigned rank, const QpType qpType) {}
-    virtual void              resizeDB(const HCL_Comm commId) {}
-    virtual WqeWraparoundBits getWqeWraparoundBits(HCL_Comm commId, unsigned rank, QpType qpType)
+    virtual void incWqe([[maybe_unused]] const HCL_Comm commId,
+                        [[maybe_unused]] const unsigned rank,
+                        [[maybe_unused]] const QpType   qpType)
+    {
+    }
+    virtual void              resizeDB([[maybe_unused]] const HCL_Comm commId) {}
+    virtual WqeWraparoundBits getWqeWraparoundBits([[maybe_unused]] HCL_Comm commId,
+                                                   [[maybe_unused]] unsigned rank,
+                                                   [[maybe_unused]] QpType   qpType)
     {
         return {false, false};
     }

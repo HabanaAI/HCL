@@ -14,7 +14,6 @@
 #include "llvm/small_vector.h"                                // for SmallVector
 #include "hcl_types.h"
 #include "platform/gen2_arch_common/types.h"          // for GEN2ARCH_HLS_BOX_SIZE
-#include "intermediate_buffer_container.h"            // for IntermediateBuffersAmount
 #include "platform/gen2_arch_common/signals/types.h"  // for WaitEvent
 #include "platform/gen2_arch_common/wqe_tracker.h"    // for WqeWraparoundBits
 #include "platform/gen2_arch_common/collective_states.h"
@@ -64,11 +63,16 @@ public:
     virtual void         finalizeExec(HcclGraph* graph, int exec) override;
     virtual hcclResult_t processAgPrim(HcclGraph* graph, HcclPrimAllGather* agPrim) override;
     virtual hcclResult_t processBcastPrim(HcclGraph* graph, HcclPrimBroadcast* bcastPrim) override;
+    virtual hcclResult_t processRsPrim(HcclGraph* graph, HcclPrimReduceScatter* rsPrim) override;
     virtual hcclResult_t processSendPrim(HcclGraph* graph, HcclPrimSend* sendPrim) override;
     virtual hcclResult_t processRecvPrim(HcclGraph* graph, HcclPrimRecv* recvPrim) override;
+    virtual hcclResult_t processReductionPrim(HcclGraph* graph, HcclPrimReduction* reductionPrim) override;
 
-    void barrierArmSchedulers(unsigned requiredCredits, HCL_CollectiveOp currentOp);
-    void configureExternalSoForCompletion(unsigned numSignals);
+    int enqueueWaitsForPrim(HcclPrim* prim, WaitMethod waitMethod, signalEvents_t&& signalEvents);
+
+    void           barrierArmSchedulers(unsigned requiredCredits);
+    void           configureExternalSoForCompletion(LBWBurstData_t& completionInfoArr);
+    LBWBurstData_t getLbwDataForExternalSoCompletion(unsigned numSignals);
 
     void                 onCommInit(const HCL_Comm commId);
     virtual hcclResult_t hclCollectiveCall(HclCollectiveParams& params);
@@ -91,8 +95,30 @@ public:
     virtual void createScaleOutCollectiveOp(hcl::ScalStreamBase&  scalStream,
                                             ScaleOutCollectiveOp& scaleOutCollectiveOp) = 0;
 
-    void streamAddSingleWaitIfNeeded(hcl::ScalStream&                           scalStream,
-                                     llvm_vecsmall::SmallVector<WaitEvent, 8>&& waitEvents);
+    void streamAddSingleWaitIfNeeded(hcl::ScalStream&                                 scalStream,
+                                     const llvm_vecsmall::SmallVector<WaitEvent, 8>&& waitEvents);
+
+    /**
+     * @brief
+     * 1. Fetches the current HFC monitor
+     * 2. Arms it to track the correct SOB + target value.
+     * 3. Specifies the HFC to signal (ADDRL)
+     * 4. Marks the event as done
+     *
+     * @attention Host NICs do not process dataSize==0, so we can skip the monitor arm in this case, but we do need to
+     * wait on the stream, since we don't wait for the host fence.
+     *
+     * @param scalStream scal stream
+     * @param waitEvents vector of wait events, one of which might be registered and so marked as done
+     * @param signalsManager signals manager
+     * @param hfcInfo host fence counter info to signal
+     * @param soAddr the SO address to monitor
+     */
+    void armHFCMonitorIfNeeded(hcl::ScalStream&                                 scalStream,
+                               const llvm_vecsmall::SmallVector<WaitEvent, 8>&& waitEvents,
+                               SignalsManager&                                  signalsManager,
+                               FenceInfo                                        hfcInfo,
+                               const uint32_t                                   soAddr);
 
     uint64_t checkSendRecvDependency(uint64_t address,
                                      uint64_t size,
@@ -110,6 +136,7 @@ public:
     SignalsManager*    getSignalsManager() { return m_signalsManager; }
     uint64_t           getCurrentTargetValue() { return m_longSo.targetValue; }
     int                getArchStream() { return m_streamId; }
+    void               invalidateCommCache(const HCL_Comm comm);
 
     void setGroupContext(const bool value);
     bool getGroupContext() const { return m_groupContext; }
@@ -123,11 +150,29 @@ public:
 
 protected:
     virtual void initCollectiveRoutinesGen2Arch();
-    void         createDmaProgs(SliceState&    sendSliceState,
-                                SliceState&    recvSliceState,
-                                unsigned int   sizeInBytes,
-                                unsigned       requiredCredits,
-                                hcclDataType_t dataType);
+    void         garbageCollectionStreamRecipe(SliceState&    sendSliceState,
+                                               SliceState&    recvSliceState,
+                                               unsigned int   sizeInBytes,
+                                               hcclDataType_t dataType);
+    void         reductionStreamRecipe(hcl::ScalStream& reductionStream,
+                                       SliceState&      sendSliceState,
+                                       unsigned         sliceIter,
+                                       bool             isFirstBox);
+    void         gdrStreamRecipe(hcl::ScalStream& gdrStream,
+                                 SliceState&      sendSliceState,
+                                 SliceState&      recvSliceState,
+                                 unsigned         sliceIter);
+    void         signalingStreamRecipe(hcl::ScalStream& signalingStream, SliceState& sendSliceState, bool isFirstBox);
+    void         scaleoutReductionStreamRecipe(hcl::ScalStream& scaleoutReductionStream,
+                                               SliceState&      sendSliceState,
+                                               SliceState&      recvSliceState,
+                                               unsigned         sliceIter);
+
+    void createDmaProgs(SliceState&    sendSliceState,
+                        SliceState&    recvSliceState,
+                        unsigned int   sizeInBytes,
+                        unsigned       requiredCredits,
+                        hcclDataType_t dataType);
 
     void createScaleUpSendProgs(SliceState&      sliceState,
                                 unsigned         sliceIter,
@@ -199,7 +244,8 @@ protected:
                                           const unsigned   firstBoxIter,
                                           bool             isFirstOp,
                                           HCL_CollectiveOp currentOp,
-                                          int64_t          dependencyTargetVal);
+                                          int64_t          dependencyTargetVal,
+                                          bool             ignoreLongterm = false);
 
     virtual void createScaleUpSendRecvOp(hcl::ScalStreamBase& scalStream,
                                          const SendRecvArray& sendRecvArray,
@@ -216,10 +262,10 @@ protected:
 
     virtual void createScaleUpCollectiveOp(hcl::ScalStreamBase& scalStream, ScaleUpCollectiveOp& op_cmd) = 0;
 
-    void             determineCompletionSO(SliceState& sliceState, bool isFirstBox, bool isLastBox);
+    void             determineCompletionSO(SliceState& sliceState, bool isFirstBox);
     void             provideScaleoutResources(SliceState& sliceState);
     void             provideScaleoutResources(NonCollectiveState& nonCollectiveState);
-    void             negotiateScaleoutResources(SliceState& sliceState, bool isFirstBox, bool isLastBox);
+    void             negotiateScaleoutResources(SliceState& sliceState, bool isFirstBox);
     virtual unsigned countScaleUpSignalsSendRecv(CommonState&   commonState,
                                                  const uint32_t numberOfSendBuckets,
                                                  const uint32_t numberOfRecvBuckets,
@@ -237,6 +283,8 @@ protected:
                                     unsigned int     sizeInBytes,
                                     hcclDataType_t   dataType,
                                     hcl::ScalStream* garbageStream) = 0;
+
+    virtual void enqueueInternalCompletionSignals();
 
     void addScaleoutInternalSOB(SliceState& sliceState, WaitMethod method);
 
@@ -268,7 +316,7 @@ protected:
     bool                              m_groupContext            = false;
     bool                              m_groupContextStrongOrder = false;
     uint64_t                          m_groupMaxTargetValue     = 0;
-    std::vector<e_devicePoolID>       m_memset_buffers          = {SCALEOUT_POOL, REDUCE_POOL};
+    const std::vector<e_devicePoolID> m_memset_buffers          = {SCALEOUT_POOL, REDUCE_POOL, PRIMITIVE_POOL};
     const Gen2ArchServerConnectivity& m_serverConnectivity;
     bool                              m_nullSubmit;
 

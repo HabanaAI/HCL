@@ -47,7 +47,8 @@ private:
         WaitPhase                                        currentPhase = 0;
         unsigned                                         longtermIdx  = 0;
 
-        bool     accumulateSignals = true;
+        bool     accumulateSignals  = true;
+        bool     expectAnotherPhase = false;
         unsigned numSignals;
 
         unsigned numExecutedFences;
@@ -61,7 +62,8 @@ private:
                         WaitMethod                                       waitMethod,
                         WaitPhase                                        waitPhase,
                         unsigned                                         longtermSyncObjIdx,
-                        bool                                             accSignals);
+                        bool                                             accSignals,
+                        bool                                             expectAnotherPhase_);
 
         SignalWaitEvent& operator=(const SignalWaitEvent& other);
         SignalWaitEvent& operator=(SignalWaitEvent&& other) = default;
@@ -69,7 +71,7 @@ private:
         bool             wasSignalled() const;  // returns true if this and all 'nextPhaseEvent' have been signalled
         FenceCheckResult wasFenced(bool checkPhases = true)
             const;  // true if this and all 'nextPhaseEvent' have 'numExecutedFences == numExpectedFences'
-        bool wasCompleted() const;  // returns true if wasSignalled() and wasFenced()
+        bool wasCompleted() const;  // returns true if wasSignalled() and wasFenced() and not expectAnotherPhase
     };
 
     struct WaitPhaseEntry
@@ -91,17 +93,20 @@ public:
     void enqueueWait(WaitEvent                                          waitEvent,
                      llvm_vecsmall::SmallVector<SignalDescription, 8>&& signalEvents,
                      WaitMethod                                         waitMethod,
-                     WaitPhase                                          waitPhase         = 0,
-                     unsigned                                           numExpectedFences = 1,
-                     unsigned                                           longtermIdx       = 0,
-                     bool                                               accSignals        = true);
+                     WaitPhase                                          waitPhase          = 0,
+                     unsigned                                           numExpectedFences  = 1,
+                     unsigned                                           longtermIdx        = 0,
+                     bool                                               accSignals         = true,
+                     bool                                               expectAnotherPhase = false);
 
-    uint32_t enqueueInternalCompletion(SignalEvent signalEvent);
+    void enqueueInternalCompletion(SignalEvent signalEvent);
 
     void allocateResources();
     void updateCompletionTracker(uint64_t targetValue, uint64_t cuid);
     void printGraph();
     bool isGraphLoaded() { return !m_graph->m_firstUse && !m_graph->m_firstCollective; }
+    void invalidateCommCache(const HCL_Comm comm);
+    void newCollective(const HCL_Comm comm);
 
     unsigned getNumSignalsForCompletion() const;
     unsigned getNumSignalsForInternal() const;
@@ -151,10 +156,10 @@ private:
     void updateEventsOnLongterm(Graph* oldGraph);
     void resetGraph();
 
-    std::unordered_map<uint64_t, Graph> m_cache;
-    Graph*                              m_graph = nullptr;
-    Graph                               m_nonCachedGraph;
-    bool                                m_usingCache = false;
+    std::vector<std::unordered_map<uint64_t, Graph>> m_cache;  // every vector entry is for a specific comm
+    Graph*                                           m_graph = nullptr;
+    Graph                                            m_nonCachedGraph;
+    bool                                             m_usingCache = false;
 
     struct CompletionTracker
     {
@@ -192,3 +197,5 @@ private:
 
     WaitPhase getLastPhase(WaitMethod waitMethod, bool ignoreSignals = false) const;
 };
+
+typedef llvm_vecsmall::SmallVector<SignalsManager::SignalDescription, 8> signalEvents_t;

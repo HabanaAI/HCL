@@ -256,11 +256,9 @@ struct tpc_virt_sob_id_t {
 			 * in the multiple of 32, so threshold = 1 means 32
 			 * and 2 means 64 and so on.
 			 */
-			uint16_t sub_soset_id:1;
+			uint16_t :1;
 			/**<
-			 * one SO set of the TPC is divided into two, known
-			 * as sub so sets. This field specifies which sub so
-			 * set to be used
+			 * UNSUPPORTED
 			 */
 		};
 		uint16_t raw;
@@ -299,11 +297,9 @@ struct mme_virt_sob_id_t {
 			 * two, as there are two MMEs. Each MME updates its own
 			 * SOBs.
 			 */
-			uint16_t sub_soset_id:1;
+			uint16_t :1;
 			/**<
-			 * one SO set of the MME is divided into two, known
-			 * as sub so sets. This field specifies which sub so
-			 * set to be used
+			 * UNSUPPORTED
 			 */
 		};
 		uint16_t raw;
@@ -523,13 +519,22 @@ struct rot_wd_ctxt_t {
 } __attribute__ ((aligned(4), __packed__));
 
 /**
+ * \struct  rot_wd_patch_ctxts_t
+ * \brief   ROT engine and sync scheme context
+ * \details ROT engine context and sync scheme context that is patched dynamically
+ */
+struct rot_wd_patch_ctxts_t {
+	struct full_hbm_addr_ctxt_t weight_base_address;
+} __attribute__ ((aligned(4), __packed__));
+
+/**
  * \struct  rot_wd_ctxts_t
  * \brief   Rotator engine and sync scheme context
  * \details Rotator engine context and sync scheme context used for GC
  */
 struct rot_wd_ctxts_t {
 	struct rot_wd_ctxt_t rot_ctxt[WD_CTXT_COUNT];
-	struct full_hbm_addr_ctxt_t weight_base_address_ctxt[WD_CTXT_COUNT];
+	struct rot_wd_patch_ctxts_t patch_ctxt[WD_CTXT_COUNT];
 	uint16_t expert_mapping_ctxt[EXPERT_MAPPING_CTXT_COUNT * EXPERT_MAPPING_ENTRY_COUNT];
 	/**<
 	 * array of contexts for Rotator
@@ -596,13 +601,23 @@ struct mme_wd_ctxt_t {
 } __attribute__ ((aligned(4), __packed__));
 
 /**
+ * \struct  mme_wd_patch_ctxts_t
+ * \brief   mme wd patch ctxt
+ * \details full hbm addr used for patching and fp8_bias value
+ */
+struct mme_wd_patch_ctxts_t {
+	struct full_hbm_addr_ctxt_t weight_base_address;
+	uint32_t fp8_bias_value;
+} __attribute__ ((aligned(4), __packed__));
+
+/**
  * \struct  mme_wd_ctxts_t
  * \brief   MME engine and sync scheme context
  * \details MME engine context and sync scheme context used for GC
  */
 struct mme_wd_ctxts_t {
 	struct mme_wd_ctxt_t mme_ctxt[WD_CTXT_COUNT];
-	struct full_hbm_addr_ctxt_t weight_base_address_ctxt[WD_CTXT_COUNT];
+	struct mme_wd_patch_ctxts_t patch_ctxt[WD_CTXT_COUNT];
 	uint16_t expert_mapping_ctxt[EXPERT_MAPPING_CTXT_COUNT * EXPERT_MAPPING_ENTRY_COUNT];
 	/**<
 	 * array of contexts for MME
@@ -746,13 +761,22 @@ struct edma_wd_ctxt_t {
 } __attribute__ ((aligned(4), __packed__));
 
 /**
+ * \struct  edma_wd_patch_ctxts_t
+ * \brief   EDMA engine and sync scheme context
+ * \details EDMA engine context and sync scheme context that is patched dynamically
+ */
+struct edma_wd_patch_ctxts_t {
+	struct full_hbm_addr_ctxt_t weight_base_address;
+} __attribute__ ((aligned(4), __packed__));
+
+/**
  * \struct  edma_wd_ctxts_t
  * \brief   EDMA engine and sync scheme context
  * \details EDMA engine context and sync scheme context used for GC
  */
 struct edma_wd_ctxts_t {
 	struct edma_wd_ctxt_t edma_ctxt[WD_CTXT_COUNT];
-	struct full_hbm_addr_ctxt_t weight_base_address_ctxt[WD_CTXT_COUNT];
+	struct edma_wd_patch_ctxts_t patch_ctxt[WD_CTXT_COUNT];
 	uint16_t expert_mapping_ctxt[EXPERT_MAPPING_CTXT_COUNT * EXPERT_MAPPING_ENTRY_COUNT];
 	/**<
 	 * array of contexts for EDMA
@@ -924,11 +948,15 @@ struct tpc_wd_ctxt_t {
 	union {
 		uint32_t word2;
 		struct {
-			uint16_t tensor_id: 4;
+			uint16_t tensor_id:4;
 			/**<
 			 * tpc operand to patch (0-15)
 			 */
-			uint16_t reserved1: 12;
+			uint16_t tensor_id2:4;
+			/**<
+			 * tpc operand to patch (0-15)
+			 */
+			uint16_t reserved1:8;
 			/**<
 			 * reserved
 			 */
@@ -949,13 +977,22 @@ struct tpc_wd_ctxt_t {
 } __attribute__ ((aligned(4), __packed__));
 
 /**
+ * \struct  tpc_wd_patch_ctxts_t
+ * \brief   TPC engine and sync scheme context
+ * \details TPC engine context and sync scheme context that is patched dynamically
+ */
+struct tpc_wd_patch_ctxts_t {
+	struct full_hbm_addr_ctxt_t weight_base_address;
+} __attribute__ ((aligned(4), __packed__));
+
+/**
  * \struct  tpc_wd_ctxts_t
  * \brief   TPC engine and sync scheme context
  * \details TPC engine context and sync scheme context used for GC
  */
 struct tpc_wd_ctxts_t {
 	struct tpc_wd_ctxt_t tpc_ctxt[WD_CTXT_COUNT];
-	struct full_hbm_addr_ctxt_t weight_base_address_ctxt[WD_CTXT_COUNT];
+	struct tpc_wd_patch_ctxts_t patch_ctxt[WD_CTXT_COUNT];
 	uint16_t expert_mapping_ctxt[EXPERT_MAPPING_CTXT_COUNT * EXPERT_MAPPING_ENTRY_COUNT];
 	/**<
 	 * Array of contexts for TPC
@@ -1112,7 +1149,7 @@ struct eng_arc_cmd_wd_fence_and_exec_t {
 	 */
 	uint32_t patch_address:1;
 	/**<
-	 * Patch address before execution
+	 * Patch address before execution (Tensor ID 1)
 	 */
 	uint32_t signal_arc:1;
 	/**<
@@ -1126,11 +1163,14 @@ struct eng_arc_cmd_wd_fence_and_exec_t {
 	/**<
 	 * conditional_activation
 	 */
-	uint32_t :6;
+	uint32_t patch_address2:1;
+	/**<
+	 * Patch address before execution (Tensor ID 2)
+	 */
+	uint32_t :5;
 	/**<
 	 * reserved
 	 */
-
 } __attribute__ ((aligned(4), __packed__));
 
 /**
@@ -1380,11 +1420,16 @@ struct nic_glbl_ctxt_t {
 	 * The remote device’s accel index (/dev/accel/accel%d) that is
 	 * connected to this device. Don't care for scaleout NICs
 	 */
-	uint32_t sub_nic_idx:2;
+	uint32_t sub_nic_idx:3;
 	/**<
 	 * The sub-NIC index for this NIC. Range: [0, 2].
 	 */
-	uint32_t reserved1:21;
+	uint32_t ports_per_rank:3;
+	/**<
+	 * active ports that can be used for nic operations. HCL can set this field
+	 * during runtime based on the active number of ports that it intends to use
+	 */
+	uint32_t reserved1:17;
 	/**<
 	 * Reserved
 	 */
@@ -1394,8 +1439,36 @@ struct nic_glbl_ctxt_t {
  * NIC maximum dwords in glbl ctxt
  */
 enum {
-	NIC_MAX_DWORDS_IN_CTXT = 6,
+	NIC_MAX_SOB_POOLS = 32,
+	NIC_MAX_DWORDS_IN_CTXT = 38,
 };
+
+/**
+ * \struct nic_sob_pool_info_t
+ * \brief  NIC completion group info
+ * \details This data structure contains information of the
+ *         completion group base and sob count
+ */
+struct nic_sob_pool_info_t {
+	uint32_t sob_base_index:13;
+	/**<
+	 * Identifies the SOB from the 8192 SOBs in a dcore
+	 */
+	uint32_t dcore_id:2;
+	/**<
+	 * Identifies dcore from the 4 dcores in a NIC
+	 */
+	uint32_t sob_count:8;
+	/**<
+	 * number of SOBs present in this sob_pool
+	 * this will be used to handle wrap around
+	 * scenarios in firmware
+	 */
+	uint32_t :9;
+	/**<
+	 * Reserved
+	 */
+} __attribute__ ((aligned(4), __packed__));
 
 /**
  * \struct  nic_glbl_ctxt_v2_t
@@ -1426,7 +1499,11 @@ struct nic_glbl_ctxt_v2_t {
 			/**<
 			 * sib_acc stride, in other words maximum size of the sib_acc buffer
 			 */
-		};
+			struct nic_sob_pool_info_t sob_pool[NIC_MAX_SOB_POOLS];
+			/**<
+			 * NIC sob pool info
+			 */
+		} __attribute__ ((aligned(4), __packed__));
 		uint32_t raw_dwords[NIC_MAX_DWORDS_IN_CTXT];
 	};
 } __attribute__ ((aligned(4), __packed__));
@@ -1534,9 +1611,13 @@ struct nic_coll_ctxt_dword_t {
 struct nic_comm_desc_t {
 	union {
 		struct {
-			uint32_t qpn:21;
+			uint32_t qpn:16;
 			/**<
 			 * QP index to use for completion
+			 */
+			uint32_t sob_pool_index:5;
+			/**<
+			 * Indexes into sob_pool_info array in nic_sob_pool_info_t
 			 */
 			uint32_t remote_rank_index:3;
 			/**<
@@ -1552,7 +1633,12 @@ struct nic_comm_desc_t {
 			 * bit to tell whether reduction is enabled on this comm descriptor table
 			 * entry
 			 */
-			uint32_t reserved:6;
+			uint32_t sob_inc_delta:6;
+			/**<
+			 * Increment sob_addr by sob_inc_delta, if use_sob_inc_delta is set
+			 * else increment only once
+			 * use sos_num to wrap around to correct overflow of sob address
+			 */
 		} __attribute__ ((aligned(4), __packed__));
 		struct {
 			uint32_t reserved0:21;
@@ -1646,11 +1732,27 @@ struct nic_coll_ctxt_t {
 			 * sob address 0 or 1 is picked.
 			 * Refer to struct nic_sob_t
 			 */
-			uint32_t sync_object_address_1;
-			/**<
-			 * This field is part of DWORD2.
-			 * Refer to struct nic_sob_t
-			 */
+			union {
+				struct {
+					uint32_t pre_inc_sob:1;
+					/**<
+					 * 0 - use SOB address and then increment
+					 * 1 - increment SOB address and then use it
+					 * TODO - Once HCL moves to always pre-increment SOB,
+					 * this struct has to be cleanedup
+					 */
+					uint32_t :31;
+					/**<
+					 * reserved
+					 */
+				} __attribute__ ((aligned(4), __packed__));
+				uint32_t sync_object_address_1;
+				/**<
+				 * This field is part of DWORD2.
+				 * Refer to struct nic_sob_t
+				 */
+			};
+
 			uint32_t buffer_addr_msb;
 			/**<
 			 * This field is part of DWORD3.
@@ -1777,12 +1879,7 @@ struct nic_wd_ctxts_scaleout_t {
 struct arc_cmd_update_glbl_ctxt_t {
 	union {
 		struct {
-			uint32_t update_bitmap:8;
-			/**<
-			 * Number of DWORDS that needs to be udpated in the
-			 * nic_glbl_ctxt_v2_t structure.
-			 */
-			uint32_t reserved:5;
+			uint32_t reserved:13;
 			/**<
 			 * Reserved
 			 */
@@ -1796,26 +1893,12 @@ struct arc_cmd_update_glbl_ctxt_t {
 			 * Updates will be made to glbl ctxt structure starting
 			 * from start_nic_index
 			 */
-			uint32_t num_glbl_ctxt:8;
-			/**<
-			 * Number of uint32_t elements in the glbl_ctxt[] array
-			 * present in this command
-			 */
-			uint32_t nic_opcode:5;
-			/**<
-			 * NIC opcode : NIC_CMD_UPDATE_GLBL_CTXT
-			 */
-		} __attribute__ ((aligned(4), __packed__));
-		struct {
-			uint32_t :19;
-			/**<
-			 * used for fields in the above struct
-			 */
 			uint32_t num_dwords:8;
 			/**<
 			 * Number of dwords present in this command
+			 * payload
 			 */
-			uint32_t :5;
+			uint32_t nic_opcode:5;
 			/**<
 			 * NIC opcode : NIC_CMD_UPDATE_GLBL_CTXT
 			 */
@@ -1833,17 +1916,17 @@ struct arc_cmd_update_glbl_ctxt_t {
  * \details Update the global ctxt for Scaleout NICs
  */
 struct arc_scaleout_cmd_update_glbl_ctxt_t {
-	uint32_t reserved:24;
+	uint32_t reserved:22;
 	/**<
 	 * Reserved
 	 */
-	uint32_t start_nic_idx:2;
+	uint32_t start_nic_idx:3;
 	/**<
 	 * Scaleout NIC index for which nic_glbl_ctxt_t are provided.
 	 * Updates will be made to glbl ctxt structure starting
 	 * from start_nic_index. Valid values = 0, 1 and 2
 	 */
-	uint32_t num_glbl_ctxt:2;
+	uint32_t num_glbl_ctxt:3;
 	/**<
 	 * Number of uint32_t elements in the glbl_ctxt[] array
 	 * present in this command. Max value for scaleout NIC is 3
@@ -1883,7 +1966,15 @@ struct arc_cmd_update_coll_ctxt_t {
 	 * bitmap to indicate update of local reduction indication bit
 	 * in the communicator descriptor table.
 	 */
-	uint32_t reserved0:3;
+	uint32_t update_sob_inc_delta:1;
+	/**<
+	 * Update SOB inc delta in the communicator descriptor table
+	 */
+	uint32_t update_sob_pool_index:1;
+	/**<
+	 * Update SOB pool index in global context
+	 */
+	uint32_t reserved0:1;
 	/**<
 	 * reserved
 	 */
@@ -1933,13 +2024,13 @@ struct arc_cmd_update_coll_ctxt_t {
  *          the SOBs
  */
 struct arc_cmd_coll_ops_short_t {
-	uint32_t cache_line_count:14;
+	uint32_t cache_line_count:13;
 	/**<
 	 * Amount of data in multiples of cache line size that each
 	 * NIC needs to send.
 	 * Value equal to ceil(ceil(cell_size / NIC_CACHE_LINE_SIZE_IN_ELEMENTS) / 3)
 	 */
-	uint32_t cache_line_remainder:2;
+	uint32_t cache_line_remainder:3;
 	/**<
 	 * Remainder to be subtracted from cache_line_count value to calculate
 	 * the size of the data to be sent by NIC.
@@ -1960,10 +2051,11 @@ struct arc_cmd_coll_ops_short_t {
 	 * nic_size calculation and is applied after that. This means each sub nic will calculate
 	 * offset only for within the rank but not between remote ranks.
 	 */
-	uint32_t sob_index:1;
+	uint32_t use_sob_inc_delta:1;
 	/**<
-	 * SOB ID to be used from the Collective context
-	 */
+	 * If use_sob_inc_delta is set, increment SOB ID of collective context by delta,
+	 * else increment only once
+ 	 */
 	uint32_t has_size:1;
 	/**<
 	 * Flag to indicate if the size field is present
@@ -2030,10 +2122,11 @@ struct arc_cmd_coll_ops_recv_short_inorder_v2_t {
 		 * only the Sender Sub Nic 2 sends partial data, so the offset
 		 * for receiever Sub Nic 2 is always on cache_line_count boundary.
 		 */
-		uint32_t sob_index:1;
+		uint32_t use_sob_inc_delta:1;
 		/**<
-		 * SOB ID to be used from the Collective context
-		 */
+		 * If use_sob_inc_delta is set, increment SOB ID of collective context by delta,
+		 * else increment only once
+ 		 */
 		uint32_t reserved:3;
 		/**<
 		 * Bitmap which indicates which subranks needs to only do
@@ -2073,7 +2166,7 @@ struct arc_cmd_coll_ops_recv_short_inorder_v2_t {
 		 * Static Intermediate Buffer for Ordering Index
 		 * to calculate the source buffer address
 		 */
-		uint32_t num_ranks:2;
+		uint32_t num_ranks:3;
 		/**<
 		 * Number of ranks that should be received in SIB Accumulation buffer
 		 * Starting from 0, these many ranks stores data into SIB Order buffer
@@ -2099,10 +2192,6 @@ struct arc_cmd_coll_ops_recv_short_inorder_v2_t {
 		 * Tells the FW to push a fence command to the QMAN and wait for all the
 		 * previous rndv acks.
 		 */
-		uint32_t :1;
-		/**<
-		 * Unused
-		 */
 	};
 }  __attribute__ ((aligned(4), __packed__));
 
@@ -2125,7 +2214,7 @@ struct arc_cmd_coll_ops_long_t {
 	/**<
 	 * index into nic_comm_desc_t
 	 */
-	uint32_t cache_line_remainder:2;
+	uint32_t cache_line_remainder:3;
 	/**<
 	 * Remainder to be subtracted from cache_line_count value to calculate
 	 * the size of the data to be sent by NIC.
@@ -2140,10 +2229,6 @@ struct arc_cmd_coll_ops_long_t {
 	uint32_t coll_ctxt_id:4;
 	/**<
 	 * Collective context ID to be used
-	 */
-	uint32_t sob_index:1;
-	/**<
-	 * SOB ID to be used from the Collective context
 	 */
 	uint32_t has_size:1;
 	/**<
@@ -2162,6 +2247,11 @@ struct arc_cmd_coll_ops_long_t {
 	uint32_t buffer_addr_lsb;
 	/**<
 	 * LSB address to send to. MSB is taken from collective context
+	 */
+	uint32_t use_sob_inc_delta:1;
+	/**<
+	 * If use_sob_inc_delta is set, increment SOB ID of collective context by delta,
+	 * else increment only once
 	 */
 	uint32_t element_remainder:6;
 	/**<
@@ -2182,7 +2272,7 @@ struct arc_cmd_coll_ops_long_t {
 	 * Tells the FW to push a fence command to the QMAN and wait for all the
 	 * previous rndv acks.
 	 */
-	uint32_t cache_line_count:24;
+	uint32_t cache_line_count:23;
 	/**<
 	 * Amount of data in multiples of cache line size that each
 	 * NIC needs to send.
@@ -2236,12 +2326,11 @@ struct arc_cmd_send_recv_short_t {
 	/**<
 	 * Flag to increment sync object
 	 */
-	uint32_t sob_index:1;
+	uint32_t use_sob_inc_delta:1;
 	/**<
-	 * Sync Object to be used by this command
-	 * - 0 : SO = 0 from collective context
-	 * - 1 : SO = 1 from collective context
-	 */
+	 * If use_sob_inc_delta is set, increment SOB ID of collective context by delta,
+	 * else increment only once
+ 	 */
 	uint32_t coll_ctxt_id:4;
 	/**<
 	 *  Collective context ID to be used for send/recv
@@ -2264,13 +2353,13 @@ struct arc_cmd_send_recv_short_t {
 	 * Tells the FW to push a fence command to the QMAN and wait for all the
 	 * previous rndv acks.
 	 */
-	uint32_t cache_line_count:22;
+	uint32_t cache_line_count:21;
 	/**<
 	 * Amount of data in multiples of cache line size that each
 	 * NIC needs to send.
 	 * Value equal to ceil(ceil(cell_size / NIC_CACHE_LINE_SIZE_IN_ELEMENTS) / 3)
 	 */
-	uint32_t cache_line_remainder:2;
+	uint32_t cache_line_remainder:3;
 	/**<
 	 * Remainder to be subtracted from cache_line_count value to calculate
 	 * the size of the data to be sent by NIC.
@@ -2299,7 +2388,11 @@ enum {
  *          on NIC
  */
 struct arc_cmd_nic_send_recv_nop_t {
-	uint32_t reserved:15;
+	uint32_t reserved:11;
+	uint32_t comm_desc_index:4;
+	/**<
+	 * Communicator descriptor index in QPN table
+	 */
 	uint32_t queue_credits_bytes:6;
 	/**<
 	 * queue credits in bytes to be released by
@@ -2310,11 +2403,10 @@ struct arc_cmd_nic_send_recv_nop_t {
 	/**<
 	 * Flag to increment sync object
 	 */
-	uint32_t sob_index:1;
+	uint32_t use_sob_inc_delta:1;
 	/**<
-	 * Sync Object to be used by this command
-	 * - 0 : SO = 0 from collective context
-	 * - 1 : SO = 1 from collective context
+	 * If use_sob_inc_delta is set, increment SOB ID of collective context by delta,
+	 * else increment only once
 	 */
 	uint32_t coll_ctxt_id:4;
 	/**<
@@ -2358,7 +2450,7 @@ enum nic_edma_datasizes_t {
 	NIC_EDMA_8BITS = 0x0,
 	NIC_EDMA_16BITS = 0x1,
 	NIC_EDMA_32BITS = 0x2,
-	NIC_EDMA_DTYPE_MAX = 0x3
+	NIC_EDMA_DSIZE_MAX = 0x3
 };
 
 /**
@@ -2370,7 +2462,8 @@ enum nic_edma_datatypes_t {
 	NIC_EDMA_UNSIGNED = 0x0,
 	NIC_EDMA_SIGNED = 0x1,
 	NIC_EDMA_FP = 0x2,
-	NIC_EDMA_BF = 0x3
+	NIC_EDMA_BF = 0x3,
+	NIC_EDMA_DTYPE_MAX = 0x4
 };
 
 /**
@@ -2795,6 +2888,21 @@ struct nic_coll_ops_scaleout_qpn_desc_t {
 
 } __attribute__ ((aligned(4), __packed__));
 
+struct nic_coll_ops_scaleout_qpn_desc_v2_t {
+	uint16_t remote_scaleout_index;
+	/**<
+	 * Index of remote scaleout NIC
+	 */
+	uint16_t qpn_subnic[6];
+	/**<
+	 * QPN for subnics 0 to 5
+	 */
+	uint16_t reserved;
+	/**<
+	 * reserved
+	 */
+} __attribute__ ((aligned(4), __packed__));
+
 /**
  * \struct  arc_cmd_coll_ops_scaleout_t
  * \brief   Perform send/recv operation on scaleout NICs
@@ -2828,7 +2936,12 @@ struct arc_cmd_coll_ops_scaleout_t {
 		/**<
 		 * Number of dwords to be updated by this bitmask
 		 */
-		uint32_t reserved:5;
+		uint32_t is_qpn_desc_v2:1;
+		/**<
+		 * 0 - qpn desc is of nic_coll_ops_scaleout_qpn_desc_t
+		 * 1 - qpn desc is of nic_coll_ops_scaleout_qpn_desc_v2_t
+		 */
+		uint32_t reserved:3;
 		/**<
 		 * Reserved
 		 */
@@ -2846,7 +2959,7 @@ struct arc_cmd_coll_ops_scaleout_t {
 		/**<
 		 * Count of QPN descriptors received as a part of command
 		 */
-		uint32_t cache_line_remainder:2;
+		uint32_t cache_line_remainder:3;
 		/**<
 		 * Remainder to be subtracted from cache_line_count value to calculate
 		 * the size of the data to be sent by NIC.
@@ -2909,6 +3022,11 @@ struct arc_cmd_coll_ops_scaleout_t {
 	 */
 	struct nic_coll_ops_scaleout_qpn_desc_t qpn_desc[0];
 	/**<
+	 * This field is not present always and is indicated by qpn_desc_count field.
+	 */
+	struct nic_coll_ops_scaleout_qpn_desc_v2_t qpn_desc_v2[0];
+	/**<
+	 * This is to send qpn descriptor for scaleout upto 6 NIC ports
 	 * This field is not present always and is indicated by qpn_desc_count field.
 	 */
 }  __attribute__ ((aligned(4), __packed__));

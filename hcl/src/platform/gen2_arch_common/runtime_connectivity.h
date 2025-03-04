@@ -33,7 +33,7 @@ public:
                       const ServerConnectivityUserConfig& usersConnectivityConfig,
                       const bool                          readLkdPortsMask);  // can be overriden for unit tests
 
-    virtual void onCommInit(HclDynamicCommunicator& dynamicComm) const {};
+    virtual void onCommInit([[maybe_unused]] HclDynamicCommunicator& dynamicComm) const {};
     int          getRemoteDevice(const uint16_t port) const;
     uint16_t     getPeerPort(const uint16_t port) const;
     uint16_t     getSubPortIndex(const uint16_t port) const;
@@ -101,14 +101,14 @@ struct SetPortsMaskInput
 {
     const HCL_Comm                    comm;
     const Gen2ArchServerConnectivity& serverConnectivity;
-    const nics_mask_t                 operationalScaleOutPortsMask;
+    const nics_mask_t                 operationalScaleOutPortsMask;  // Logical scaleout ports mask
     const int                         moduleId;
 };
 
 struct SetPortsMaskOutput
 {
-    nics_mask_t enabledExternalPortsMask;
-    uint64_t    scaleOutPortsMask = 0;
+    nics_mask_t enabledExternalPortsMask;  // Physical scaleout ports mask
+    uint64_t    scaleOutPortsMask = 0;     // Physical scaleout ports mask
 };
 SetPortsMaskOutput setPortsMasksCommon(const SetPortsMaskInput input);
 }  // namespace RuntimePortsMasksUtils

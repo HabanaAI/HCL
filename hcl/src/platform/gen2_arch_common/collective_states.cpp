@@ -41,6 +41,7 @@ CommonState::CommonState(HclCollectiveParams& other,
   m_isRootBox(m_dynamicComm.getMyScaleupGroup() == m_rootBox),
   m_isHostNic(isHostNic),
   m_isGdr(isGdr),
+  m_isRSContReduction(GCFG_HCL_RS_SO_RECV_CONT_REDUCTION.value()),
   m_workDistributionGroupSize(workDistributionGroupSize),
   m_numScaleOutPorts(numScaleOutPorts),
   m_dataTypeSizeInBytes(dataTypeSizeInBytes(m_dataType)),
@@ -50,7 +51,7 @@ CommonState::CommonState(HclCollectiveParams& other,
   m_maxNumScaleUpPortsPerConnection(maxNumScaleUpPortsPerConnection),
   m_signalsCalculator(&signalsCalculator)
 {
-    initCollectiveOp(GCFG_HCL_IS_SINGLE_PEER_BROADCAST_ALLOWED.value());
+    initCollectiveOp();
 
     checkInPlaceOp();
     setIsReductionCollective();
@@ -64,6 +65,7 @@ CommonState::CommonState(HclCollectiveParams& other,
 
 CommonState::CommonState(HclCollectiveParams& other,
                          DeviceBufferManager& intermediateBufferManager,
+                         bool                 isGdr,
                          unsigned             workDistributionGroupSize,
                          const unsigned       maxNumScaleUpPortsPerConnection,
                          unsigned             numScaleOutPorts,
@@ -78,6 +80,8 @@ CommonState::CommonState(HclCollectiveParams& other,
   m_isRoot(m_root == m_dynamicComm.getMyRank()),
   m_isRootPeer(isRootPeerExclusive(m_dynamicComm.getMyRank())),
   m_isRootBox(m_dynamicComm.getMyScaleupGroup() == m_rootBox),
+  m_isGdr(isGdr),
+  m_isRSContReduction(GCFG_HCL_RS_SO_RECV_CONT_REDUCTION.value()),
   m_workDistributionGroupSize(workDistributionGroupSize),
   m_numScaleOutPorts(numScaleOutPorts),
   m_dataTypeSizeInBytes(dataTypeSizeInBytes(m_dataType)),
@@ -113,7 +117,6 @@ uint64_t CommonState::calculateCUID(bool isFirstBox, bool isLastBox)
     ret.isFloat             = (m_dataType == hcclFloat32 || m_dataType == hcclFloat16);
     ret.isBf16              = (m_dataType == hcclBfloat16);
     ret.all2allIter         = m_all2allIter;
-    ret.comm                = m_comm;
     ret.boxIterPhase        = m_boxIter % DeviceBufferManager::getFactor(SCALEOUT_POOL);
     ret.firstBox            = isFirstBox;
     ret.lastBox             = isLastBox;
@@ -162,6 +165,11 @@ bool CommonState::isHostNic() const
 bool CommonState::isGDR() const
 {
     return m_isGdr;
+}
+
+bool CommonState::isRSContReduction() const
+{
+    return m_isRSContReduction;
 }
 
 bool CommonState::isRemainderAllowedForCollective() const
@@ -353,16 +361,11 @@ uint64_t CommonState::getIntermediateBuffer(e_devicePoolID poolIndex)
     return m_intermediateBufferManager.getCurrentBuffer(poolIndex);
 }
 
-void CommonState::initCollectiveOp(const bool singlePeerBroadcastAllowed)
+void CommonState::initCollectiveOp()
 {
     if (m_collectiveOp == eHCLBroadcast)
     {
-        if ((m_count * m_dataTypeSizeInBytes) <= GCFG_HCL_COMPLEX_BCAST_MIN_SIZE.value() ||
-            m_dynamicComm.getScaleupGroupSize() <= 2)
-        {
-            m_collectiveOp = eHCLSimpleBroadcast;
-        }
-        else if (singlePeerBroadcastAllowed && (GCFG_HCL_USE_SINGLE_PEER_BROADCAST.value() || !m_isMultiScaleupGroup))
+        if (GCFG_HCL_USE_SINGLE_PEER_BROADCAST.value() && !m_isMultiScaleupGroup)
         {
             m_collectiveOp = eHCLSinglePeerBroadcast;
         }
@@ -387,12 +390,13 @@ bool CommonState::isLongtermGPSORequired(const unsigned boxIter)
     {
         case eHCLBroadcast:
             return m_currentOp == eHCLScatter && !isRoot() &&
+                   !(m_isMultiScaleupGroup && m_dynamicComm.getScaleupGroupSize() == 1) &&
                    ((m_dynamicComm.getMyScaleupGroup() == rootBox() && isSelfBox) ||
                     (m_dynamicComm.getMyScaleupGroup() != rootBox() && boxIter == 1));
             break;
 
         case eHCLSinglePeerBroadcast:
-            return m_currentOp == eHCLScatter && !isRootOrRootPeer() &&
+            return m_currentOp == eHCLScatter && !isRootOrRootPeer() && m_dynamicComm.getScaleupGroupSize() > 2 &&
                    ((m_dynamicComm.getMyScaleupGroup() == rootBox() && isSelfBox) ||
                     (m_dynamicComm.getMyScaleupGroup() != rootBox() && boxIter == 1));
             break;
@@ -950,19 +954,26 @@ void CommonState::calcScaleoutLongterm()
     if (m_isMultiScaleupGroup &&
         (m_collectiveOp == eHCLReduceScatter || m_collectiveOp == eHCLAllReduce || m_collectiveOp == eHCLReduce))
     {
-        m_scaleoutLongtermAmount =
-            (m_scaleoutBuffersAmount >= m_boxIterations)
-                ? 1
-                : (2 * m_scaleoutBuffersAmount >= m_boxIterations ? (m_boxIterations + 1 - m_scaleoutBuffersAmount)
-                                                                  : m_scaleoutBuffersAmount + 1);
+        if (isRSContReduction())
+        {
+            // for each scaleout pool we need 2 longterm gpso, and another one for the temp buffer.
+            m_scaleoutLongtermAmount = RS_CONT_REDUC_SO_POOL_AMOUNT * 2 + 1;
+        }
+        else
+        {
+            m_scaleoutLongtermAmount =
+                (m_scaleoutBuffersAmount >= m_boxIterations)
+                    ? 1
+                    : (2 * m_scaleoutBuffersAmount >= m_boxIterations ? (m_boxIterations + 1 - m_scaleoutBuffersAmount)
+                                                                      : m_scaleoutBuffersAmount + 1);
+            VERIFY(m_scaleoutLongtermAmount <= m_scaleoutBuffersAmount + 1);
+        }
     }
     else
     {
         // Default, doesn't mean necessarily that a longterm gpso will be allocated.
         m_scaleoutLongtermAmount = 1;
     }
-
-    VERIFY(m_scaleoutLongtermAmount <= m_scaleoutBuffersAmount + 1);
 }
 
 void CommonState::determineSyncUpBufferWithLtu()
@@ -1094,6 +1105,84 @@ unsigned CommonState::getBroadcastScatterOpBoxIterations() const
     return std::min(m_boxIterations, 2u);
 }
 
+bool CommonState::isBufferReductionIter() const
+{
+    /* Reduction required when buffer is full, i.e. when current box iteration is a multiple of scaleoutBuffersAmount,
+     * or on last box iteration. */
+    VERIFY(isRSContReduction(), "Invalid call to isBufferReductionIter");
+    bool isLastBoxIter   = m_boxIter == (m_boxIterations - 1);
+    bool isBufferEndIter = mod(m_boxIter + 1, m_scaleoutBuffersAmount) == 0;
+    return isLastBoxIter || isBufferEndIter;
+}
+
+bool CommonState::isLastBufferReductionIter() const
+{
+    /* There will not be any more buffer reduction iterations (i.e. buffer reuse) if there aren't enough iterations left
+     * to fill all other available scaleout buffers. */
+    VERIFY(isRSContReduction(), "Invalid call to isLastBufferReductionIter");
+    return isBufferReductionIter() &&
+           ((m_boxIter + (RS_CONT_REDUC_SO_POOL_AMOUNT - 1) * m_scaleoutBuffersAmount) >= (m_boxIterations - 1));
+}
+
+e_devicePoolID CommonState::calcScaleoutBufferPool() const
+{
+    /* Every (m_scaleoutBuffersAmount * 2) iterations there is another buffer reuse cycle, the scaleout buffer pool is
+     * switched every m_scaleoutBuffersAmount iterations. */
+    if (!isRSContReduction()) return SCALEOUT_POOL;
+
+    return (mod(m_boxIter, m_scaleoutBuffersAmount * RS_CONT_REDUC_SO_POOL_AMOUNT) < m_scaleoutBuffersAmount)
+               ? e_devicePoolID::SCALEOUT_POOL_0
+               : e_devicePoolID::SCALEOUT_POOL_1;
+}
+
+bool CommonState::isAnotherPhaseWaitEventForFullBufferExpects() const
+{
+    /* if there will be buffer reuse, then expect another phase */
+    VERIFY(isRSContReduction(), "Invalid call to isAnotherPhaseWaitEventForFullBufferExpects");
+    return isBufferReductionIter() && !isLastBufferReductionIter();
+}
+
+WaitEvent CommonState::getWaitEventForFullBuffer() const
+{
+    VERIFY(isRSContReduction(), "Invalid call to getWaitEventForFullBuffer");
+    return e_devicePoolID::SCALEOUT_POOL_0 == calcScaleoutBufferPool()
+               ? WaitEvent::CONT_BATCH_REDUCTION_WAIT_FOR_FULL_BUFFER_0
+               : WaitEvent::CONT_BATCH_REDUCTION_WAIT_FOR_FULL_BUFFER_1;
+}
+
+WaitEvent CommonState::getWaitEventForContBatchReduction() const
+{
+    VERIFY(isRSContReduction(), "Invalid call to getWaitEventForContBatchReduction");
+    return e_devicePoolID::SCALEOUT_POOL_0 == calcScaleoutBufferPool()
+               ? WaitEvent::RS_SO_RECV_WAIT_FOR_CONT_BATCH_REDUCTION_0
+               : WaitEvent::RS_SO_RECV_WAIT_FOR_CONT_BATCH_REDUCTION_1;
+}
+
+unsigned CommonState::getScaleoutLongtermOffset(WaitEvent waitEvent) const
+{
+    VERIFY(isRSContReduction(), "Invalid call to calcScaleoutLongtermOffset");
+    VERIFY(waitEvent == WaitEvent::CONT_BATCH_REDUCTION_WAIT_FOR_FULL_BUFFER_0 ||
+               waitEvent == WaitEvent::CONT_BATCH_REDUCTION_WAIT_FOR_FULL_BUFFER_1 ||
+               waitEvent == WaitEvent::RS_SO_RECV_WAIT_FOR_CONT_BATCH_REDUCTION_0 ||
+               waitEvent == WaitEvent::RS_SO_RECV_WAIT_FOR_CONT_BATCH_REDUCTION_1 ||
+               waitEvent == WaitEvent::FINAL_REDUCTION_WAIT_FOR_ALL_CONT_BATCH_REDUCTIONS,
+           "{} is invalid wait event",
+           waitEvent);
+    switch (waitEvent)
+    {
+        case WaitEvent::CONT_BATCH_REDUCTION_WAIT_FOR_FULL_BUFFER_0:
+            return 0;
+        case WaitEvent::CONT_BATCH_REDUCTION_WAIT_FOR_FULL_BUFFER_1:
+            return 1;
+        case WaitEvent::RS_SO_RECV_WAIT_FOR_CONT_BATCH_REDUCTION_0:
+            return 2;
+        case WaitEvent::RS_SO_RECV_WAIT_FOR_CONT_BATCH_REDUCTION_1:
+            return 3;
+        default:  // WaitEvent::FINAL_REDUCTION_WAIT_FOR_ALL_CONT_BATCH_REDUCTIONS
+            return 4;
+    };
+}
+
 SliceState::SliceState(const CommonState& commonState,
                        HCL_CollectiveOp   currentOp,
                        bool               isSend,
@@ -1191,6 +1280,11 @@ void SliceState::updateScaleoutCounts(HCL_Rank remoteRank, uint64_t inputCount, 
     m_rankScaleOutCount       = inputCount;
     m_execution.m_cellCount   = inputCount;
     m_execution.m_strideCount = inputCount;
+}
+
+bool SliceState::doReduction()
+{
+    return m_execution.m_doReduction;
 }
 
 void SliceState::setScaleoutAddresses(HclAddressGenerator& addressGenerator, uint64_t offset)
@@ -1362,7 +1456,6 @@ void NonCollectiveState::updateState(const unsigned       remoteBox,
         m_execution.m_deviceAddress = m_addressGenerator.generateScaleOutSendAddress(*this,
                                                                                      0 /* sliceIter, not used */,
                                                                                      remoteBoxNumInfo,
-                                                                                     eHCLNoCollective,
                                                                                      0 /* offset, not used */);
     }
     else
@@ -1372,7 +1465,6 @@ void NonCollectiveState::updateState(const unsigned       remoteBox,
         m_execution.m_deviceAddress = m_addressGenerator.generateScaleOutRecvAddress(*this,
                                                                                      0 /* sliceIter, not used */,
                                                                                      remoteBoxNumInfo,
-                                                                                     eHCLNoCollective,
                                                                                      0 /* offset, not used */);
     }
     m_execution.m_deviceCount = count;
@@ -1396,32 +1488,24 @@ bool NonCollectiveState::isScaleOutRequired() const
 void NonCollectiveState::calcSliceQpSet(const unsigned sliceIter)
 {
     /* Params used to calculate m_qpSet, should be symmetric between ranks */
-    m_qpSet = mod(sliceIter, m_dynamicComm.getMaxScaleOutQpSetsNum());
+    const auto transactionSize  = m_execution.m_deviceCount * m_dataTypeSizeInBytes;
+    const bool isBelowThreshold = m_isHostNic && (transactionSize < m_hnicQpSprayThreshold);
+    // In case qp set are single-qp we use the first qp set
+    // In case qp set is multi qp we use the last qp set which is single-qp
+    m_qpSet = isBelowThreshold ? (m_singleQpPerSet ? 0 : m_qpSetCount)
+                               : mod(sliceIter, m_dynamicComm.getMaxScaleOutQpSetsNum());
 }
 
 std::ostream& operator<<(std::ostream& out, const cuid_t& cuid)
 {
     out << "CUID(0x" << std::hex << cuid.raw << std::dec << ")\n{"
-        << " collectiveOp: " << cuid.collectiveOp
-        << ", currentOp: " << cuid.currentOp
-        << ", inPlace: " << cuid.inPlace
-        << ", isRoot: " << cuid.isRoot
-        << ", isRootPeer: " << cuid.isRootPeer
-        << ", isRootBox: " << cuid.isRootBox
-        << ", isMultiScaleupGroup: " << cuid.isMultiScaleupGroup
-        << ", isPeersOnly: " << cuid.isPeersOnly
-        << ", isHostNic: " << cuid.isHostNic
-        << ", isGaudiDirect: " << cuid.isGaudiDirect
-        << ", isFloat: " << cuid.isFloat
-        << ", isBf16: " << cuid.isBf16
-        << ", all2allIter: " << cuid.all2allIter
-        << ", comm: " << cuid.comm
-        << ", boxIterPhase: " << cuid.boxIterPhase
-        << ", firstBox: " << cuid.firstBox
-        << ", lastBox: " << cuid.lastBox
-        << ", edgeIteration: " << cuid.edgeIteration
-        << ", firstScaleOut: " << cuid.firstScaleOut
-        << ", reserved: " << cuid.reserved
-        << " }";
+        << " collectiveOp: " << cuid.collectiveOp << ", currentOp: " << cuid.currentOp << ", inPlace: " << cuid.inPlace
+        << ", isRoot: " << cuid.isRoot << ", isRootPeer: " << cuid.isRootPeer << ", isRootBox: " << cuid.isRootBox
+        << ", isMultiScaleupGroup: " << cuid.isMultiScaleupGroup << ", isPeersOnly: " << cuid.isPeersOnly
+        << ", isHostNic: " << cuid.isHostNic << ", isGaudiDirect: " << cuid.isGaudiDirect
+        << ", isFloat: " << cuid.isFloat << ", isBf16: " << cuid.isBf16 << ", all2allIter: " << cuid.all2allIter
+        << ", boxIterPhase: " << cuid.boxIterPhase << ", firstBox: " << cuid.firstBox << ", lastBox: " << cuid.lastBox
+        << ", edgeIteration: " << cuid.edgeIteration << ", firstScaleOut: " << cuid.firstScaleOut
+        << ", reserved: " << cuid.reserved << " }";
     return out;
 }

@@ -320,11 +320,13 @@ void Gen2ArchRuntimeConnectivity::setNumScaleOutPortsGlbl()
                 m_enabledScaleoutPortsGlbl[port_index] = true;
                 m_enabledScaleoutSubPortsGlbl.insert(std::make_pair(port_index, sub_port_index_min));
                 sub_port_index_min++;
+                LOG_HCL_INFO(HCL, "scaleout port({}) is enabled", port_index);
             }
             else
             {
                 m_enabledScaleoutSubPortsGlbl.insert(std::make_pair(port_index, sub_port_index_max));
                 sub_port_index_max--;
+                LOG_HCL_INFO(HCL, "scaleout port({}) is disabled", port_index);
             }
         }
     }
@@ -335,7 +337,7 @@ void Gen2ArchRuntimeConnectivity::setNumScaleOutPortsGlbl()
                  m_fullScaleoutPorts.to_str());
     for (const auto kv : m_enabledScaleoutSubPortsGlbl)
     {
-        LOG_HCL_DEBUG(HCL, "m_enabled_scaleout_sub_ports for comm {}: [{}, {}]", m_hclCommId, kv.first, kv.second);
+        LOG_HCL_DEBUG(HCL, "m_enabledScaleoutSubPortsGlbl for comm {}: [{}, {}]", m_hclCommId, kv.first, kv.second);
     }
 }
 
@@ -379,8 +381,13 @@ SetPortsMaskOutput setPortsMasksCommon(const SetPortsMaskInput input)
 {
     SetPortsMaskOutput output;
 
-    uint64_t scaleOutPortsMask = input.serverConnectivity.getUserScaleOutPortsMask();
-    LOG_DEBUG(HCL, "Started, m_hclCommId={}, scaleOutPortsMask={:024b}", input.comm, scaleOutPortsMask);
+    uint64_t scaleOutPortsMask = input.serverConnectivity.getUserScaleOutPortsMask();  // Physical nics mask
+    LOG_HCL_DEBUG(
+        HCL,
+        "Started, input CommId={}, input.operationalScaleOutPortsMask={:24b}, initial scaleOutPortsMask={:24b}",
+        input.comm,
+        (uint64_t)input.operationalScaleOutPortsMask,
+        scaleOutPortsMask);
 
     // m_enabled_external_ports_mask should be the minimum between
     // LKD port mask and user requested port mask and the fault-tolerance mask (input from user):
@@ -400,23 +407,23 @@ SetPortsMaskOutput setPortsMasksCommon(const SetPortsMaskInput input)
     // |         Enabled 8,22,23       |        Disable 8          |                             |
     // +-------------------------------+---------------------------+-----------------------------+
     const uint16_t maxScaleoutPorts =
-        input.serverConnectivity.getAllScaleoutPorts().count();  // TODO: collect for all comms
+        input.serverConnectivity.getAllScaleoutPorts().count();
     static const nics_mask_t allScaleoutNicsBits(NBITS(maxScaleoutPorts));
     const nics_mask_t logicalScaleoutPortsMaskBits(allScaleoutNicsBits & GCFG_LOGICAL_SCALE_OUT_PORTS_MASK.value() &
                                                    input.operationalScaleOutPortsMask);
-    LOG_DEBUG(HCL,
-              "maxScaleoutPorts={}, allScaleoutNicsBits={}, logicalScaleoutPortsMaskBits={}",
-              maxScaleoutPorts,
-              allScaleoutNicsBits.to_str(),
-              logicalScaleoutPortsMaskBits.to_str());
+    LOG_HCL_DEBUG(HCL,
+                  "maxScaleoutPorts={}, allScaleoutNicsBits={}, logicalScaleoutPortsMaskBits={}",
+                  maxScaleoutPorts,
+                  allScaleoutNicsBits.to_str(),
+                  logicalScaleoutPortsMaskBits.to_str());
     nics_mask_t logicalScaleoutPortsMask;
 
     if (logicalScaleoutPortsMaskBits.count() < maxScaleoutPorts)  // any logical scaleout bit is reset?
     {
-        LOG_INFO(HCL,
-                 "m_hclCommId={}, User requested logical scaleout ports mask of logicalScaleoutPortsMaskBits={}",
-                 input.comm,
-                 logicalScaleoutPortsMaskBits.to_str());
+        LOG_HCL_INFO(HCL,
+                     "m_hclCommId={}, User requested logical scaleout ports mask of logicalScaleoutPortsMaskBits={}",
+                     input.comm,
+                     logicalScaleoutPortsMaskBits.to_str());
         uint64_t scaleoutPortIndex = 0;
         for (uint16_t logical_port_idx = 0; logical_port_idx < maxScaleoutPorts; logical_port_idx++)
         {
@@ -432,24 +439,24 @@ SetPortsMaskOutput setPortsMasksCommon(const SetPortsMaskInput input)
             }
             scaleoutPortIndex++;
         }
-        LOG_DEBUG(HCL,
-                  "m_hclCommId={}, Logical scaleout ports mask logicalScaleoutPortsMask={}",
-                  input.comm,
-                  logicalScaleoutPortsMask.to_str());
+        LOG_HCL_DEBUG(HCL,
+                      "m_hclCommId={}, Logical scaleout ports mask logicalScaleoutPortsMask={}",
+                      input.comm,
+                      logicalScaleoutPortsMask.to_str());
         scaleOutPortsMask &= logicalScaleoutPortsMask;
     }
     output.enabledExternalPortsMask = input.serverConnectivity.getLkdEnabledScaleoutPorts() & scaleOutPortsMask;
     output.scaleOutPortsMask        = scaleOutPortsMask;
 
     VERIFY(output.enabledExternalPortsMask != INVALID_PORTS_MASK, "External ports mask was not defined.");
-    LOG_INFO(HCL,
-             "m_hclCommId={}, initialized full ports mask {} external ports mask {}, "
-             "user requested "
-             "external ports mask {:024b}",
-             input.comm,
-             input.serverConnectivity.getEnabledPortsMask().to_str(),
-             output.enabledExternalPortsMask.to_str(),
-             scaleOutPortsMask);
+    LOG_HCL_INFO(HCL,
+                 "commId={}, initialized full ports mask {:24b} external ports mask {}, "
+                 "requested "
+                 "external ports mask {:024b}",
+                 input.comm,
+                 (uint64_t)input.serverConnectivity.getEnabledPortsMask(),
+                 output.enabledExternalPortsMask.to_str(),
+                 scaleOutPortsMask);
 
     return output;
 }

@@ -272,11 +272,10 @@ bool HostScheduler::processScaleoutWaitForCompCommand(HostStream* hostStream, ui
     bool status = m_device->getComm(waitForCompCommand->comm)
                       .m_hostNicBridge->waitForCompletionNb(&internalStreamInfo->handle, done);
     VERIFY(status == true, "waitForCompletion returned with an error");
-
+    srCount = internalStreamInfo->srCount;
     if (done)
     {
         hostStream->getInnerQueue()->free(sizeof(innerQueueMsg) >> 2);
-        srCount = internalStreamInfo->srCount;
     }
     submitTime = internalStreamInfo->submitTime;
 
@@ -422,7 +421,7 @@ bool HostScheduler::processScaleOutCommand(HostStream* hostStream)
     return true;
 }
 
-bool HostScheduler::processSignalSoCommand(HostStream* hostStream)
+bool HostScheduler::processSignalSoCommand([[maybe_unused]] HostStream* hostStream)
 {
     host_sched_cmd_signal_so* signalSoCommand = (host_sched_cmd_signal_so*)m_hostStreamCmd;
 

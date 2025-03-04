@@ -3,11 +3,12 @@
 #include <optional>
 #include <ostream>
 #include <limits>
+#include <cstdint>
 
 #define HLGCFG_API __attribute__((visibility("default")))
 
 #define HLGCFG_VER 1
-#define HLGCFG_INLINE_VER 1_6
+#define HLGCFG_INLINE_VER 1_8
 
 #define HLGCFG_CONCAT_(a, b) a##b
 #define HLGCFG_CONCAT(a, b) HLGCFG_CONCAT_(a,b)

@@ -23,6 +23,12 @@ IEventQueueHandler::IEventQueueHandler(INicsEventsHandlerCallBack& nicsEventsHan
 
 void IEventQueueHandler::startThread(IHclDevice* device)
 {
+    if (!g_ibv.has_ib_device())
+    {
+        LOG_HCL_INFO(HCL_IBV, "No ibv device");
+        return;
+    }
+
     m_device = device;
     m_fd     = device->getFd();
 

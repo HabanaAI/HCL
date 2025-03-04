@@ -22,6 +22,7 @@
 #include "platform/gen2_arch_common/fault_injection_device.h"    // for FaultInjectionDevice
 #include "platform/gen2_arch_common/nics_events_handler_impl.h"  // for NicsEventHandler
 #include "platform/gaudi3/nics_events_handler_impl.h"            // for NicsEventsHandlerGaudi3
+#include "platform/gaudi2/hls2pcie_server_def.h"
 
 std::unique_ptr<Gen2ArchServerDef>    HclControlDeviceFactory::s_serverDef             = nullptr;
 std::unique_ptr<FaultInjectionDevice> HclControlDeviceFactory::s_faultsInjectionServer = nullptr;
@@ -42,6 +43,9 @@ hccl_device_t* HclControlDeviceFactory::initDevice(HclDeviceConfig& deviceConf)
     {
         case HLS2:
             s_serverDef = std::make_unique<HLS2ServerDef>(fd, deviceConfig.getHwModuleId(), deviceConfig, false);
+            break;
+        case HL288:
+            s_serverDef = std::make_unique<HLS2PCIEServerDef>(fd, deviceConfig.getHwModuleId(), deviceConfig, false);
             break;
         case HLS3:
             s_serverDef = std::make_unique<HLS3ServerDef>(fd, deviceConfig.getHwModuleId(), deviceConfig, false);
@@ -95,7 +99,7 @@ hccl_device_t* HclControlDeviceFactory::initDevice(HclDeviceConfig& deviceConf)
 
     // Hook NicsEventHandler into IBV
 
-    if (GCFG_HCL_FAULT_INJECT_LISTENER_PORT.value() > 0)
+    if (GCFG_HCL_FAULT_INJECT_LISTENER_ENABLE.value() || GCFG_HCL_FAULT_INJECT_LISTENER_PORT.value() > 0)
     {
         s_faultsInjectionServer =
             std::make_unique<FaultInjectionDevice>(s_serverDef->getServerConnectivityConst(),

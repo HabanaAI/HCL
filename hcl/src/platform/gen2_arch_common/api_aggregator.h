@@ -25,6 +25,7 @@ class ApiAggregatorGen2Arch
     using type_sendrecv_map  = std::map<ApiType, sendrecv_calls_t>;
     using comms_t            = std::unordered_set<HCL_Comm>;
     using ranks_t            = std::set<HCL_Rank>;
+    using comm_ranks_t       = std::unordered_map<HCL_Comm, ranks_t>;
     using comm_groupcall_map = std::unordered_map<HCL_Comm, IndexedGroupCalls>;
     using memcpy_calls_t     = std::vector<SendRecvMemCopyEntry>;
 
@@ -51,7 +52,7 @@ protected:
     unsigned m_calls   = 0;
 
     comms_t            m_comms;
-    ranks_t            m_remoteRanks;
+    comm_ranks_t       m_remoteRanks;
     sendrecv_calls_t   m_sendRecvStack;
     collective_calls_t m_collectiveStack;
     type_sendrecv_map  m_selfSendRecvStack;

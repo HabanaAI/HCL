@@ -12,14 +12,13 @@ class OfiPlugin
 {
 public:
     OfiPlugin(int fd, int hw_module_id);
-    ~OfiPlugin();
+    virtual ~OfiPlugin() = default;
+
+    static bool          initializeOFIPluginIfNeeded();
+    static inline double get_wrapper_required_version() { return m_wrapper_required_version; }
 
     static ofi_plugin_interface_handle (*p_create)();
     static double (*p_get_version)();
-    static bool   initialize_ofi_plugin();
-    static void   destroy_ofi_plugin();
-    static bool   initializeOFIPluginIfNeeded();
-    static double get_wrapper_required_version();
 
     std::unique_ptr<ofi_t> p_ofi;
 

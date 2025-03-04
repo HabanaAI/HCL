@@ -8,19 +8,19 @@ class hlcp_notify_t
 {
 public:
     // any requested command i.e. when you call connection.receive() it ends here
-    virtual void on_message(const hlcp_message_t& msg, hlcp_t& connection) _DEF_IMPL_;
+    virtual void on_message([[maybe_unused]] const hlcp_message_t& msg, [[maybe_unused]] hlcp_t& connection) _DEF_IMPL_;
 
     // command without payload  connection.receive_command(cmd)
-    virtual void on_command(hlcp_command_t& cmd, hlcp_t& connection) _DEF_IMPL_;
+    virtual void on_command([[maybe_unused]] hlcp_command_t& cmd, [[maybe_unused]] hlcp_t& connection) _DEF_IMPL_;
 
     // accepted new connection (start handshake etc...)
-    virtual void on_connect(hlcp_t& connection) _DEF_IMPL_;
+    virtual void on_connect([[maybe_unused]] hlcp_t& connection) _DEF_IMPL_;
 
     // protocol errors
-    virtual void on_error(hlcp_command_t*      cmd,
-                          const hlcp_packet_t& packet,
-                          hlcp_t&              connection,
-                          const std::string&   reason = "") _DEF_IMPL_;
+    virtual void on_error([[maybe_unused]] hlcp_command_t*      cmd,
+                          [[maybe_unused]] const hlcp_packet_t& packet,
+                          [[maybe_unused]] hlcp_t&              connection,
+                          [[maybe_unused]] const std::string&   reason = "") _DEF_IMPL_;
 };
 
 // hlcp protocol endpoint. will fire notify events on network packet parsing.

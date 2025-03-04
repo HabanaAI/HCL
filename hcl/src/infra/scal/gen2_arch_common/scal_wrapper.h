@@ -35,6 +35,7 @@ public:
      * @throw ScalErrorException
      */
     Gen2ArchScalWrapper(int fd, ScalJsonNames& scalNames);
+    Gen2ArchScalWrapper(ScalJsonNames& scalNames);
     Gen2ArchScalWrapper(Gen2ArchScalWrapper&&)                 = delete;
     Gen2ArchScalWrapper(const Gen2ArchScalWrapper&)            = delete;
     Gen2ArchScalWrapper& operator=(Gen2ArchScalWrapper&&)      = delete;
@@ -143,6 +144,7 @@ private:
      *        host memory. The cyclic buffer will not be managed here.
      */
     void getMemoryPoolInfo(scal_pool_handle_t* mpHandle, scal_memory_pool_info* mpInfo, const std::string& name) const;
+
     /**
      * @brief Get the Memory Pool Info V2 object
      *

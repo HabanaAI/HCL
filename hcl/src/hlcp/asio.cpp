@@ -128,7 +128,7 @@ bool asio_t::stop()
     return write(control_[1], &SIG_STOP, sizeof(SIG_STOP)) == sizeof(SIG_STOP);
 }
 
-int asio_t::io_event(uint32_t events)
+int asio_t::io_event([[maybe_unused]] uint32_t events)
 {
     HLCP_LOG("asio. exit received");
     return IO_EXIT;

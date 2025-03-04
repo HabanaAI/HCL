@@ -9,7 +9,7 @@
 
 template<typename T, size_t SIZE>
 BufferManagerBase<T, SIZE>::BufferManagerBase(const std::array<BufferParams, SIZE> bufferParams,
-                                              const std::vector<unsigned>&         sizes)
+                                              const std::map<T, unsigned>&         sizes)
 : m_bufferParams(bufferParams), m_poolSizes(sizes)
 {
 }

@@ -62,6 +62,8 @@ public:
     virtual hcl_device_t operator->() { return device_; }
     virtual              operator hcl_device_t() { return device_; }
 
+    void invalidateGraphCacheForComm(const HCL_Comm comm);
+
     const collectives_t& collectives = collectives_;
 
     const bool initialized = false;
@@ -70,9 +72,8 @@ protected:
     hccl_device_t(HclDeviceGen2Arch* _device, synDeviceType _type) : initialized(true), device_(_device), type_(_type)
     {
     }
-    virtual hcclResult_t init_device(uint8_t apiId) = 0;
-    virtual uint32_t stream_id(void* streamHandle) = 0;
-
+    virtual hcclResult_t init_device(uint8_t apiId)    = 0;
+    virtual uint32_t     stream_id(void* streamHandle) = 0;
 
     hcl_device_t device_ = nullptr;
 

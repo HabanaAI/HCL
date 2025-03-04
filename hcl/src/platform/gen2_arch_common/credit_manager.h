@@ -6,6 +6,7 @@
 class CreditManager
 {
 public:
+    CreditManager() = default;
     CreditManager(unsigned poolSize);
     virtual ~CreditManager() = default;
 

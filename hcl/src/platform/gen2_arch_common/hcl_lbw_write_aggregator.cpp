@@ -4,8 +4,9 @@
 
 HclLbwWriteAggregator::HclLbwWriteAggregator(hcl::ScalStream*     scalStream,
                                              unsigned             schedIdx,
-                                             HclCommandsGen2Arch& commands)
-: m_scalStream(scalStream), m_schedIdx(schedIdx), m_commands(commands)
+                                             HclCommandsGen2Arch& commands,
+                                             bool                 submitOnDestroy)
+: m_scalStream(scalStream), m_schedIdx(schedIdx), m_commands(commands), m_submitOnDestroy(submitOnDestroy)
 {
 }
 
@@ -16,8 +17,13 @@ void HclLbwWriteAggregator::aggregate(uint32_t destination, uint32_t data)
 
 HclLbwWriteAggregator::~HclLbwWriteAggregator()
 {
-    if (m_burstContainer.size() > 0)
+    if (m_submitOnDestroy && m_burstContainer.size() > 0)
     {
         m_commands.serializeLbwBurstWriteCommand(*m_scalStream, m_schedIdx, m_burstContainer);
     }
+}
+
+LBWBurstData_t* HclLbwWriteAggregator::getLbwBurstData()
+{
+    return &m_burstContainer;
 }

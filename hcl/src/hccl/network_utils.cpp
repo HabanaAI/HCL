@@ -33,6 +33,7 @@
 #include "hcl_global_conf.h"  // for GCFG_HCCL_COMM_ID, GCFG_HCCL...
 #include "hcl_utils.h"        // for VERIFY
 #include "hcl_log_manager.h"  // for LOG_DEBUG, LOG_ERR, LOG_WARN
+#include <netpacket/packet.h>
 
 constexpr auto MAX_RECV_WARN_TIME = std::chrono::seconds(2);
 constexpr auto MAX_RECV_TIMEOUT   = std::chrono::seconds(10);
@@ -73,43 +74,39 @@ std::string get_desired_tcp_if_from_env_var()
 }
 
 // Verify that the NIC isn't a Gaudi NIC
-bool verify_useable_if(ifaddrs* net_if)
+bool is_gaudi_nic(const std::string& net_if_name)
 {
-    struct ethtool_drvinfo drvinfo;
-    std::string            habDrv = "habanalabs";
-    struct ifreq           ifr;
-    int                    sock;
+    ethtool_drvinfo drvinfo;
+    std::string     habDrv = "habanalabs";
+    ifreq           ifr;
+    int             sock;
 
     sock = socket(PF_INET, SOCK_DGRAM, IPPROTO_IP);
     if (sock == -1)
     {
-        LOG_WARN(HCL, "Failed opening socket for driver info on: {}", net_if->ifa_name);
+        LOG_WARN(HCL, "Failed opening socket for driver info on: {}", net_if_name);
         return false;
     }
 
-    strcpy(ifr.ifr_name, net_if->ifa_name);
+    strcpy(ifr.ifr_name, net_if_name.c_str());
 
     ifr.ifr_data = (char*)&drvinfo;
     drvinfo.cmd  = ETHTOOL_GDRVINFO;
 
-    if (ioctl(sock, SIOCETHTOOL, &ifr) == -1)
+    int rc = ioctl(sock, SIOCETHTOOL, &ifr);
+    close(sock);
+
+    if (rc == -1)
     {
-        LOG_WARN(HCL, "Failed getting driver version on: {}", net_if->ifa_name);
-        close(sock);
+        LOG_WARN(HCL, "Failed getting driver version on: {}", net_if_name);
         return false;
     }
 
     std::string net_if_drv(drvinfo.driver);
 
-    if (net_if_drv.find(habDrv.c_str()) != std::string::npos)
-    {
-        close(sock);
-        return false;
-    }
+    LOG_TRACE(HCL, "if: {} - drv: {}", net_if_name, net_if_drv);
 
-    close(sock);
-
-    return true;
+    return (net_if_drv.find(habDrv) != std::string::npos);
 }
 
 void parse_user_tcp_ifs(std::string ifs_list, std::vector<std::string>& parsed_ifs_list)
@@ -161,7 +158,7 @@ int detect_tcp_ifs(std::vector<detected_tcp_if>& detected_tcp_ifs)
 
             if (!desired_tcp_if.empty())
             {
-                if (match_tcp_if_pattern(net_if_name, parsed_ifs_prefix_list) && verify_useable_if(net_if) == true)
+                if (match_tcp_if_pattern(net_if_name, parsed_ifs_prefix_list) && !is_gaudi_nic(net_if_name))
                 {
                     ip_addr = std::string {inet_ntoa(reinterpret_cast<const sockaddr_in*>(net_if->ifa_addr)->sin_addr)};
                     detected_tcp_ifs.push_back(detected_tcp_if {net_if_name, ip_addr});
@@ -176,7 +173,7 @@ int detect_tcp_ifs(std::vector<detected_tcp_if>& detected_tcp_ifs)
                 if (match_tcp_if_pattern(net_if_name, "docker")) continue;
                 if (match_tcp_if_pattern(net_if_name, "tunl")) continue;
 
-                if (verify_useable_if(net_if) == true)
+                if (!is_gaudi_nic(net_if_name))
                 {
                     ip_addr = std::string {inet_ntoa(reinterpret_cast<const sockaddr_in*>(net_if->ifa_addr)->sin_addr)};
                     detected_tcp_ifs.push_back(detected_tcp_if {net_if_name, ip_addr});
@@ -218,31 +215,6 @@ detected_tcp_if detect_tcp_if()
     return detected_tcp_ifs.front();
 }
 
-std::string address_to_string(const sockaddr_storage* addr)
-{
-    std::string out {};
-
-    std::vector<char> address_presentation;
-
-    if (AF_INET == addr->ss_family)
-    {
-        const sockaddr_in* client_in = reinterpret_cast<const sockaddr_in*>(addr);
-        address_presentation.resize(INET_ADDRSTRLEN);
-        const char* ptr =
-            inet_ntop(AF_INET, (&client_in->sin_addr), address_presentation.data(), address_presentation.size());
-        VERIFY(ptr == address_presentation.data(), "inet_ntop(AF_INET, ...) returned invalid pointer");
-    }
-    if (AF_INET6 == addr->ss_family)
-    {
-        const sockaddr_in6* client_in6 = reinterpret_cast<const sockaddr_in6*>(addr);
-        address_presentation.resize(INET6_ADDRSTRLEN);
-        const char* ptr =
-            inet_ntop(AF_INET6, (&client_in6->sin6_addr), address_presentation.data(), address_presentation.size());
-        VERIFY(ptr == address_presentation.data(), "inet_ntop(AF_INET6, ...) returned invalid pointer");
-    }
-    return std::string(address_presentation.data());
-}
-
 std::string get_global_comm_id()
 {
     return GCFG_HCCL_COMM_ID.value();
@@ -266,39 +238,15 @@ int get_global_comm_port()
 
 bool ip_is_local(const std::string ip)
 {
-    struct ifaddrs *ifap, *ifa;
+    net_itfs_map_t net_itfs = get_net_itfs();
 
-    getifaddrs(&ifap);
-
-    for (ifa = ifap; ifa; ifa = ifa->ifa_next)
+    for (const auto& net_itf : net_itfs)
     {
-        if (ifa->ifa_addr->sa_family == AF_INET)
-        {
-            struct sockaddr_in* sa   = (struct sockaddr_in*)ifa->ifa_addr;
-            char*               addr = inet_ntoa(sa->sin_addr);
+        std::string ip4s = ip2str(net_itf.second.ip4);
+        std::string ip6s = ip2str(net_itf.second.ip6);
 
-            if (std::string(addr) == ip)
-            {
-                freeifaddrs(ifap);
-                return true;
-            }
-        }
-        else  // AF_INET6
-        {
-            char addr[50];
-
-            struct sockaddr_in6* in6 = (struct sockaddr_in6*)ifa->ifa_addr;
-            inet_ntop(AF_INET6, &in6->sin6_addr, addr, sizeof(addr));
-
-            if (std::string(addr) == ip)
-            {
-                freeifaddrs(ifap);
-                return true;
-            }
-        }
+        if ((ip == ip4s) || (ip == ip6s)) return true;
     }
-
-    freeifaddrs(ifap);
 
     return false;
 }
@@ -378,4 +326,78 @@ int recv_all(int sockfd, void* buffer, size_t length)
            "Invalid total_bytes_received={}",
            total_bytes_received);
     return static_cast<int>(total_bytes_received);
+}
+
+net_itfs_map_t get_net_itfs()
+{
+    ifaddrs *      ifap, *ifa_ptr;
+    net_itfs_map_t result;
+
+    if (getifaddrs(&ifap) == 0)
+    {
+        for (ifa_ptr = ifap; ifa_ptr != nullptr; ifa_ptr = ifa_ptr->ifa_next)
+        {
+            char        pad[INET6_ADDRSTRLEN] = {};
+            std::string name                  = (ifa_ptr)->ifa_name;
+            short int   sa_family             = ifa_ptr->ifa_addr->sa_family;
+
+            switch (sa_family)
+            {
+                case AF_PACKET:  // mac
+                    std::memcpy(&result[name].mac,
+                                ((sockaddr_ll*)(ifa_ptr->ifa_addr))->sll_addr,
+                                sizeof(result[name].mac));
+                    result[name].gaudi = is_gaudi_nic(name);
+                    break;
+
+                case AF_INET:  // ip4
+                {
+                    in_addr* addr = &((sockaddr_in*)ifa_ptr->ifa_addr)->sin_addr;
+                    if (inet_ntop(AF_INET, addr, pad, sizeof(pad)))
+                    {
+                        result[name] = *addr;
+                    }
+                }
+                break;
+
+                case AF_INET6:  // ip6
+                {
+                    in6_addr* addr = &((sockaddr_in6*)ifa_ptr->ifa_addr)->sin6_addr;
+                    if (inet_ntop(AF_INET6, addr, pad, sizeof(pad)))
+                    {
+                        result[name] = *addr;
+                    }
+                }
+                break;
+            }
+        }
+        freeifaddrs(ifap);
+    }
+
+    return result;
+}
+
+std::string address_to_string(const sockaddr_storage* addr)
+{
+    std::string out {};
+
+    std::vector<char> address_presentation;
+
+    if (AF_INET == addr->ss_family)
+    {
+        const sockaddr_in* client_in = reinterpret_cast<const sockaddr_in*>(addr);
+        address_presentation.resize(INET_ADDRSTRLEN);
+        const char* ptr =
+            inet_ntop(AF_INET, (&client_in->sin_addr), address_presentation.data(), address_presentation.size());
+        VERIFY(ptr == address_presentation.data(), "inet_ntop(AF_INET, ...) returned invalid pointer");
+    }
+    if (AF_INET6 == addr->ss_family)
+    {
+        const sockaddr_in6* client_in6 = reinterpret_cast<const sockaddr_in6*>(addr);
+        address_presentation.resize(INET6_ADDRSTRLEN);
+        const char* ptr =
+            inet_ntop(AF_INET6, (&client_in6->sin6_addr), address_presentation.data(), address_presentation.size());
+        VERIFY(ptr == address_presentation.data(), "inet_ntop(AF_INET6, ...) returned invalid pointer");
+    }
+    return std::string(address_presentation.data());
 }

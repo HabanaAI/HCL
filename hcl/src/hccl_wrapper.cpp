@@ -17,11 +17,10 @@ hcclResult_t hcclGetVersion_Wrapper(int* version)
     HCCL_API_EXIT(hcclSuccess)
 }
 
-hcclResult_t hcclDeviceInit_Wrapper(void* device, void* context)
+hcclResult_t hcclDeviceInit_Wrapper([[maybe_unused]] void* device, [[maybe_unused]] void* context)
 {
     HCCL_TRY
-    LOG_ERR(HCL_API, "hcclDeviceInit not implemented!");
-    hcclResult_t status = hcclInvalidUsage;
+    hcclResult_t status = hccl_ctx.init_device(hccl_ctx.generateApiId(), device, context);
     HCCL_API_EXIT(status)
 }
 
@@ -34,11 +33,13 @@ hcclResult_t hcclGetUniqueId_Wrapper(hcclUniqueId* uniqueId)
 
 bool use_global_comm_id()
 {
-    return (!hccl_ctx.first_comm_init && !get_global_comm_id().empty());
+    return (!hccl_ctx.first_comm_init_ && !get_global_comm_id().empty());
 }
 
 hcclResult_t hcclCommInitRank_Wrapper(hcclComm_t* comm, int nranks, hcclUniqueId& commId, int rank)
 {
+    HCCL_CHECK_STOP_API();
+
     HCCL_TRY
 
     if (use_global_comm_id())
@@ -61,7 +62,9 @@ hcclResult_t hcclCommInitRank_Wrapper(hcclComm_t* comm, int nranks, hcclUniqueId
     HCCL_API_EXIT(res)
 }
 
-hcclResult_t hcclCommInitAll_Wrapper(hcclComm_t* comm, int ndev, const int* devlist)
+hcclResult_t hcclCommInitAll_Wrapper([[maybe_unused]] hcclComm_t* comm,
+                                     [[maybe_unused]] int         ndev,
+                                     [[maybe_unused]] const int*  devlist)
 {
     HCCL_TRY
     LOG_ERR(HCL_API, "hcclCommInitAll not implemented!");
@@ -73,6 +76,9 @@ hcclResult_t hcclCommFinalize_Wrapper(hcclComm_t comm)
 {
     HCCL_TRY
     auto* hcclComm = hccl_ctx.communicator(comm);
+    RETURN_ON_INVALID_HCCL_COMM(hcclComm);
+    HCCL_CHECK_STOP_COLL_API_COMM_UNTIL(hcclComm);
+
     hcclComm->finalize();
     HCCL_API_EXIT(hcclResult_t::hcclSuccess)
 }
@@ -80,6 +86,10 @@ hcclResult_t hcclCommFinalize_Wrapper(hcclComm_t comm)
 hcclResult_t hcclCommDestroy_Wrapper(hcclComm_t comm)
 {
     HCCL_TRY
+    auto* hccl_comm = hccl_ctx.communicator(comm);
+    RETURN_ON_INVALID_HCCL_COMM(hccl_comm);
+    HCCL_CHECK_STOP_COLL_API_COMM_UNTIL(hccl_comm);
+
     hcclResult_t status = hccl_ctx.comm_destroy(comm);
     HCCL_API_EXIT(status)
 }
@@ -87,6 +97,10 @@ hcclResult_t hcclCommDestroy_Wrapper(hcclComm_t comm)
 hcclResult_t hcclCommAbort_Wrapper(hcclComm_t comm)
 {
     HCCL_TRY
+    auto* hccl_comm = hccl_ctx.communicator(comm);
+    RETURN_ON_INVALID_HCCL_COMM(hccl_comm);
+    HCCL_CHECK_STOP_COLL_API_COMM_UNTIL(hccl_comm);
+
     hcclResult_t status = hcclCommDestroy(comm);
     HCCL_API_EXIT(status)
 }
@@ -101,6 +115,8 @@ hcclResult_t hcclCommGetAsyncError_Wrapper(hcclComm_t comm, hcclResult_t* asyncE
     HCCL_TRY
     auto* hccl_comm = hccl_ctx.communicator(comm);
     RETURN_ON_INVALID_HCCL_COMM(hccl_comm);
+    HCCL_CHECK_STOP_COLL_API_COMM_UNTIL(hccl_comm);
+
     hcclResult_t status = hccl_comm->get_async_error(asyncError);
     HCCL_API_EXIT(status)
 }
@@ -114,7 +130,7 @@ hcclResult_t hcclCommCount_Wrapper(hcclComm_t comm, int* count)
     HCCL_API_EXIT(status)
 }
 
-hcclResult_t hcclCommSynDevice_Wrapper(hcclComm_t comm, int* device)
+hcclResult_t hcclCommSynDevice_Wrapper(hcclComm_t comm, [[maybe_unused]] int* device)
 {
     HCCL_TRY
     auto* hccl_comm = hccl_ctx.communicator(comm);
@@ -131,7 +147,7 @@ hcclResult_t hcclCommUserRank_Wrapper(hcclComm_t comm, int* rank)
     HCCL_API_EXIT(status)
 }
 
-int hcclLookupDMABuff_Wrapper(uint64_t addr, uint64_t size, int* fd)
+int hcclLookupDMABuff_Wrapper([[maybe_unused]] uint64_t addr, [[maybe_unused]] uint64_t size, int* fd)
 {
     HCCL_TRY
     RETURN_ON_INVALID_FD(fd);
@@ -260,7 +276,6 @@ hcclResult_t hcclAllGather_Wrapper(const void*    sendbuff,
                                    void*          stream_handle)
 {
     HCCL_TRY
-    //    hccl_ctx.dbgCheckDrop(); // This has to be before hccl_ctx.communicator(comm)
 
     auto* hccl_comm = hccl_ctx.communicator(comm);
     RETURN_ON_INVALID_ADDR(sendbuff);
@@ -289,8 +304,6 @@ hcclResult_t hcclAllGather_Wrapper(const void*    sendbuff,
     hcclResult_t status =
         hccl_comm->allgather(sendbuff, recvbuff, sendcount, datatype, stream_handle, eHCCLAPICall, apiId);
     HCCL_API_EXIT(status)
-
-    // hccl_ctx.dbgCheckRestore();
 }
 
 hcclResult_t hcclAlltoAll_Wrapper(const void*    sendbuff,
@@ -386,14 +399,14 @@ hcclResult_t hcclGroupEnd_Wrapper()
     HCCL_API_EXIT(status)
 }
 
-hcclResult_t hcclInitDevice_Wrapper(const synDeviceId deviceId)
+hcclResult_t hcclInitDevice_Wrapper([[maybe_unused]] const uint32_t deviceId)
 {
     HCCL_TRY
     hcclResult_t status = hccl_ctx.init_device(hccl_ctx.generateApiId());
     HCCL_API_EXIT(status)
 }
 
-hcclResult_t hcclDestroyDevice_Wrapper(const synDeviceId deviceId)
+hcclResult_t hcclDestroyDevice_Wrapper([[maybe_unused]] const uint32_t deviceId)
 {
     HCCL_TRY
     hcclResult_t status = hccl_ctx.destroy_device();

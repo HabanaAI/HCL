@@ -6,7 +6,7 @@
 class WqeTrackerGaudi2 : public WqeTracker
 {
 public:
-    explicit WqeTrackerGaudi2();
+    explicit WqeTrackerGaudi2(unsigned cgSize);
     virtual ~WqeTrackerGaudi2() = default;
 
     void              incWqe(const HCL_Comm commId, const unsigned rank, const QpType qpType) override;

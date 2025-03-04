@@ -30,7 +30,4 @@ uint32_t HLS2PCIERuntimeConnectivity::getBackpressureOffset(const uint16_t nic) 
     return bp_offs;
 }
 
-void HLS2PCIERuntimeConnectivity::initServerSpecifics()
-{
-    LOG_HCL_DEBUG(HCL, "m_hclCommId={}", m_hclCommId);
-}
+void HLS2PCIERuntimeConnectivity::initServerSpecifics() {}

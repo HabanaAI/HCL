@@ -1120,6 +1120,9 @@ enum hl_device_status {
  * @HL_SERVER_GAUDI3_HL338: HL338, 4 OAMs, 22 ports are enabled
  *                          18 internal (6 per card)
  *                          4 external
+ * @HL_SERVER_GAUDI2_HL288: HL288, 4 OAMs, 22 ports are enabled
+ *                          18 internal (6 per card)
+ *                          4 external
  */
 enum hl_server_type {
 	HL_SERVER_TYPE_UNKNOWN = 0,
@@ -1136,6 +1139,7 @@ enum hl_server_type {
 	HL_SERVER_GAUDI3_HLS3_FULL_OAM_6PORTS_SCALE_OUT = 11,
 	HL_SERVER_GAUDI3_HLS3_SINGLEPORT_OAM_FULLSCALE_OUT = 12,
 	HL_SERVER_GAUDI3_HL338 = 13,
+	HL_SERVER_GAUDI2_HL288 = 14,
 };
 
 /*

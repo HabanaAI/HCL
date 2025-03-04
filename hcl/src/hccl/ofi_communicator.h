@@ -50,7 +50,7 @@ public:
     bool destroy();
 
     ~ofi_communicator() = default;
-    ofi_communicator(std::shared_ptr<MemoryRegion> mr);
+    ofi_communicator();
 
     ofi_communicator(ofi_communicator&)              = delete;
     ofi_communicator(ofi_communicator&&)             = delete;
@@ -63,10 +63,9 @@ private:
     using QpSet = std::array<allConnectionComm_t, MAX_HNIC_CONNECTIONS>;
     std::vector<std::array<QpSet, MAX_HNIC_CONNECTION_SETS>> m_peerRankToConnectionInfo;
 
-    ofi_t*               m_ofi_;
-
-    int                  m_ofiDeviceId;
-    IHclDevice*          m_device_;
+    ofi_t*      m_ofi_;
+    int         m_ofiDeviceId;
+    IHclDevice* m_device_;
     struct send_recv_vec
     {
         ofi_req_t* req;
@@ -77,6 +76,5 @@ private:
 
     unsigned getNumConnectionPerRank();
 
-    RankInfo*                     m_myRankInfo = nullptr;
-    std::shared_ptr<MemoryRegion> m_mr;
+    RankInfo* m_myRankInfo = nullptr;
 };

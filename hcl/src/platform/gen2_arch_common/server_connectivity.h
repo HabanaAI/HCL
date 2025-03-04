@@ -34,7 +34,9 @@ public:
     Gen2ArchServerConnectivity& operator=(const Gen2ArchServerConnectivity&) = delete;
 
     virtual void init(const bool readLkdPortsMask);
-    virtual void onCommInit(HclDynamicCommunicator& dynamicComm) {};  // Default implementation for G2 do nothing
+    virtual void onCommInit([[maybe_unused]] HclDynamicCommunicator& dynamicComm) {
+    };  // Default implementation for G2 do nothing
+    virtual unsigned getBoxSize() const { return 0; };
 
     int         getModuleId() const { return m_moduleId; }
     int         getRemoteDevice(const uint16_t port, const HCL_Comm hclCommId = DEFAULT_COMM_ID) const;
@@ -42,8 +44,7 @@ public:
     uint16_t    getSubPortIndex(const uint16_t port, const HCL_Comm hclCommId = DEFAULT_COMM_ID) const;
     uint16_t    getScaleoutNicFromSubPort(const uint16_t subPort, const HCL_Comm hclCommId = DEFAULT_COMM_ID) const;
     bool        isScaleoutPort(const uint16_t port, const HCL_Comm hclCommId = DEFAULT_COMM_ID) const;
-    uint16_t    getMaxSubPort(const bool     isScaleoutPort,
-                              const HCL_Comm hclCommId = DEFAULT_COMM_ID) const;             // No mask
+    uint16_t    getMaxSubPort(const bool isScaleoutPort) const;                              // No mask
     nics_mask_t getEnabledPortsMask() const { return m_enabledPortsMask; }                   // After mask by LKD only
     uint16_t    getDefaultScaleUpPort(const HCL_Comm hclCommId = DEFAULT_COMM_ID) const;     // No masks
     uint64_t    getExternalPortsMaskGlbl(const HCL_Comm hclCommId = DEFAULT_COMM_ID) const;  // Includes LKD & HCL Masks

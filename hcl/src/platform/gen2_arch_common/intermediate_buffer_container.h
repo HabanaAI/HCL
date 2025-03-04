@@ -4,26 +4,62 @@
 #include <cstdint>
 #include <vector>
 #include <map>
+#include "hcl_global_conf.h"
+#include "hcl_log_manager.h"  // unlikely
 
-constexpr unsigned MAX_NUM_POOLS = 20;
+constexpr unsigned MAX_NUM_POOLS              = 20;
+constexpr unsigned MAX_RANKS_IN_SCALEUP_GROUP = 8;
+constexpr unsigned SCALEOUT_POOL_SIZE         = 40;
+constexpr unsigned REDUCE_POOL_SIZE           = 8;
+constexpr unsigned SCALEOUT_GDR_POOL_SIZE     = 40;
+constexpr unsigned PRIMITIVE_POOL_SIZE        = 8;
+static int         s_scaleUpPoolSize          = -1;
+static int         s_scaleoutTempPoolSize     = -1;
+
 struct IntermediateBuffersAmount
 {
-    static constexpr std::array<std::pair<e_devicePoolID, unsigned>, MAX_NUM_POOLS> buffersArr = {
-        {{SCALEOUT_POOL, 40},
-         {REDUCE_POOL, 8},  // only 4 needed, but we use 8 for granularity
-         {SCALEUP_AND_ALL2ALL_POOL, 104},
-         {SCALEOUT_GDR_POOL, 40}}};
-
-    static int getBufferCount(e_devicePoolID key)
+    static int getBufferCount(e_devicePoolID pool)
     {
-        for (const auto& pair : buffersArr)
+        switch (pool)
         {
-            if (pair.first == key)
-            {
-                return pair.second;
-            }
+            case SCALEOUT_POOL:
+                return SCALEOUT_POOL_SIZE;
+                break;
+            case REDUCE_POOL:
+                return REDUCE_POOL_SIZE;
+                break;
+            case SCALEUP_AND_ALL2ALL_POOL:
+                if (unlikely(s_scaleUpPoolSize == -1))
+                {
+                    s_scaleUpPoolSize = GCFG_HCL_SCALEUP_SIMB_COUNT.value() * MAX_RANKS_IN_SCALEUP_GROUP;
+                }
+                return s_scaleUpPoolSize;
+                break;
+            case SCALEOUT_GDR_POOL:
+                return SCALEOUT_GDR_POOL_SIZE;
+                break;
+            case PRIMITIVE_POOL:
+                return PRIMITIVE_POOL_SIZE;
+            case SCALEOUT_POOL_1:
+                return SCALEOUT_POOL_SIZE;
+                break;
+            case SCALEOUT_ACC_POOL:
+                if (s_scaleoutTempPoolSize == -1)
+                {
+                    // need temp buffer for each scaleout buffer:
+                    // (number of scaleout pool) * (number of buffers per pool)
+                    // ** size should be round up to be divisible  by 8
+                    s_scaleoutTempPoolSize =
+                        (RS_CONT_REDUC_SO_POOL_AMOUNT * (SCALEOUT_POOL_SIZE / GCFG_HCL_SCALEOUT_BUFFER_FACTOR.value()) +
+                         7) &
+                        ~7;
+                }
+                return s_scaleoutTempPoolSize;
+                break;
+            default:
+                LOG_ERR(HCL, "Pool {} is not supported", pool);
+                return -1;
         }
-        return -1;  // not found
     }
 };
 
@@ -55,14 +91,15 @@ public:
     virtual void freeDeviceMemory(uint64_t buffer)                           = 0;
     virtual void allocateFwIntermediateBuffer()                              = 0;
 
-    uint64_t              getBufferSize() const;
-    DeviceBufferManager&  getSIB(uint32_t streamIndex);
-    uint64_t              getAllBufferBaseAddr(unsigned poolSizeIndex);
-    uint64_t              getFwBaseAddr();
-    unsigned              getSliceSize(unsigned poolSizeIndex) const;
-    unsigned              getFwSliceSize();
-    static unsigned       getSIBCount(const std::vector<e_devicePoolID>& pools);
-    std::vector<unsigned> getSIBVector();
+    uint64_t             getBufferSize() const;
+    DeviceBufferManager& getSIB(uint32_t streamIndex);
+    uint64_t             getAllBufferBaseAddr(unsigned poolSizeIndex);
+    uint64_t             getFwBaseAddr();
+    unsigned             getSliceSize(unsigned poolSizeIndex) const;
+    unsigned             getFwSliceSize();
+    static unsigned      getSIBCount(const std::vector<e_devicePoolID>& pools);
+    std::map<e_devicePoolID, unsigned>
+    getSIBMap(std::array<std::vector<e_devicePoolID>, MAX_NUM_POOL_SIZES>& poolTypes);
     /**
      * @brief Get the size of all buffer pools allocated by HCL
      *
@@ -70,9 +107,6 @@ public:
      */
     uint32_t getSizeOfAllBuffers(unsigned poolSizeIndex) const;
     bool     verifySIBPoolSizes(const std::vector<e_devicePoolID>& pools);
-
-    inline e_devicePoolID getFirstPool() { return m_firstPool; };
-    inline e_devicePoolID getLastPool() { return m_lastPool; };
 
     void generatePoolParams(unsigned                           sliceSize,
                             const std::vector<e_devicePoolID>& pools,
@@ -86,7 +120,5 @@ private:
     std::vector<DeviceBufferManager>                      m_sibBuffers;
     uint64_t                                              m_numberOfStreams = 0;
     std::array<BufferContainerParams, MAX_NUM_POOL_SIZES> m_bufferContainerParams;
-    e_devicePoolID                                        m_firstPool = NO_POOL;
-    e_devicePoolID                                        m_lastPool  = NO_POOL;
     uint64_t                                              m_imbSize;
 };

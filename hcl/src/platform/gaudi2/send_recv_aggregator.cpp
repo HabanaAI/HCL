@@ -9,7 +9,7 @@
 #include "platform/gaudi2/hcl_count_descriptor.h"            // for CountDescriptor
 #include "platform/gen2_arch_common/send_recv_aggregator.h"  // for SendRecvEntry
 #include "platform/gen2_arch_common/server_connectivity.h"   // for Gen2ArchServerConnectivity
-#include "hcl_types.h"                                       // for NUM_SCALEUP_PORTS_PER_CONNECTION
+#include "hcl_types.h"
 
 class HclCommandsGen2Arch;
 namespace hcl
@@ -36,7 +36,7 @@ bool SendRecvAggregator::getRequiredContext(RequiredCollectiveContext& requiredC
 
 void SendRecvAggregator::addSendRecvArray(const SendRecvArray&              arr,
                                           int                               selfModuleId,
-                                          unsigned                          collectiveContextIndex,
+                                          [[maybe_unused]] unsigned         collectiveContextIndex,
                                           const RequiredCollectiveContext&& requiredContext)
 {
     AggregatedEntryArray aggregatedArray {};
@@ -85,16 +85,16 @@ void SendRecvAggregator::configureLastEntriesPerDevice()
     }
 }
 
-void SendRecvAggregator::flush(hcl::ScalStreamBase& scalStream,
-                               ContextManager&      contextManager,
-                               unsigned             collectiveContextIndex,
-                               unsigned             commDescIndex,
-                               int                  selfModuleId,
-                               HCL_Comm             comm,
-                               unsigned             syncObjectAddressIndex,
-                               bool                 isSend,
-                               bool                 notifyRndvAck,
-                               bool                 waitForRndvAcks)
+void SendRecvAggregator::flush(hcl::ScalStreamBase&             scalStream,
+                               [[maybe_unused]] ContextManager& contextManager,
+                               unsigned                         collectiveContextIndex,
+                               unsigned                         commDescIndex,
+                               int                              selfModuleId,
+                               HCL_Comm                         comm,
+                               unsigned                         syncObjectAddressIndex,
+                               bool                             isSend,
+                               bool                             notifyRndvAck,
+                               bool                             waitForRndvAcks)
 {
     LOG_HCL_TRACE(HCL, "Flush for send/recv aggregator triggered for {} arrays", m_arrays.size());
     configureLastEntriesPerDevice();
@@ -117,7 +117,8 @@ void SendRecvAggregator::flush(hcl::ScalStreamBase& scalStream,
                               entry.data.address,
                               entry.data.count,
                               entry.data.remoteRank);
-                CountDescriptor countDesc(entry.data.count, NUM_SCALEUP_PORTS_PER_CONNECTION);
+                CountDescriptor countDesc(entry.data.count,
+                                          contextManager.getServerConnectivity().getMaxNumScaleUpPortsPerConnection());
                 m_commands.serializeUserSendCommand(buffer[deviceId],
                                                     collectiveContextIndex,
                                                     commDescIndex,

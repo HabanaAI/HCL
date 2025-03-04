@@ -1,14 +1,15 @@
 #pragma once
 
-#include <cstdint>                    // for uint64_t
-#include <cstring>                    // for NULL, memset, size_t
-#include <vector>                     // for vector
-#include <optional>                   // for optional
-#include <utility>                    // for forward
-#include <memory>                     // for shared_ptr
-#include "libfabric/memory_region.h"  // for MemoryRegion
-#include "rdma/fabric.h"              // for fi_addr_t, fi_context
-#include <rdma/fi_domain.h>           // for fi_hmem_iface
+#include <cstdint>           // for uint64_t
+#include <cstring>           // for NULL, memset, size_t
+#include <vector>            // for vector
+#include <optional>          // for optional
+#include <utility>           // for forward
+#include <memory>            // for shared_ptr
+#include "infra/fd.h"        // for FileDescriptor
+#include "infra/futex.h"     // for FutexLock
+#include "rdma/fabric.h"     // for fi_addr_t, fi_context
+#include <rdma/fi_domain.h>  // for fi_hmem_iface
 #include "platform/gen2_arch_common/host_scheduler.h"
 
 #define OFI_EXIT_ON_ERROR(fn) OFI_EXIT_ON_ERROR_VALUE(fn, 0)
@@ -23,6 +24,19 @@
             goto error;                                                                                                \
         }                                                                                                              \
     } while (false)
+
+#define RETRY_ON_EAGAIN(expr, max_duration, retry_expr)                                                                \
+    ({                                                                                                                 \
+        const auto     __start_time = std::chrono::steady_clock::now();                                                \
+        decltype(expr) __result;                                                                                       \
+        do                                                                                                             \
+        {                                                                                                              \
+            __result = (expr);                                                                                         \
+            if (__result != -EAGAIN) break;                                                                            \
+            retry_expr;                                                                                                \
+        } while ((std::chrono::steady_clock::now() - __start_time) < (max_duration));                                  \
+        __result;                                                                                                      \
+    })
 
 enum ofi_req_state_t
 {
@@ -42,17 +56,20 @@ enum ofi_req_direction_t
 
 struct listenComm_t
 {
+    bool     isInitialized = false;
     uint64_t tag;
     int      dev;
     bool     accepted;
 
     struct fid_ep* local_ep;
     struct fid_cq* cq;
+    void*          mrDesc;
     fi_addr_t      local_ep_addr;
 };
 
 struct ofiComm_t
 {
+    bool           isInitialized = false;
     int            dev;
     uint64_t       tag;
     uint64_t       num_inflight_sends;
@@ -61,14 +78,14 @@ struct ofiComm_t
     fi_addr_t      local_ep_addr;
     struct fid_ep* local_ep;
     struct fid_cq* cq;
+    void*          mrDesc;
 };
 
 struct allConnectionComm_t
 {
-    allConnectionComm_t() : listenComm(nullptr), sendComm(nullptr), recvComm(nullptr) {}
-    listenComm_t* listenComm;
-    ofiComm_t*    sendComm;
-    ofiComm_t*    recvComm;
+    listenComm_t listenComm;
+    ofiComm_t    sendComm;
+    ofiComm_t    recvComm;
 };
 
 class ofi_req_t
@@ -166,6 +183,14 @@ enum class DomainType : uint8_t
     FLUSH      // Flush mechanism
 };
 
+struct MRParams
+{
+    std::optional<uint64_t> m_addr;
+    std::optional<uint64_t> m_size;
+    std::optional<int>      m_fd;
+    std::optional<uint64_t> m_offset;
+};
+
 //
 // Structure of an OFI network component
 //
@@ -185,40 +210,23 @@ public:
     int dec_refcnt() { return --m_refcnt; }
     int get_refcnt() const { return m_refcnt; }
 
-    virtual void* get_cq_buf() = 0;
-    virtual int   next_tag(uint64_t* tag) { return 0; }
+    virtual void*    get_cq_buf() = 0;
+    virtual uint64_t next_tag() { return 0; }
 
     virtual int
-    listen(uint64_t tag, void* handle, listenComm_t** listenComm, unsigned hostConnIdx, uint16_t qpSetIndex) = 0;
+    listen(uint64_t tag, void* handle, listenComm_t* listenComm, unsigned hostConnIdx, uint16_t qpSetIndex) = 0;
     virtual int
-    connect(const void* handle, ofiComm_t** ofiComm, void* localAddr, unsigned hostConnIdx, uint16_t qpSetIndex) = 0;
-    virtual int accept(listenComm_t* listenComm, ofiComm_t** ofiComm)                                            = 0;
-    virtual int isend(ofiComm_t*             ofiComm,
-                      void*                  data,
-                      size_t                 size,
-                      fid_mr*                mHandle,
-                      ofi_req_t**            request,
-                      OfiCompCallbackParams& compParams)                                                         = 0;
-    virtual int irecv(ofiComm_t*             ofiComm,
-                      void*                  data,
-                      size_t                 size,
-                      fid_mr*                mHandle,
-                      ofi_req_t**            request,
-                      OfiCompCallbackParams& compParams)                                                         = 0;
-    virtual int close(ofiComm_t* ofiComm)                                                                        = 0;
-    virtual int close(listenComm_t* listenComm)                                                                  = 0;
+    connect(const void* handle, ofiComm_t* ofiComm, void* localAddr, unsigned hostConnIdx, uint16_t qpSetIndex) = 0;
+    virtual int accept(listenComm_t* listenComm, ofiComm_t* ofiComm)                                            = 0;
+    virtual int
+    isend(ofiComm_t* ofiComm, void* data, size_t size, ofi_req_t** request, OfiCompCallbackParams& compParams) = 0;
+    virtual int
+    irecv(ofiComm_t* ofiComm, void* data, size_t size, ofi_req_t** request, OfiCompCallbackParams& compParams) = 0;
 
     int test(ofi_req_t* req, int* done, size_t* size);
 
-    int                           register_mr(void*           data,
-                                              size_t          size,
-                                              fi_hmem_iface   fi_hmem_iface,
-                                              int             dmabuf_fd,
-                                              struct fid_mr** mHandle,
-                                              DomainType      domainType);
-    static int                    deregister_mr(struct fid_mr* mHandle);
-    void                          create_mr(MRParams& params);
-    std::shared_ptr<MemoryRegion> get_mr() { return m_mr; }
+    void initializeMemoryRegion(MRParams& params);
+    int  getDmabufFd();
 
 protected:
     int                ofi_progress(struct fid_cq* cq);
@@ -232,8 +240,10 @@ protected:
 protected:
     static FiObject<struct fid_fabric*> create_fabric(const struct fi_info* provider);
     static FiObject<struct fid_domain*> create_domain(struct fi_info* provider, struct fid_fabric* fabric);
-    static FiObject<struct fid_cq*>     create_cq(struct fid_domain* domain, int cpuid, enum fi_cq_format format);
-    static FiObject<struct fid_av*>     create_av(struct fid_domain* domain);
+    static FiObject<struct fid_mr*>
+    create_mr(struct fid_domain* domain, void* data, size_t size, fi_hmem_iface fi_hmem_iface, int dmabuf_fd);
+    static FiObject<struct fid_cq*> create_cq(struct fid_domain* domain, int cpuid, enum fi_cq_format format);
+    static FiObject<struct fid_av*> create_av(struct fid_domain* domain);
     static FiObject<struct fid_ep*>
               create_ep(struct fi_info* provider, struct fid_domain* domain, struct fid_cq* cq, struct fid_av* av);
     fi_addr_t create_address(struct fid_ep* const ep, struct fid_av* const av);
@@ -245,12 +255,16 @@ protected:
     const uint64_t m_cqe_burst;
 
 protected:
-    struct fi_info*                    m_prov;
-    const FiObject<struct fid_fabric*> m_fabric;
-    const FiObject<struct fid_domain*> m_domain;
-    const FiObject<struct fid_fabric*> m_fabric_single;
-    const FiObject<struct fid_domain*> m_domain_single;
-    struct fid_ep*                     m_ep_single = nullptr;
+    const std::chrono::seconds              m_eagainMaxRetryDuration;
+    struct fi_info*                         m_prov;
+    const FiObject<struct fid_fabric*>      m_fabric;
+    const FiObject<struct fid_domain*>      m_domain;
+    FileDescriptor                          m_dmabufFD;
+    std::optional<FiObject<struct fid_mr*>> m_mr;
+
+    const FiObject<struct fid_fabric*>      m_fabric_single;
+    const FiObject<struct fid_domain*>      m_domain_single;
+    std::optional<FiObject<struct fid_mr*>> m_mrSingle;
 
 private:
     std::optional<struct fi_info* const>              m_flush_provider;
@@ -260,6 +274,8 @@ private:
     const std::optional<FiObject<struct fid_av*>>     m_flush_av;
     const std::optional<FiObject<struct fid_ep*>>     m_flush_ep;
     const std::optional<fi_addr_t>                    m_flush_addr;
-    // Note: MemoryRegion must be here because of construction and destruction order
-    std::shared_ptr<MemoryRegion> m_mr;
+    std::optional<FiObject<struct fid_mr*>>           m_mrFlushLocal;
+    std::optional<FiObject<struct fid_mr*>>           m_mrFlushRemote;
+    uint32_t                                          m_flushLocalBuffer;
+    uint64_t                                          m_flushRemoteBuffer;
 };

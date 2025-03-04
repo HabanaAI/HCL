@@ -49,33 +49,35 @@ public:
 
     virtual void addQPsToQPManagerDB(const QPManagerHints& hints, const QpsVector& qps) = 0;
     virtual void ReleaseQPsResource(const QPManagerHints& hints)                        = 0;
-    virtual void allocateQPDBStorage(const HCL_Comm comm) {};
+    virtual void allocateQPDBStorage([[maybe_unused]] const HCL_Comm comm) {};
 
     virtual uint32_t getQPn(const QPManagerHints& hints) const                      = 0;
     virtual uint32_t getQPi(const QPManagerHints& hints) const                      = 0;
     virtual uint32_t getQPi(const HCL_CollectiveOp collectiveOp, const bool isSend) = 0;
     virtual uint32_t getDestQPi(const unsigned qpi) const                           = 0;
 
-    virtual void setNicOffsetsAndLastRank(hcl::ScalStream& stream, const HCL_Comm comm, const bool isSend)
+    virtual void setNicOffsetsAndLastRank([[maybe_unused]] hcl::ScalStream& stream,
+                                          [[maybe_unused]] const HCL_Comm   comm,
+                                          [[maybe_unused]] const bool       isSend)
     {
         VERIFY(false, "unreachable code");
     };
 
-    virtual QPUsage getBaseQpAndUsage(const HclDynamicCommunicator& dynamicComm,
-                                      HCL_CollectiveOp              collectiveOp,
-                                      bool                          isSend,
-                                      bool                          isComplexCollective,
-                                      bool                          isReductionInIMB,
-                                      bool                          isHierarchical,
-                                      uint64_t                      count,
-                                      uint64_t                      cellCount,
-                                      HclConfigType                 boxType,
-                                      bool                          isScaleOut        = false,
-                                      HCL_Rank                      remoteRank        = HCL_INVALID_RANK,
-                                      uint8_t                       qpSet             = 0,
-                                      const bool                    isReduction       = false,
-                                      HCL_CollectiveOp              complexCollective = eHCLNoCollective,
-                                      bool                          isRoot            = false)
+    virtual QPUsage getBaseQpAndUsage([[maybe_unused]] const HclDynamicCommunicator& dynamicComm,
+                                      [[maybe_unused]] HCL_CollectiveOp              collectiveOp,
+                                      [[maybe_unused]] bool                          isSend,
+                                      [[maybe_unused]] bool                          isComplexCollective,
+                                      [[maybe_unused]] bool                          isReductionInIMB,
+                                      [[maybe_unused]] bool                          isHierarchical,
+                                      [[maybe_unused]] uint64_t                      count,
+                                      [[maybe_unused]] uint64_t                      cellCount,
+                                      [[maybe_unused]] HclConfigType                 boxType,
+                                      [[maybe_unused]] bool                          isScaleOut  = false,
+                                      [[maybe_unused]] HCL_Rank                      remoteRank  = HCL_INVALID_RANK,
+                                      [[maybe_unused]] uint8_t                       qpSet       = 0,
+                                      [[maybe_unused]] const bool                    isReduction = false,
+                                      [[maybe_unused]] HCL_CollectiveOp complexCollective        = eHCLNoCollective,
+                                      [[maybe_unused]] bool             isRoot                   = false)
     {
         VERIFY(false, "unreachable code");
         QPUsage ret = {0, false};

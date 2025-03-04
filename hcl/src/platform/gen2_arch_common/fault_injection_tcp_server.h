@@ -2,7 +2,6 @@
 
 #include <thread>
 #include <unistd.h>
-#include <arpa/inet.h>
 #include <string>
 #include <cstdint>  // for uint*
 
@@ -52,6 +51,8 @@ protected:
     virtual void resumeAllApi() = 0;
 
 private:
+    void processClientCommands(const int clientSocket);
+
     int         m_port         = -1;
     int         m_serverSocket = -1;
     std::thread m_serverThread;

@@ -13,7 +13,7 @@
 #include "scal_types.h"                                       // for SmInfo
 #include "scal_wrapper.h"                                     // for Gen2ArchScalWrapper
 #include "platform/gen2_arch_common/device_buffer_manager.h"  // for sibAddressAndSize
-#include "infra/scal/gaudi_common/factory_types.h"            // for CyclicBufferType
+#include "factory_types.h"                                    // for CyclicBufferType
 
 class HclCommandsGen2Arch;
 class HclDeviceGen2Arch;
@@ -143,7 +143,7 @@ public:
 
     uint64_t getCurrentLongSoValue(unsigned archStream);
 
-    scal_handle_t getScalHandle() { return m_scalWrapper->getScalHandle(); }
+    scal_handle_t        getScalHandle() { return m_scalWrapper->getScalHandle(); }
     Gen2ArchScalWrapper& getScalWrapper() { return *m_scalWrapper; }
 
     bool isACcbHalfFullForDeviceBenchMark(const unsigned archStreamIdx);

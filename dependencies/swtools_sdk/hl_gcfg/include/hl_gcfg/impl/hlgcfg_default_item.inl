@@ -50,8 +50,12 @@ GcfgDefaultItem<T>& GcfgDefaultItem<T>::operator<<(std::tuple<uint32_t, NNExecut
 template<class T>
 const T& GcfgDefaultItem<T>::value(uint32_t device) const
 {
-    return (device < m_defaultsPerDevice.size() && m_defaultsPerDevice[device][static_cast<unsigned>(getModeType())].has_value()) ? m_defaultsPerDevice[device][static_cast<unsigned>(getModeType())].value()
-    : m_default.value();
+    if (device >= m_defaultsPerDevice.size() || (static_cast<int>(m_defaultsPerDevice[device][0].has_value()) + static_cast<int>(m_defaultsPerDevice[device][1].has_value()) == 0))
+    {
+        return m_default.value();
+    }
+    const auto & item = m_defaultsPerDevice[device][static_cast<unsigned>(getModeType())];
+    return item.has_value() ? item.value() : m_default.value();
 }
 
 template<class T>

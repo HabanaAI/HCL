@@ -62,5 +62,7 @@ public:
                                       bool                          isRoot            = false) override;
 
     /* declared for the interface, but only implemented for scaleUp */
-    virtual void setNicOffsetsAndLastRank(hcl::ScalStream& stream, const HCL_Comm comm, const bool isSend) override {};
+    virtual void setNicOffsetsAndLastRank([[maybe_unused]] hcl::ScalStream& stream,
+                                          [[maybe_unused]] const HCL_Comm   comm,
+                                          [[maybe_unused]] const bool       isSend) override {};
 };

@@ -51,9 +51,14 @@ HclDynamicCommunicator& HclDynamicCommsManager::getComm(HCL_Comm commId)
     return *m_communicators[commId];
 }
 
-bool HclDynamicCommsManager::isCommExist(HCL_Comm comm)
+bool HclDynamicCommsManager::isCommExist(const HCL_Comm comm) const
 {
     return comm < m_nextCommId && m_communicators[comm] != nullptr;
+}
+
+size_t HclDynamicCommsManager::getMaxCommNum() const
+{
+    return m_nextCommId;
 }
 
 void HclDynamicCommsManager::destroyComm(HCL_Comm comm)

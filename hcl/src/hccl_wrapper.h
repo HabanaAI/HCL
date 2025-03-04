@@ -84,17 +84,13 @@ hcclResult_t hcclSend_Wrapper(const void*    sendbuff,
                               hcclComm_t     comm,
                               void*          stream_handle);
 
-hcclResult_t hcclRecv_Wrapper(void*           recvbuff,
-                              size_t          count,
-                              hcclDataType_t  datatype,
-                              int             peer,
-                              hcclComm_t      comm,
-                              void*           stream_handle);
+hcclResult_t
+hcclRecv_Wrapper(void* recvbuff, size_t count, hcclDataType_t datatype, int peer, hcclComm_t comm, void* stream_handle);
 
 hcclResult_t hcclGroupStart_Wrapper();
 
 hcclResult_t hcclGroupEnd_Wrapper();
 
-hcclResult_t hcclInitDevice_Wrapper(const synDeviceId deviceId);
+hcclResult_t hcclInitDevice_Wrapper(const uint32_t deviceId);
 
-hcclResult_t hcclDestroyDevice_Wrapper(const synDeviceId deviceId);
+hcclResult_t hcclDestroyDevice_Wrapper(const uint32_t deviceId);

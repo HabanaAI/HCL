@@ -44,6 +44,12 @@ GlobalConfSize GCFG_HCL_IMB_SIZE(
         DfltSize(hl_gcfg::SizeParam("512KB")) << deviceValue(synDeviceGaudi, hl_gcfg::SizeParam("16MB")),
         MakePrivate);
 
+GlobalConfUint64 GCFG_HCL_SCALEUP_SIMB_COUNT(
+        "HCL_SCALEUP_SIMB_COUNT",
+        "number of static intermediate buffers",
+        DfltUint64(20)  << deviceValue(synDeviceGaudi2, (13)),
+        MakePrivate);
+
 GlobalConfSize GCFG_HCL_SLICE_SIZE(
         "HCL_SLICE_SIZE",
         "Slicing size ",
@@ -135,6 +141,7 @@ static const std::map<std::string, std::string> boxTypeStrToId = {{"BACK_2_BACK"
                                                            {"OCP1", std::to_string(OCP1)},
                                                            {"HLS1-H", std::to_string(HLS1H)},
                                                            {"HLS2", std::to_string(HLS2)},
+                                                           {"HL288", std::to_string(HL288)},
                                                            {"HLS3", std::to_string(HLS3)},
                                                            {"HL338", std::to_string(HL338)},
                                                            {"SWITCH", std::to_string(BACK_2_BACK)},
@@ -146,7 +153,7 @@ std::vector<GlobalConfObserver*> boxObservers = {&boxTypeObserver};
 
 GlobalConfString GCFG_BOX_TYPE(
     "BOX_TYPE",
-    "Select box type: UNKNOWN, BACK_2_BACK, LOOPBACK, RING, HLS1, OCP1, HLS1-H, HLS2, HLS3, HL338",
+    "Select box type: UNKNOWN, BACK_2_BACK, LOOPBACK, RING, HLS1, OCP1, HLS1-H, HLS2, HL288, HLS3, HL338",
     std::string("UNKNOWN"),
     MakePublic,
     boxObservers);
@@ -242,6 +249,12 @@ GlobalConfInt64 GCFG_HCCL_TRIALS(
         120,
         MakePrivate);
 
+GlobalConfBool GCFG_HCL_RS_SO_RECV_CONT_REDUCTION(
+        "HCL_RS_SO_RECV_CONT_REDUCTION",
+        "When true, enable Scaleout Recv Continuous Reduction flow",
+        false,
+        MakePrivate);
+
 GlobalConfSize GCFG_HCL_COMPLEX_BCAST_MIN_SIZE(
         "HCL_COMPLEX_BCAST_MIN_SIZE",
         "Threshold to enable new complex broadcast",
@@ -250,8 +263,8 @@ GlobalConfSize GCFG_HCL_COMPLEX_BCAST_MIN_SIZE(
 
 GlobalConfBool GCFG_HCL_USE_SINGLE_PEER_BROADCAST(
         "HCL_USE_SINGLE_PEER_BROADCAST",
-        "Use single peer broadcast implementation",
-        false,
+        "Use single peer broadcast implementation. Not supported for Gaudi3",
+        DfltBool("false") << deviceValue(synDeviceGaudi2, true) << deviceValue(synDeviceGaudi3, false),
         MakePrivate);
 
 GlobalConfBool GCFG_HCL_IS_SINGLE_PEER_BROADCAST_ALLOWED(
@@ -325,7 +338,7 @@ GlobalConfBool GCFG_HCL_IBV_GID_SYSFS(
 GlobalConfBool GCFG_HCL_USE_NIC_COMPRESSION(
         "HCL_USE_NIC_COMPRESSION",
         "use NIC compression",
-        false,
+        true,
         MakePrivate);
 
 GlobalConfBool GCFG_HCL_FAIL_ON_CHECK_SIGNALS(
@@ -371,12 +384,12 @@ GlobalConfInt64  GCFG_OP_DRIFT_THRESHOLD_MS(
 GlobalConfUint64 GCFG_SCALE_OUT_PORTS_MASK(
         "SCALE_OUT_PORTS_MASK",
         "Port mask to enable / disable scaleout ports (e.g. 0xc00000)",
-        DfltUint64(DEFAULT_SCALEOUT_PORTS_MASK) << deviceValue(synDeviceGaudi3,  0xFFFFFF),
+        DfltUint64(DEFAULT_G3_SCALEOUT_PORTS_MASK) << deviceValue(synDeviceGaudi,  DEFAULT_SCALEOUT_PORTS_MASK) << deviceValue(synDeviceGaudi2,  DEFAULT_SCALEOUT_PORTS_MASK),
         MakePublic);
 
 GlobalConfUint64 GCFG_LOGICAL_SCALE_OUT_PORTS_MASK(
         "LOGICAL_SCALE_OUT_PORTS_MASK",
-        "Logical Port mask to enable / disable scaleout ports (e.g. 0x7FFFFF)",
+        "Logical ports mask to enable / disable scaleout ports (e.g. 0x7FFFFF)",
         DfltUint64(0xFFFFFF),
         MakePublic);
 
@@ -424,7 +437,7 @@ GlobalConfUint64 GCFG_HCL_SUBMIT_THRESHOLD(
 GlobalConfUint64 GCFG_MAX_QP_PER_EXTERNAL_NIC(
     "MAX_QP_PER_EXTERNAL_NIC",
     "Maximum number of QPs per external NIC",
-    DfltUint64(8192) << deviceValue(synDeviceGaudi3, 20480),
+    DfltUint64(4096) << deviceValue(synDeviceGaudi3, 20480),
     MakePrivate);
 
 GlobalConfUint64 GCFG_HCL_GNIC_SCALE_OUT_QP_SETS(
@@ -442,7 +455,7 @@ GlobalConfUint64 GCFG_HCL_HNIC_SCALE_OUT_QP_SETS(
 GlobalConfUint64 GCFG_HCL_GNIC_QP_SETS_COMM_SIZE_THRESHOLD(
     "HCL_GNIC_QP_SETS_COMM_SIZE_THRESHOLD",
     "Size of World Communicator from which, each GNIC connection gets only single QP set",
-    DfltUint64(2000) << deviceValue(synDeviceGaudi, 1),
+    DfltUint64(1601) << deviceValue(synDeviceGaudi, 1),
     MakePrivate);
 
 GlobalConfUint64 GCFG_HCL_HNIC_QP_SETS_COMM_SIZE_THRESHOLD(
@@ -473,6 +486,12 @@ GlobalConfInt64 GCFG_OFI_CQ_BURST_PROC(
         "OFI_CQ_BURST_PROC",
         "Maximum number of OFI CQ processing each iteration",
         256,
+        MakePrivate);
+
+GlobalConfUint64 GCFG_HCL_OFI_MAX_RETRY_DURATION(
+        "HCL_OFI_MAX_RETRY_DURATION",
+        "Maximum duration in seconds of OFI operation retry",
+        10,
         MakePrivate);
 
 GlobalConfBool GCFG_HCL_REDUCE_NON_PEER_QPS(
@@ -535,20 +554,80 @@ GlobalConfBool GCFG_HCL_DFA_DUMP_WQE(
         false,
         MakePublic);
 
+GlobalConfBool GCFG_HCL_USE_NET_DETECT(
+        "HCL_USE_NET_DETECT",
+        "Detect network interfaces (don't use gaudi net file)",
+        false,
+        MakePrivate);
+
+GlobalConfUint64 GCFG_HCL_IBV_RETRY_TIMEOUT_SEC(
+        "HCL_IBV_RETRY_TIMEOUT_SEC",
+        "Retry timeout in seconds for ibv EBUSY error",
+        180,
+        MakePrivate);
+
+GlobalConfUint64 GCFG_FORCE_ORDER_SIGNALS(
+        "FORCE_ORDER_SIGNALS",
+        "define number of signals for force_order. By default, we use the number defined in json. If this envar value is != 0, it will override the json definition",
+        0,
+        MakePrivate);
+
+GlobalConfUint64 GCFG_EDMA_SIGNALS(
+        "EDMA_SIGNALS",
+        "define number of signals for EDMA operations, per core",
+        1,
+        MakePrivate);
+
+GlobalConfUint64 GCFG_NIC_SEND_SIGNALS(
+        "NIC_SEND_SIGNALS",
+        "define number of signals for NIC SEND operation, per NIC in connection",
+        1,
+        MakePrivate);
+
+GlobalConfUint64 GCFG_NIC_RECV_SIGNALS(
+        "NIC_RECV_SIGNALS",
+        "define number of signals for NIC RECV operation, per NIC in connection",
+        1,
+        MakePrivate);
+
 GlobalConfUint64 GCFG_HCL_FAULT_INJECT_LISTENER_PORT(
         "HCL_FAULT_INJECT_LISTENER_PORT",
         "TCP Port base to listen for fault injection thread, 0 if disabled",
         0,
         MakePrivate);
 
-GlobalConfUint64 GCFG_HCL_DBG_DYNAMIC_LAG_DROPPED_PORT_NUM(
-        "HCL_DBG_DYNAMIC_LAG_DROPPED_PORT_NUM",
-        "debug config - which port to drop",
-        0xFF,
+GlobalConfBool GCFG_HCL_FAULT_INJECT_LISTENER_ENABLE(
+        "HCL_FAULT_INJECT_LISTENER_ENABLE",
+        "Enable listen for fault injection thread, 0 if disabled, need to set the port in another envar",
+        false,
+        MakePrivate);
+
+GlobalConfUint64 GCFG_HCL_FAULT_TOLERANCE_DELAY_BEFORE_START(
+        "HCL_FAULT_TOLERANCE_DELAY_BEFORE_START",
+        "Delay in msec before starting fault tolerance process",
+        100,
+        MakePrivate);
+
+GlobalConfUint64 GCFG_HCL_FAULT_TOLERANCE_COMM_POLL_INTERVAL(
+        "HCL_FAULT_TOLERANCE_COMM_POLL_INTERVAL",
+        "Interval in msec in polling loop of comm API # by the FT thread",
+        1000,
+        MakePrivate);
+
+GlobalConfBool GCFG_HCL_FAULT_TOLERANCE_ENABLE(
+        "HCL_FAULT_TOLERANCE_ENABLE",
+        "Enable fault tolerance process, only for G3",
+        DfltBool("false") << deviceValue(synDeviceGaudi3, true),
         MakePublic);
 
-GlobalConfUint64 GCFG_HCL_DBG_DYNAMIC_LAG_NUM_ITERATIONS(
-        "HCL_DBG_DYNAMIC_LAG_NUM_ITERATIONS",
-        "debug config - number of iterations to run until dropped port is restored",
-        0,
+GlobalConfUint64 GCFG_HCL_FAULT_TOLERANCE_LOGICAL_PORTS_SHUTDOWN_MASK(
+        "HCL_FAULT_TOLERANCE_LOGICAL_PORTS_SHUTDOWN_MASK",
+        "Logical scaleout port mask to simulate shutdown (e.g. 0x000001 to shutdown first scaleout port)",
+        DfltUint64(0x0),
+        MakePublic);
+
+GlobalConfUint64 GCFG_HCL_FAULT_TOLERANCE_FAILBACK_DELAY(
+        "HCL_FAULT_TOLERANCE_FAILBACK_DELAY",
+        "Time is seconds from the link-up notification until we start the failback process",
+        DfltUint64(300),
         MakePublic);

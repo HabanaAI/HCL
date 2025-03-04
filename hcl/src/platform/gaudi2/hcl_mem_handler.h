@@ -31,4 +31,6 @@ public:
                             e_devicePoolID               poolId,
                             uint8_t                      streamCtxtID,
                             hcclDataType_t               dataType) override;
+
+    void enqueueInternalCompletionMemsetSignals(SignalsManager* signalsManager, e_devicePoolID poolId);
 };

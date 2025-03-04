@@ -6,11 +6,11 @@ enum class SignalEvent
     FORCE_ORDER = 0,
     EDMA_CAST_UP,
     EDMA_CAST_DOWN,
-    EDMA_CAST_DOWN_FOR_SCALEOUT,
     EDMA_MEMCOPY,
     EDMA_MEMCOPY_FOR_SCALEOUT,
     EDMA_BATCH,
     EDMA_BATCH_SCALEOUT,
+    EDMA_CONT_BATCH_SCALEOUT,
     EDMA_MEMCOPY_GDR,
     EDMA_MEMSET,
     SCALEUP_SEND,  // cost = signalsSingleOp (21 most likely)
@@ -65,7 +65,7 @@ inline GpsoPool waitMethodToGpsoPool(WaitMethod waitMethod)
 
 const unsigned WAIT_PHASE_MAX = 128;
 const uint64_t MIN_PHASES     = 8;
-typedef int    WaitPhase;
+using WaitPhase               = size_t;
 
 enum class WaitEvent
 {
@@ -75,6 +75,7 @@ enum class WaitEvent
     GRAPH_SCALEUP_WAIT_EVENT,
     GRAPH_SCALEOUT_SEND_WAIT_EVENT,
     GRAPH_SCALEOUT_RECV_WAIT_EVENT,
+    GRAPH_REDUCTION_WAIT_EVENT,
 
     // Scale-Out First = AG, Broadcast, Simple Broadcast
     SO_FIRST_SU_SEND_WAIT_FOR_SO_RECV,
@@ -97,6 +98,12 @@ enum class WaitEvent
     HNIC_SCALEOUT_RECV_PDMA_WAIT_FOR_RECV,
     ALL2ALL_SO_SEND_WAIT_FOR_RECV,
 
+    FINAL_REDUCTION_WAIT_FOR_ALL_CONT_BATCH_REDUCTIONS,
+    RS_SO_RECV_WAIT_FOR_CONT_BATCH_REDUCTION_0,
+    RS_SO_RECV_WAIT_FOR_CONT_BATCH_REDUCTION_1,
+    CONT_BATCH_REDUCTION_WAIT_FOR_FULL_BUFFER_0,
+    CONT_BATCH_REDUCTION_WAIT_FOR_FULL_BUFFER_1,
+
     // must be last
     // events range from base to max
     RS_SO_RECV_WAIT_FOR_PREV_RECV_BASE,
@@ -106,5 +113,5 @@ enum class WaitEvent
 
 inline bool isReusableEvent(WaitEvent waitEvent)
 {
-    return waitEvent >= WaitEvent::RS_SO_RECV_WAIT_FOR_PREV_RECV_BASE;
+    return waitEvent >= WaitEvent::CONT_BATCH_REDUCTION_WAIT_FOR_FULL_BUFFER_0;
 }

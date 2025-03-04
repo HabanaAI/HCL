@@ -31,6 +31,16 @@
         return false;                                                                                                  \
     }
 
+#define RET_ON_FAIL(func)                                                                                              \
+    {                                                                                                                  \
+        hcclResult_t __rc = func;                                                                                      \
+        if (__rc != hcclSuccess)                                                                                       \
+        {                                                                                                              \
+            LOG_HCL_ERR(HCL, #func " failed: {}", __rc);                                                               \
+            return __rc;                                                                                               \
+        }                                                                                                              \
+    }
+
 #define _DEF_IMPL_                                                                                                     \
     {                                                                                                                  \
         HLCP_LOG("[ default(empty) implementation ]");                                                                 \

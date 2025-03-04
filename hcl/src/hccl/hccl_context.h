@@ -29,6 +29,8 @@ struct hcclOpParams;
 struct internal_unique_id_t;
 class hccl_communicator;
 
+using comms_map_t = std::map<hcclComm_t, std::shared_ptr<hccl_communicator>>;
+
 class hccl_context
 {
 public:
@@ -39,23 +41,13 @@ public:
     hcclResult_t destroy_device();
 
     hcclResult_t get_unique_id(hcclUniqueId* unique_id);
-    hcclResult_t comm_init_rank(hcclComm_t*   comm,
-                                unsigned int  nranks,
-                                hcclUniqueId& comm_id,
-                                int           rank,
-                                hcclComm_t    reInitCommHandle = nullptr);
-    hcclResult_t comm_destroy(hcclComm_t unique_id, bool destroyCoord = true);
+    hcclResult_t comm_init_rank(hcclComm_t* comm, unsigned int nranks, hcclUniqueId& comm_id, int rank);
+
+    hcclResult_t comm_destroy(hcclComm_t unique_id);
 
     hccl_communicator* communicator(hcclComm_t comm_handle);
 
     uint8_t generateApiId();
-
-    void dbgCheckDrop();
-    void dbgCheckRestore();
-    void reCreateComms();
-    void portDown(uint16_t portNum);
-    void portUp(uint16_t portNum);
-    void updatePortsAndComms();
 
     void        generateGlobalUniqueId(hcclUniqueId& unique_id);
     std::string unique_id_to_string(const hcclUniqueId& id);
@@ -63,13 +55,12 @@ public:
     void        dfaLog(hl_logger::LoggerSPtr logger);
     void        dfaLogHnicSummary(hl_logger::LoggerSPtr& logger);
 
-    void faultHandleScaleoutPortUp(const uint16_t port);
-    void faultHandleScaleoutPortShutdown(const uint16_t port);
+    bool first_comm_init_ = false;
 
-    bool first_comm_init = false;
+    const comms_map_t& comms() const { return hccl_communicators_; };
 
 private:
-    bool first_coordinator_launched = false;
+    bool first_coordinator_launched_ = false;
 
     const internal_unique_id_t* get_internal_id(const hcclUniqueId& unique_id) const;
 
@@ -81,17 +72,13 @@ private:
     std::map<std::string, HcclCoordinatorUPtr> coordinators_;
 
     // communicators list mapped by comm handle
-    std::map<hcclComm_t, std::shared_ptr<hccl_communicator>> hccl_communicators_;
+    comms_map_t hccl_communicators_;
 
     // The following is an indication if this device was acquired by synapse successfully and it is then sets to true.
     // When the device is destroyed it is set to false
-    bool m_deviceAcquired = false;
+    bool device_acquired_ = false;
 
-    std::unique_ptr<HclDeviceConfig> m_hclDeviceConfig = nullptr;
-
-    bool        m_portDropped             = false;
-    unsigned    m_numAGIterations         = 0;
-    nics_mask_t m_failedScaleOutPortsMask = 0;
+    std::unique_ptr<HclDeviceConfig> device_config_ = nullptr;
 };
 
 extern hccl_context hccl_ctx;

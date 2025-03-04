@@ -39,25 +39,25 @@ public:
 
     DeviceBufferManager& getIntermediateBufferManager() { return m_intermediateBufferManager; }
 
-    void createMemCopyCommands(CommonState&     commonState,
+    void createMemCopyCommands(SliceState&      sliceState,
                                SignalsManager*  signalsManager,
                                unsigned         sliceIter,
                                BoxNumInfo&      boxNumInfo,
                                uint64_t         chunkCount,
                                hcl::ScalStream& scalStream,
                                uint32_t         dmaType,
-                               bool             reductionSignalToCg,
-                               uint32_t         indexOfSubBuffer,
-                               bool             useSibo,
                                bool             isForScaleout,
-                               e_devicePoolID   poolIdx,
-                               bool             isReductionStream = false);
+                               e_devicePoolID   poolIdx            = NO_POOL,
+                               bool             isGDRMemcpy        = false,
+                               bool             isForContReduction = false);
 
     SignalEvent chooseMemCopyEvent(CommonState& commonState,
                                    uint32_t     dmaType,
-                                   BoxNumInfo&  boxNumInfo,
+                                   bool         isFirstBox,
+                                   bool         isGDRMemcpy,
                                    bool         useSibo,
-                                   bool         isForScaleout);
+                                   bool         isForScaleout,
+                                   bool         isForContReduction = false);
 
     void createMemCopyCommandsNonCollective(hcl::ScalStream& scalStream,
                                             HCL_Rank         myRank,
@@ -70,18 +70,21 @@ public:
 
     void signalToSoViaEmptyDmaCommand(uint32_t soAddress, hcl::ScalStream& scalStream, CommonState& commonState);
 
-    virtual void memsetIMBs(IntermediateBufferContainer* imbContainer,
-                            SignalsManager*              signalsManager,
-                            SliceState&                  sendSliceState,
-                            SliceState&                  recvSliceState,
-                            unsigned int                 sizeInBytes,
-                            hcl::syncInfo                longSo,
-                            unsigned                     schedIdx,
-                            hcl::ScalStream&             garbageCollectionStream,
-                            HCL_StreamId                 m_streamId,
-                            e_devicePoolID               poolId,
-                            uint8_t                      streamCtxtID,
-                            hcclDataType_t               dataType) {};
+    virtual void memsetIMBs([[maybe_unused]] IntermediateBufferContainer* imbContainer,
+                            [[maybe_unused]] SignalsManager*              signalsManager,
+                            [[maybe_unused]] SliceState&                  sendSliceState,
+                            [[maybe_unused]] SliceState&                  recvSliceState,
+                            [[maybe_unused]] unsigned int                 sizeInBytes,
+                            [[maybe_unused]] hcl::syncInfo                longSo,
+                            [[maybe_unused]] unsigned                     schedIdx,
+                            [[maybe_unused]] hcl::ScalStream&             garbageCollectionStream,
+                            [[maybe_unused]] HCL_StreamId                 m_streamId,
+                            [[maybe_unused]] e_devicePoolID               poolId,
+                            [[maybe_unused]] uint8_t                      streamCtxtID,
+                            [[maybe_unused]] hcclDataType_t               dataType) {};
+
+    virtual void enqueueInternalCompletionMemsetSignals([[maybe_unused]] SignalsManager* signalsManager,
+                                                        [[maybe_unused]] e_devicePoolID  poolId) {};
 
     virtual void generateBaseAddressOrSubBuffIdx(SliceState&       sliceState,
                                                  unsigned int&     sliceIter,

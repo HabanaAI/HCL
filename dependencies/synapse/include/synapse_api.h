@@ -1383,6 +1383,25 @@ synStatus SYN_API_CALL synGraphCompile( synRecipeHandle*                pRecipeH
 //!
 /*!
  ***************************************************************************************************
+ * @brief   Compile the graph specified
+ *
+ * @param   pRecipeHandle       [out]   Handle to a HabanaRecipe
+ * @param   graphHandle         [in]    The Synapse graph to compile
+ * @param   pRecipeName         [in]    The name of the recipe that will be generated
+ * @param   errorHandle         [out]   Error handle, holds the error handle in case of failure,
+ *                                      otherwise, NULL. This handle must be freed by the caller.
+ *
+ * @return                      Status of the operation
+ ***************************************************************************************************
+ */
+synStatus SYN_API_CALL synGraphCompileV2(synRecipeHandle*     pRecipeHandle,
+                                         const synGraphHandle graphHandle,
+                                         const char*          pRecipeName,
+                                         synErrorHandle*      errorHandle);
+
+//!
+/*!
+ ***************************************************************************************************
  * @brief   Create a new empty graph instance for the given device type.
  *
  * @param   pGraphHandle        [out] The created Synapse graph
@@ -2123,6 +2142,7 @@ synStatus SYN_API_CALL synProfilerAddCustomEvent( const char*  description,
  *   -  synTensorSetDeviceFullLayout
  *   -  synTensorSetQuantizationData
  *   -  synTensorSetExternal
+ *   -  synTensorSetMemoryReuse
  *
  *   @param tensor            [out] A pointer to the created tensor handle.
  *   @param graph             [in]  A previously-created graph handle in which to create the tensor.
@@ -2274,6 +2294,25 @@ synStatus SYN_API_CALL synTensorSetQuantizationData(synTensor               tens
  */
 synStatus SYN_API_CALL synTensorSetExternal(synTensor               tensor,
                                             bool                    isExternal);
+
+/*!
+ ***************************************************************************************************
+ *   @brief Marks the tensor's memory as reusable or non-reusable.
+ *
+ *   Relevant for persistent inputs only.
+ *
+ *   This API can set a persistent tensor's memory as reusable (the default is non reusable).
+ *   Reusable memory can be used for intermediate tensors allocation,
+ *   while non-reusable memory is untouched by the graph compiler.
+ *
+ *   @param tensor            [in] A previously-created tensor handle
+ *   @param isReusable        [in] A flag to set tensor as (or not) reusable
+ *
+ *   @return                  The status of the operation
+ ***************************************************************************************************
+ */
+synStatus SYN_API_CALL synTensorSetMemoryReuse(synTensor            tensor,
+                                               bool                 isReusable);
 
 //!
 /*!
@@ -2876,6 +2915,59 @@ synStatus SYN_API_CALL synDumpStateAndTerminate(const char* msg, uint64_t flags)
  */
 synStatus SYN_API_CALL synUpdateMemoryConsumption(uint64_t usedMem, uint64_t timestampSec);
 
+//!
+/*!
+ * @brief Destroys the current error instance
+ *
+ * Error instance is created in case of an error on a call to synGraphCompileV2
+ *
+ * @param errorHandle   [in] error handle to destroy
+ *
+ * @return              Status of the operation
+ ***************************************************************************************************
+ */
+synStatus SYN_API_CALL synErrorDestroy(synErrorHandle errorHandle);
+
+//!
+/*!
+ ***************************************************************************************************
+ * @brief Get the error's status
+ *
+ * @param errorHandle   [in]  error handle to query
+ * @param status        [out] status of the error
+ *
+ * @return              Status of the operation
+ ***************************************************************************************************
+ */
+synStatus SYN_API_CALL synErrorGetStatus(synErrorHandle errorHandle, synStatus* status);
+
+//!
+/*!
+ ***************************************************************************************************
+ * @brief Get the error's message length
+ *
+ * @param errorHandle   [in]  error handle to query
+ * @param length        [out] length of the message string
+ *
+ * @return              Status of the operation
+ ***************************************************************************************************
+ */
+synStatus SYN_API_CALL synErrorGetMessageLength(synErrorHandle errorHandle, size_t* length);
+
+//!
+/*!
+ ***************************************************************************************************
+ * @brief Get the error's message
+ *
+ * @param errorHandle   [in]  error handle to query
+ * @param message       [out] the buffer which will hold the message
+ * @param length        [in]  maximum length of the string to be stored at message.
+ *                            the required length can be acquired by synErrorGetMessageLength
+ *
+ * @return              Status of the operation
+ ***************************************************************************************************
+ */
+synStatus SYN_API_CALL synErrorGetMessage(synErrorHandle errorHandle, char* message, size_t length);
 
 #ifdef __cplusplus
 }

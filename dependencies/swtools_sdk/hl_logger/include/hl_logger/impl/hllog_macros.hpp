@@ -10,7 +10,8 @@
  * HLLOG_COUNTOF()        => 0
  * HLLOG_COUNTOF(a, b, c) => 3
  */
-#define HLLOG_COUNTOF(...) HLLOG_COUNTOF_CAT( HLLOG_COUNTOF_A, ( 0, ##__VA_ARGS__, 120, \
+#define HLLOG_COUNTOF(...) HLLOG_COUNTOF_CAT( HLLOG_COUNTOF_A, ( 0, ##__VA_ARGS__, 130, \
+    129, 128, 127, 126, 125, 124, 123, 122, 121, 120,\
     119, 118, 117, 116, 115, 114, 113, 112, 111, 110,\
     109, 108, 107, 106, 105, 104, 103, 102, 101, 100,\
     99, 98, 97, 96, 95, 94, 93, 92, 91, 90,\
@@ -36,7 +37,8 @@
     a90, a91, a92, a93, a94, a95, a96, a97, a98, a99,\
     a100, a101, a102, a103, a104, a105, a106, a107, a108, a109,\
     a110, a111, a112, a113, a114, a115, a116, a117, a118, a119,\
-    a120, n, ... ) n
+    a120, a121, a122, a123, a124, a125, a126, a127, a128, a129,\
+    a130, n, ... ) n
 // clang-format on
 
 #define HLLOG_CONCAT(a, b)  HLLOG_CONCAT_(a, b)

@@ -80,26 +80,25 @@ struct cuid_t
     {
         struct
         {
-            uint64_t collectiveOp        : 4;  // 0..3
-            uint64_t currentOp           : 4;  // 4..7
-            uint64_t inPlace             : 1;  // 8
-            uint64_t isRoot              : 1;  // 9
-            uint64_t isRootPeer          : 1;  // 10
-            uint64_t isRootBox           : 1;  // 11
+            uint64_t collectiveOp : 4;         // 0..3
+            uint64_t currentOp : 4;            // 4..7
+            uint64_t inPlace : 1;              // 8
+            uint64_t isRoot : 1;               // 9
+            uint64_t isRootPeer : 1;           // 10
+            uint64_t isRootBox : 1;            // 11
             uint64_t isMultiScaleupGroup : 1;  // 12
-            uint64_t isPeersOnly         : 1;  // 13
-            uint64_t isHostNic           : 1;  // 14
-            uint64_t isGaudiDirect       : 1;  // 15
-            uint64_t isFloat             : 1;  // 16
-            uint64_t isBf16              : 1;  // 17
-            uint64_t all2allIter         : 4;  // 18..21
-            uint64_t comm                : 16; // 22..37
-            uint64_t boxIterPhase        : 3;  // 38..40
-            uint64_t firstBox            : 1;  // 41
-            uint64_t lastBox             : 1;  // 42
-            uint64_t edgeIteration       : 1;  // 43
-            uint64_t firstScaleOut       : 1;  // 44
-            uint64_t reserved            : 19; // 45..63
+            uint64_t isPeersOnly : 1;          // 13
+            uint64_t isHostNic : 1;            // 14
+            uint64_t isGaudiDirect : 1;        // 15
+            uint64_t isFloat : 1;              // 16
+            uint64_t isBf16 : 1;               // 17
+            uint64_t all2allIter : 4;          // 18..21
+            uint64_t boxIterPhase : 3;         // 22..24
+            uint64_t firstBox : 1;             // 25
+            uint64_t lastBox : 1;              // 26
+            uint64_t edgeIteration : 1;        // 27
+            uint64_t firstScaleOut : 1;        // 28
+            uint64_t reserved : 35;            // 29..63
         };
         uint64_t raw;
     };
@@ -124,6 +123,7 @@ public:
 
     explicit CommonState(HclCollectiveParams& other,
                          DeviceBufferManager& intermediateBufferManager,
+                         bool                 isGdr,
                          unsigned             workDistributionGroupSize,
                          const unsigned       maxNumScaleUpPortsPerConnection,
                          unsigned             numScaleOutPorts,
@@ -134,7 +134,7 @@ public:
     void     calcSliceCounts(unsigned sliceIter);
     uint32_t getNumSlices(uint64_t totalRankCount, uint32_t numRanks);
 
-    void initCollectiveOp(const bool singlePeerBroadcastAllowed);
+    void initCollectiveOp();
     void initCurrentOp(HCL_CollectiveOp currentOp, unsigned boxIter, unsigned all2allIter);
     void checkInPlaceOp();
     void setIsReductionCollective();
@@ -157,6 +157,7 @@ public:
     bool     isLastSlice(unsigned iterNum) const;
     bool     isHostNic() const;
     bool     isGDR() const;
+    bool     isRSContReduction() const;
 
     virtual void calcSliceQpSet(const unsigned sliceIter);
 
@@ -193,6 +194,7 @@ public:
     bool     m_isRootBox              = false;
     bool     m_isHostNic              = false;
     bool     m_isGdr                  = false;
+    bool     m_isRSContReduction      = false;
     size_t   m_sliceIterations        = 0;
     unsigned m_scaleoutBuffersAmount  = DeviceBufferManager::getFactor(SCALEOUT_POOL);
     unsigned m_scaleoutLongtermAmount = DeviceBufferManager::getFactor(SCALEOUT_POOL) + 1;
@@ -242,6 +244,49 @@ public:
     unsigned getBroadcastScatterOpBoxIterations() const;
     uint64_t calculateCUID(bool isFirstBox, bool isLastBox);
 
+    /**
+     * @brief Checks if the current iteration require scaleout buffer reduction.
+     * @note This method should be called only when GCFG_HCL_RS_SO_RECV_CONT_REDUCTION is enabled.
+     * @return true if the current iteration is a buffer reduction iteration, false otherwise.
+     */
+    bool isBufferReductionIter() const;
+    /**
+     * @brief Checks if the current iteration is the last buffer reduction iteration.
+     * @note This method should be called only when GCFG_HCL_RS_SO_RECV_CONT_REDUCTION is enabled.
+     * @return true if the current iteration is the last buffer reduction iteration, false otherwise.
+     */
+    bool isLastBufferReductionIter() const;
+    /**
+     * @brief Calculates the scaleout buffer pool ID for the current iteration.
+     * @note This method should be called only when GCFG_HCL_RS_SO_RECV_CONT_REDUCTION is enabled.
+     * @return the scaleout buffer pool ID for the current iteration.
+     */
+    e_devicePoolID calcScaleoutBufferPool() const;
+
+    /**
+     * @brief forecast wether there will be another phase of waitEventForFullBuffer.
+     * @return True if expect another phase, else False.
+     */
+    bool isAnotherPhaseWaitEventForFullBufferExpects() const;
+    /**
+     * @brief get the right CONT_BATCH_REDUCTION_WAIT_FOR_FULL_BUFFER_X WaitEvent based on current ScaleoutBuffer.
+     * @note This method should be called only when GCFG_HCL_RS_SO_RECV_CONT_REDUCTION is enabled.
+     * @return the CONT_BATCH_REDUCTION_WAIT_FOR_FULL_BUFFER_X WaitEvent for the current iteration.
+     */
+    WaitEvent getWaitEventForFullBuffer() const;
+    /**
+     * @brief get the right RS_SO_RECV_WAIT_FOR_CONT_BATCH_REDUCTION_X WaitEvent based on current ScaleoutBuffer.
+     * @note This method should be called only when GCFG_HCL_RS_SO_RECV_CONT_REDUCTION is enabled.
+     * @return the RS_SO_RECV_WAIT_FOR_CONT_BATCH_REDUCTION_X WaitEvent for the current iteration.
+     */
+    WaitEvent getWaitEventForContBatchReduction() const;
+    /**
+     * @brief Calculates the offset for the scaleout long-term buffer based on the wait event.
+     * @param waitEvent The WaitEvent for which the offset is to be calculated.
+     * @return The offset for the scaleout long-term buffer.
+     */
+    unsigned getScaleoutLongtermOffset(WaitEvent waitEvent) const;
+
 private:
     HclConfigType      m_boxType;
     const uint32_t     m_maxNumScaleUpPortsPerConnection;
@@ -268,6 +313,11 @@ struct SliceExecutionOutput
     // Once the scaleout provider finishes, increments should be made to this
     // SOB index. If m_scaleoutSignalToGPSO = true, this won't equal the CGSO but rather a GPSO.
     uint32_t m_completionSoAddr = 0;
+
+    // describe slice execution usage of device memory buffer pool
+    e_devicePoolID m_usedPool = NO_POOL;
+
+    bool m_doReduction = false;
 };
 
 struct SliceSetupOutput
@@ -305,6 +355,7 @@ public:
     void setScaleoutAddresses(HclAddressGenerator& addressGenerator, uint64_t offset);
     void initSlice(bool calcScaleout = true);
     void updateScaleoutCounts(HCL_Rank remoteRank, uint64_t inputCount, uint8_t requiredInternalFences);
+    bool doReduction();
 
     bool       m_isSend;
     unsigned   m_sliceIter;

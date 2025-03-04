@@ -21,7 +21,7 @@ HLS3RuntimeConnectivity::HLS3RuntimeConnectivity(const int                   mod
 static constexpr uint32_t mmD0_NIC0_QM_SPECIAL_GLBL_SPARE_0 = 0xD009F60;
 
 // Needs to be adjusted per active scaleup ports
-uint32_t HLS3RuntimeConnectivity::getBackpressureOffset(const uint16_t nic) const
+uint32_t HLS3RuntimeConnectivity::getBackpressureOffset([[maybe_unused]] const uint16_t nic) const
 {
     return mmD0_NIC0_QM_SPECIAL_GLBL_SPARE_0;
 }

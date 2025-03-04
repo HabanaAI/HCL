@@ -179,9 +179,9 @@ void CachedCollectiveContext::dwordDiff(const RequiredCollectiveContext& require
     dwordsForUpdate.DW4 = m_data.stride != required.m_stride;
 }
 
-void CachedCollectiveContext::advanceSOB(edwords_t& dwordsForUpdate,
-                                         unsigned&  syncObjectAddressIndex,
-                                         uint64_t   requiredAddress)
+void CachedCollectiveContext::advanceSOB([[maybe_unused]] edwords_t& dwordsForUpdate,
+                                         unsigned&                   syncObjectAddressIndex,
+                                         [[maybe_unused]] uint64_t   requiredAddress)
 {
     syncObjectAddressIndex = m_lastSyncObjectAddressIndex;
     m_data.sync_object_address_0 += sizeof(uint32_t);
@@ -192,13 +192,13 @@ void CachedCollectiveContext::addNicBufferToNicPassthroughHandler(const NicsDwor
     m_nicPassthroughHandler.addNicBuffer(nicBuffer);
 }
 
-void CachedCollectiveContext::flushNicPassthroughHandler(hcl::ScalStreamBase& scalStream,
-                                                         ContextManager&      contextManager,
-                                                         int                  selfDevice,
-                                                         HCL_Comm             comm,
-                                                         unsigned             syncObjectAddressIndex,
-                                                         bool                 isSend,
-                                                         bool                 incSOBinNOP)
+void CachedCollectiveContext::flushNicPassthroughHandler(hcl::ScalStreamBase&             scalStream,
+                                                         [[maybe_unused]] ContextManager& contextManager,
+                                                         int                              selfDevice,
+                                                         HCL_Comm                         comm,
+                                                         unsigned                         syncObjectAddressIndex,
+                                                         bool                             isSend,
+                                                         bool                             incSOBinNOP)
 {
     m_nicPassthroughHandler
         .flush(scalStream, m_collectiveContextIndex, selfDevice, comm, syncObjectAddressIndex, isSend, incSOBinNOP);
@@ -227,8 +227,6 @@ void ContextManager::serializeUpdateGlobalContext(hcl::ScalStreamBase& scalStrea
     SchedArcCommandsGaudi2::serializeUpdateGlobalContextInfo(scalStream,
                                                              soAddressLSB,
                                                              intermediateBaseAddress,
-                                                             intermediateBaseAddress,
-                                                             intermediateSliceSize,
                                                              intermediateSliceSize);
 }
 
@@ -317,7 +315,7 @@ void ContextManager::serializeUpdateCollectiveContextScaleUp(hcl::ScalStreamBase
                                                              bool                             isSend,
                                                              unsigned                         collectiveContextIndex,
                                                              HCL_Comm                         comm,
-                                                             bool                             isAllGather,
+                                                             [[maybe_unused]] bool            isAllGather,
                                                              const RequiredCollectiveContext& requiredContext,
                                                              edwords_t&                       dwordsForUpdate,
                                                              unsigned&                        syncObjectAddressIndex,
@@ -410,8 +408,8 @@ void ContextManager::serializeMultipleQPsUpdateScaleUp(
     unsigned                                                       collectiveContextIndex,
     HCL_Comm                                                       comm,
     unsigned&                                                      syncObjectAddressIndex,
-    unsigned&                                                      commDescIndex,
-    bool                                                           isScaleup)
+    [[maybe_unused]] unsigned&                                     commDescIndex,
+    [[maybe_unused]] bool                                          isScaleup)
 {
     NicsDwordsArray buffer;
 
@@ -460,6 +458,7 @@ void ContextManager::createCollectiveContexts(HclCommandsGen2Arch& commands, con
         globalContext.remote_dev_idx  = m_serverConnectivity.getRemoteDevice(nic, hclCommId);
         globalContext.sub_nic_idx     = m_serverConnectivity.getSubPortIndex(nic, hclCommId);
         globalContext.is_valid        = 1;
+        globalContext.ports_per_rank  = m_serverConnectivity.getMaxNumScaleUpPortsPerConnection();
         globalContext.total_nic_count = m_serverConnectivity.getNumScaleUpPorts(hclCommId);  // scaleup
         m_globalContexts.push_back(globalContext);
     }
@@ -471,6 +470,7 @@ void ContextManager::createCollectiveContexts(HclCommandsGen2Arch& commands, con
     {
         g2fw::nic_glbl_ctxt_t scaleoutGlobalContext;
         std::memset(&scaleoutGlobalContext, 0, sizeof(scaleoutGlobalContext));
+        scaleoutGlobalContext.ports_per_rank  = m_serverConnectivity.getNumScaleOutPortsGlbl(hclCommId);
         scaleoutGlobalContext.total_nic_count = m_serverConnectivity.getNumScaleOutPortsGlbl(hclCommId);
         scaleoutGlobalContext.sub_nic_idx     = m_serverConnectivity.getScaleoutSubPortIndexGlbl(
             m_serverConnectivity.getDefaultScaleOutPortByIndex(nic_idx),
@@ -616,7 +616,7 @@ edwords_t ContextManager::getDwordsForUpdate(bool                             is
         {
             if (m_activeNics[nic] == false) continue;
 
-            if (!cachedCollectiveContextScaleUp->m_activeCommunicatorDescriptor.isActive(comm, nic))
+            if (!cachedCollectiveContextScaleUp->m_activeCommunicatorDescriptor.isActive(comm))
             {
                 dwordsForUpdate.DW_COMM_QP = true;
             }

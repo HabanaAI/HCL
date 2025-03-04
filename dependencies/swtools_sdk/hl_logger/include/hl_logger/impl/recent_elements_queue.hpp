@@ -139,26 +139,21 @@ public:
     {
     public:
         ItemUnlocker(std::atomic<bool>& locked)
-                : m_locked(locked)
-                , m_unlock(true)
+        : m_locked(locked)
+        , m_unlock(true)
         {
         }
 
         ItemUnlocker() = delete;
         ItemUnlocker(ItemUnlocker const &)  = delete;
-        ItemUnlocker(ItemUnlocker && other)
+        ItemUnlocker(ItemUnlocker && other) noexcept
         : m_locked(other.m_locked)
         , m_unlock(other.m_unlock)
         {
             other.m_unlock = false;
         }
         ItemUnlocker & operator = (ItemUnlocker const &) = delete;
-        ItemUnlocker & operator = (ItemUnlocker && other)
-        {
-            m_locked = other.m_locked;
-            m_unlock = other.m_unlock;
-            other.m_unlock = false;
-        }
+        ItemUnlocker & operator = (ItemUnlocker && other) noexcept = delete;
         ~ItemUnlocker()
         {
             if (m_unlock)
@@ -250,6 +245,8 @@ public:
         {
             throw std::runtime_error("REQIterator copy ctor should not be invoked");
         }
+        REQIterator & operator = (REQIterator && ) = default;
+        REQIterator & operator = (REQIterator const & ) = delete;
         explicit operator bool() const
         {
             return m_startIdx != m_endIdx;

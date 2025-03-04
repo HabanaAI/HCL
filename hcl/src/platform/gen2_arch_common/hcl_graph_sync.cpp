@@ -24,6 +24,41 @@ void HclGraphSyncGen2Arch::addSetupMonitors(hcl::ScalStream& scalStream,
     }
 }
 
+void HclGraphSyncGen2Arch::addSetupHFCMonitors(hcl::ScalStream& scalStream,
+                                               unsigned int     monitorBase,
+                                               unsigned         numMonitors,
+                                               uint64_t         smBase,
+                                               uint64_t         fenceAddr)
+{
+    unsigned schedIdx = scalStream.getSchedIdx();
+    for (size_t i = 0; i < numMonitors; i++)
+    {
+        LBWBurstData_t destData;
+        unsigned int   monitorIdx = i + monitorBase;
+        // set up MON_PAY_DATA to increment by 1
+        uint32_t destination = getAddrMonPayData(smBase, monitorIdx);
+        uint32_t value       = getSoConfigValue(1, true);
+        destData.push_back({destination, value});
+        LOG_HCL_TRACE(HCL,
+                      "Updating HFC monitor #{} payload data at address=0x{:x} with value=0x{:x}",
+                      monitorIdx,
+                      destination,
+                      value);
+
+        // set up MON_PAY_ADDRH to the fence address MSB
+        destination = getAddrMonPayAddrh(smBase, monitorIdx);
+        value       = (uint32_t)((fenceAddr >> 32) & 0xffffffff);
+        destData.push_back({destination, value});
+        LOG_HCL_TRACE(HCL,
+                      "Updating HFC monitor #{} payload address high at address=0x{:x} with value=0x{:x}",
+                      monitorIdx,
+                      destination,
+                      value);
+
+        m_commands.serializeLbwBurstWriteCommand(scalStream, schedIdx, destData);
+    }
+}
+
 void HclGraphSyncGen2Arch::createSetupMonMessages(hcl::ScalStream& scalStream,
                                                   uint64_t         address,
                                                   unsigned         fenceIdx,
@@ -70,7 +105,11 @@ void HclGraphSyncGen2Arch::createArmMonMessages(hcl::ScalStream& scalStream,
                                                 bool             useEqual)
 {
     const unsigned soIdxNoMask = soIdx >> 3;  // LSB are the mask, so unnecessary for long Sos
-    const uint8_t  mask        = ~(1 << (soIdx % 8));
+    /* Each monitor can track up to 8 SOBs. The mask indicates which SOBs are NOT tracked by this monitor, by:
+     * 1. performing modulo 8 on the soIdx
+     * 2. shifting "1" by the previous step's result - bounded by 7
+     * 3. performing NOT on the result to indicate the SOBs we DON'T want to track */
+    const uint8_t mask = static_cast<uint8_t>(~(1u << (soIdx & 7)));
     VERIFY(soIdxNoMask <= 0x3ff);
     VERIFY(monitorIdx % SO_QUARTERS == (soIdxNoMask >> 8),
            "regular monitors are set up to the (monitorIdx % {}) quarter of the SM",
@@ -83,6 +122,59 @@ void HclGraphSyncGen2Arch::createArmMonMessages(hcl::ScalStream& scalStream,
     uint32_t value = createMonArm(soValue, false, mask, soIdxNoMask, 0, useEqual);
 
     m_commands.serializeLbwWriteWithFenceDecCommand(scalStream, scalStream.getSchedIdx(), addr, value, fenceIdx);
+}
+
+void HclGraphSyncGen2Arch::createArmHFCMonMessages(hcl::ScalStream& scalStream,
+                                                   unsigned         smIdx,
+                                                   uint64_t         soValue,
+                                                   unsigned         soIdx,
+                                                   unsigned         soQuarter,
+                                                   unsigned         monitorIdx,
+                                                   uint32_t         fenceAddr,
+                                                   bool             useEqual)
+{
+    const unsigned soIdxNoMask = soIdx >> 3;  // LSB are the mask, so unnecessary for long Sos
+    /* Each monitor can track up to 8 SOBs. The mask indicates which SOBs are NOT tracked by this monitor, by:
+     * 1. performing modulo 8 on the soIdx
+     * 2. shifting "1" by the previous step's result - bounded by 7
+     * 3. performing NOT on the result to indicate the SOBs we DON'T want to track */
+    const uint8_t  mask = static_cast<uint8_t>(~(1u << (soIdx & 7)));
+    LBWBurstData_t destData;
+    uint64_t       smBase   = getSyncManagerBase(smIdx);
+    unsigned       schedIdx = scalStream.getSchedIdx();
+    // things that are not likely to change between iterations
+    LBWBurstData_t cachedData;
+    // MON_CONFIG setup
+    uint32_t destination = getAddrMonConfig(smBase, monitorIdx);
+    uint32_t value       = createMonConfig(false, soQuarter);
+    cachedData.push_back({destination, value});
+    // MON_PAY_ADDRL setup
+    destination = getAddrMonPayAddrl(smBase, monitorIdx);
+    value       = (uint32_t)fenceAddr & 0xffffffff;
+    cachedData.push_back({destination, value});
+    for (size_t i = 0; i < cachedData.size(); i++)
+    {
+        if (m_hfcMonitorStatus.find(cachedData[i].addr) != m_hfcMonitorStatus.end() ||
+            m_hfcMonitorStatus[cachedData[i].addr] != cachedData[i].data)
+        {
+            LOG_HCL_TRACE(HCL,
+                          "Updating HFC monitor #{} with address=0x{:x}, data=0x{:x}",
+                          monitorIdx,
+                          cachedData[i].addr,
+                          cachedData[i].data);
+            destData.push_back({destination, value});
+        }
+    }
+
+    // things that are likely to change
+    const uint32_t baseAddrInSm = getOffsetMonArm(monitorIdx);
+    value                       = createMonArm(soValue, false, mask, soIdxNoMask, 0, useEqual);
+    destination                 = smBase + baseAddrInSm;
+    // MON_ARM setup
+    destData.push_back({destination, value});
+    LOG_HCL_TRACE(HCL, "Arming HFC monitor #{} at address=0x{:x} with value=0x{:x}", monitorIdx, destination, value);
+
+    m_commands.serializeLbwBurstWriteCommand(scalStream, schedIdx, destData);
 }
 
 void HclGraphSyncGen2Arch::createArmLongMonMessages(hcl::ScalStream& scalStream,
@@ -258,13 +350,13 @@ void HclGraphSyncGen2Arch::setSyncData(uint32_t syncObjectBase, unsigned soSize)
     m_soSize         = soSize;
 }
 
-void HclGraphSyncGen2Arch::createSyncStreamsMessages(hcl::ScalStream& scalStream,
-                                                     unsigned         monBase,
-                                                     unsigned         smIdx,
-                                                     unsigned         soVal,
-                                                     unsigned         soIdx,
-                                                     unsigned         fenceIdx,
-                                                     bool             useEqual)
+void HclGraphSyncGen2Arch::createSyncStreamsMessages(hcl::ScalStream&      scalStream,
+                                                     unsigned              monBase,
+                                                     unsigned              smIdx,
+                                                     unsigned              soVal,
+                                                     unsigned              soIdx,
+                                                     unsigned              fenceIdx,
+                                                     [[maybe_unused]] bool useEqual)
 {
     const uint32_t smBase     = getSyncManagerBase(smIdx);
     unsigned       soQuarter  = soIdx / (SO_TOTAL_COUNT / SO_QUARTERS);

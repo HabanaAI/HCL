@@ -118,7 +118,11 @@ int socketConnect(sockaddr_t& ip_addr, std::string if_name)
         connectResult = connect(socket_fd, ip_addr, ip_addr.size_of());
         if (connectResult == 0) break;
         connectionTrials--;
-        LOG_DEBUG(HCL, "Connect to server ended with timeout. ip {}. Trying again.", ip_addr.str());
+        LOG_ERR(HCL,
+                "Connect to server ended with timeout. ip {}. err:({}){}  Trying again.",
+                ip_addr.str(),
+                errno,
+                strerror(errno));
         sleep(1);
     }
     if (connectResult == -1)

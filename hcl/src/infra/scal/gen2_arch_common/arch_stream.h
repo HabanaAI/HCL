@@ -1,15 +1,15 @@
 #pragma once
 
-#include <array>                                    // for array
-#include <cstdint>                                  // for uint64_t, uint32_t
-#include <cstddef>                                  // for size_t
-#include <memory>                                   // for shared_ptr
-#include <vector>                                   // for vector
-#include "completion_group.h"                       // for CompletionGroup
-#include "scal.h"                                   // for scal_comp_group_handle_t
-#include "scal_names.h"                             // for ScalJsonNames, ScalJsonNames::numberOf...
-#include "scal_types.h"                             // for CgInfo, SmInfo
-#include "infra/scal/gaudi_common/factory_types.h"  // for CyclicBufferType
+#include <array>               // for array
+#include <cstdint>             // for uint64_t, uint32_t
+#include <cstddef>             // for size_t
+#include <memory>              // for shared_ptr
+#include <vector>              // for vector
+#include "completion_group.h"  // for CompletionGroup
+#include "scal.h"              // for scal_comp_group_handle_t
+#include "scal_names.h"        // for ScalJsonNames, ScalJsonNames::numberOf...
+#include "scal_types.h"        // for CgInfo, SmInfo
+#include "factory_types.h"     // for CyclicBufferType
 
 class HclCommandsGen2Arch;
 namespace hcl

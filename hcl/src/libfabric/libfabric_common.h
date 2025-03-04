@@ -24,16 +24,19 @@ enum class CommOp : uint8_t
     RECV
 };
 
+#ifndef container_of
+#define container_of(ptr, type, field) ((type*)((char*)ptr - offsetof(type, field)))
+#endif
+
 inline int ofiCommOp(const CommOp           op,
                      ofiComm_t*             ofiComm,
                      void*                  data,
                      size_t                 size,
-                     fid_mr*                mr_handle,
                      ofi_req_t**            req,
                      ofi_t*                 g_ofi,
                      OfiCompCallbackParams& compParams)
 {
-    int        ret     = hcclSuccess;
+    int        ret     = hcclUninitialized;
     ofi_req_t* request = NULL;
 
     do
@@ -41,10 +44,10 @@ inline int ofiCommOp(const CommOp           op,
         switch (op)
         {
             case CommOp::SEND:
-                ret = g_ofi->isend(ofiComm, data, size, mr_handle, &request, compParams);
+                ret = g_ofi->isend(ofiComm, data, size, &request, compParams);
                 break;
             case CommOp::RECV:
-                ret = g_ofi->irecv(ofiComm, data, size, mr_handle, &request, compParams);
+                ret = g_ofi->irecv(ofiComm, data, size, &request, compParams);
                 break;
             default:
                 VERIFY(false, "Unknown ofi operation.");

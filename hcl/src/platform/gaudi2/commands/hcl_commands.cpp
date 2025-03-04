@@ -350,7 +350,9 @@ void HclCommandsGaudi2::serializeScaleUpCollectiveOp(hcl::ScalStreamBase&   scal
                                                                         syncObjectAddressIndex,
                                                                         commDescIndex);
 
-    CountDescriptor countDesc(scaleupCollectiveOp.m_cellCount, NUM_SCALEUP_PORTS_PER_CONNECTION);
+    CountDescriptor countDesc(
+        scaleupCollectiveOp.m_cellCount,
+        scaleupCollectiveOp.m_contextManager.getServerConnectivity().getMaxNumScaleUpPortsPerConnection());
 
     if (countDesc.isShort() && ((scaleupCollectiveOp.m_baseAddress % 16) == 0))
     {
@@ -363,7 +365,6 @@ void HclCommandsGaudi2::serializeScaleUpCollectiveOp(hcl::ScalStreamBase&   scal
                 scaleupCollectiveOp.m_isSend,
                 scaleupCollectiveOp.m_hasBufferSize,
                 scaleupCollectiveOp.m_count,
-                syncObjectAddressIndex,
                 scaleupCollectiveOp.m_collectiveOp == eHCLGather && scaleupCollectiveOp.m_isSend,
                 countDesc.m_cacheLineCount,
                 countDesc.m_cacheLineRemainder,
@@ -378,14 +379,9 @@ void HclCommandsGaudi2::serializeScaleUpCollectiveOp(hcl::ScalStreamBase&   scal
                 scalStream,
                 scaleupCollectiveOp.m_collectiveContextIndex,
                 commDescIndex,
-                scaleupCollectiveOp.m_hasBufferSize,
-                syncObjectAddressIndex,
                 countDesc.m_cacheLineCount,
                 scaleupCollectiveOp.m_dynamicComm.getRankInScaleupGroup(),
-                scaleupCollectiveOp.m_accuIndex,
                 scaleupCollectiveOp.m_subBuffIndex,
-                scaleupCollectiveOp.m_numOfRanks,
-                countDesc.numberOfActivatedNics(),
                 scaleupCollectiveOp.m_poolId,
                 scaleupCollectiveOp.m_notifyRndvAck,
                 scaleupCollectiveOp.m_waitForRndvAcks);
@@ -403,7 +399,6 @@ void HclCommandsGaudi2::serializeScaleUpCollectiveOp(hcl::ScalStreamBase&   scal
                                                                    scaleupCollectiveOp.m_isSend,
                                                                    scaleupCollectiveOp.m_hasBufferSize,
                                                                    scaleupCollectiveOp.m_count,
-                                                                   syncObjectAddressIndex,
                                                                    scaleupCollectiveOp.m_collectiveOp == eHCLGather &&
                                                                        scaleupCollectiveOp.m_isSend,
                                                                    countDesc.m_cacheLineCount,

@@ -106,11 +106,25 @@ HLGCFG_API uint32_t getDeviceType();
  * @return current mode type
  */
 HLGCFG_API NNExecutionMode getModeType();
+
 /**
  * set mode type for the current thread only. It defines which mode to use
  * @param modeType mode type
  */
 HLGCFG_API void setModeType(NNExecutionMode modeType);
+
+/**
+ * by default false. e.i. hl_gcfg::setValue will not set the value if it was set from env
+ * @return true if setValue will set the value regardless if it was set from env
+ */
+HLGCFG_API bool getForceSetValueUpdate();
+
+/**
+ * by default hl_gcfg::setValue will not set the value if it was set from env
+ * for testing purposes this behavior can be changed
+ * @param forceSetValueUpdate - if true - setValue will set the value regardless if it was set from env
+ */
+HLGCFG_API void setForceSetValueUpdate(bool forceSetValueUpdate);
 
 /**
  * print full configuration into a logger (all the registered gcfg items)

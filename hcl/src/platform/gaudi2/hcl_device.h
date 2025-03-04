@@ -64,7 +64,7 @@ protected:
 private:
     hcclResult_t  openQpToRemoteRanks(const HCL_Comm comm, const UniqueSortedVector& ranks);
     void          setEdmaEngineGroupSizes() override;
-    HclConfigType getConfigType() override { return HLS2; };
+    HclConfigType getConfigType() override { return m_boxConfigType; };
 
     virtual void     addQPsToQPManagerDB(const HCL_Comm   comm,
                                          const HCL_Rank   remoteRank,
@@ -75,4 +75,6 @@ private:
 
     virtual hcclResult_t openQpsHlsScaleUp(HCL_Comm comm) override;
     virtual hcclResult_t openQpsLoopback(HCL_Comm comm) override;
+
+    HclConfigType m_boxConfigType = HLS2;
 };

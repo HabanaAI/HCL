@@ -36,6 +36,7 @@ public:
         FUNC_SCOPE,
         HCL_CG,
         HCL_FAILOVER,
+        HCL_SYNC_DBG_TOOL,
         LOG_MAX  // Must be last
     };
 #define HLLOG_ENUM_TYPE_NAME hcl::LogManager::LogType
@@ -119,6 +120,17 @@ constexpr bool log_level_at_least()
 inline bool log_level_at_least(const hcl::LogManager::LogType logType, unsigned int level)
 {
     return hcl::LogManager::get_log_level(logType) <= level;
+}
+
+inline bool lazy_log_level_at_least(const hcl::LogManager::LogType logType, int level)
+{
+    return hl_logger::lazyLogLevelAtLeast(logType, level);
+}
+
+// Either regular or lazy log-levels are at least the questioned level
+inline bool either_log_levels_at_least(const hcl::LogManager::LogType logType, int level)
+{
+    return hl_logger::anyLogLevelAtLeast(logType, level);
 }
 
 #define LOG_LEVEL_AT_LEAST_TRACE(log_type)    HLLOG_LEVEL_AT_LEAST_TRACE(log_type)
@@ -240,3 +252,49 @@ inline bool log_level_at_least(const hcl::LogManager::LogType logType, unsigned 
 
 #define TO64(x)  ((uint64_t)x)
 #define TO64P(x) ((void*)x)
+
+// SYNC DBG macros
+//
+// Define a list of valid operations
+constexpr std::array<const char*, 11> validSyncDbgOps = {
+    // NW operations
+    "Reduce",
+    "Broadcast",
+    "AllReduce",
+    "ReduceScatter",
+    "AllGather",
+    "AllToAll",
+    "Send",
+    "Receive",
+    // Barrier
+    "Barrier",
+    // Grouping
+    "GroupStart",
+    "GroupEnd"};
+//
+// Compile-time validation for op-type
+constexpr bool isValidOp(const char* opName)
+{
+    size_t index = 0;
+    while (index < validSyncDbgOps.size())
+    {
+        if (std::strcmp(opName, validSyncDbgOps[index]) == 0)
+        {
+            return true;
+        }
+        ++index;
+    }
+
+    return false;
+}
+//
+// LOG for SYNC_DBG
+#define LOG_SYNC_DBG(opid, description, ...)                                                                           \
+    static_assert(isValidOp(#opid), "Invalid operation provided: " #opid " (look at validSyncDbgOps)");                \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        if (either_log_levels_at_least(hcl::LogManager::LogType::HCL_SYNC_DBG_TOOL, HLLOG_LEVEL_DEBUG))                \
+        {                                                                                                              \
+            LOG_DEBUG(HCL_SYNC_DBG_TOOL, "OP: opid" #opid " " description, ##__VA_ARGS__);                             \
+        }                                                                                                              \
+    } while (0)

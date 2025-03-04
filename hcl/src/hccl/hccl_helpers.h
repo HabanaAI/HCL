@@ -41,7 +41,8 @@
 
 // Support for fp16 not enabled
 #define RETURN_ON_INVALID_DATA_TYPE(_arg)                                                                              \
-    RETURN_ON_INVALID_ARG(_arg != hcclFloat32 && _arg != hcclBfloat16 && _arg != hcclFloat16,                          \
+    RETURN_ON_INVALID_ARG(_arg != hcclFloat32 && _arg != hcclBfloat16 && _arg != hcclFloat16 && _arg != hcclInt32 &&   \
+                              _arg != hcclInt && _arg != hcclUint32,                                                   \
                           _arg,                                                                                        \
                           "Invalid or unsupported data type");
 

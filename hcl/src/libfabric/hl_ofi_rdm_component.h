@@ -19,32 +19,29 @@ public:
 
     void* get_cq_buf() override;
 
-    int next_tag(uint64_t* tag) override;
+    uint64_t next_tag() override;
 
     int
-    listen(uint64_t tag, void* handle, listenComm_t** listenComm, unsigned hostConnIdx, uint16_t qpSetIndex) override;
+    listen(uint64_t tag, void* handle, listenComm_t* listenComm, unsigned hostConnIdx, uint16_t qpSetIndex) override;
     int connect(const void* handle,
-                ofiComm_t** ofiComm,
+                ofiComm_t*  ofiComm,
                 void*       localAddr,
                 unsigned    hostConnIdx,
                 uint16_t    qpSetIndex) override;
-    int accept(listenComm_t* listenComm, ofiComm_t** ofiComm) override;
-    int isend(ofiComm_t*             ofiComm,
-              void*                  data,
-              size_t                 size,
-              fid_mr*                mHandle,
-              ofi_req_t**            request,
+    int accept(listenComm_t* listenComm, ofiComm_t* ofiComm) override;
+    int isend(ofiComm_t* const       ofiComm,
+              void* const            data,
+              const size_t           size,
+              ofi_req_t** const      request,
               OfiCompCallbackParams& compParams) override;
-    int irecv(ofiComm_t*             ofiComm,
-              void*                  data,
-              size_t                 size,
-              fid_mr*                mHandle,
-              ofi_req_t**            request,
+    int irecv(ofiComm_t* const       ofiComm,
+              void* const            data,
+              const size_t           size,
+              ofi_req_t** const      request,
               OfiCompCallbackParams& compParams) override;
-    int close(ofiComm_t* ofiComm) override;
-    int close(listenComm_t* listenComm) override;
 
-    using EpAv = std::tuple<FiObjectPtr<struct fid_ep*>, FiObjectPtr<struct fid_av*>, FiObjectPtr<struct fid_cq*>>;
+    using Resources =
+        std::tuple<FiObjectPtr<struct fid_ep*>, FiObjectPtr<struct fid_av*>, FiObjectPtr<struct fid_cq*>, void*>;
 
     /**
      * @brief Retrieve an existing endpoint associated with the given parameters or create if needed.
@@ -54,7 +51,7 @@ public:
      * @param qpSetIndex The qp set index of the endpoint
      * @return endpoint and its address vector.
      */
-    EpAv acquire_ep_av(unsigned hostConnIdx, EndpointRole role, uint16_t qpSetIndex);
+    Resources acquire_resources(unsigned hostConnIdx, ofi_rdm_component_t::EndpointRole role, uint16_t qpSetIndex);
 
 private:
     int             process_completions(void* cq_buf, uint64_t num_cqes) override;
@@ -74,10 +71,11 @@ private:
 private:
     std::vector<fi_cq_tagged_entry> m_cqe_tagged_buffers;
 
+    FutexLock      m_tagLock;
     uint64_t       m_tag;
     const uint64_t m_max_tag;
 
-    std::map<std::tuple<unsigned /*hostConnIdx*/, EndpointRole, uint16_t /*qpSetIndex*/>, EpAv> m_eps;
+    std::map<std::tuple<unsigned /*hostConnIdx*/, EndpointRole, uint16_t /*qpSetIndex*/>, Resources> m_eps;
     using Addr = std::vector<uint8_t>;
     std::map<FiObjectPtr<struct fid_av*>, std::map<Addr, fi_addr_t>> m_av_addr;
     FiObjectPtr<struct fid_cq*>                                      m_cq;

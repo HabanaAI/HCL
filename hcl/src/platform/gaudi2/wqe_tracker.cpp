@@ -4,8 +4,15 @@
 #include "hcl_dynamic_communicator.h"  // for HclDynamicCommunicator
 #include "hcl_utils.h"                 // for VERIFY
 
-WqeTrackerGaudi2::WqeTrackerGaudi2()
+WqeTrackerGaudi2::WqeTrackerGaudi2(unsigned cgSize) : WqeTracker(cgSize)
 {
+    VERIFY(m_recvWqeEntriesNum == cgSize >> 1,
+           "recv-wqe tracking num set to {}, instead of {}",
+           m_recvWqeEntriesNum,
+           cgSize >> 1);
+
+    LOG_HCL_DEBUG(HCL, "setting m_recvWqeEntriesNum={}", m_recvWqeEntriesNum);
+
     // allocate initial data for communicators
     // don't allocate per communicator since it's size is unknown
     for (unsigned qpType = 0; qpType < (unsigned)QpType::QPTypeSize; ++qpType)

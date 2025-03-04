@@ -26,20 +26,32 @@ void IntermediateBufferContainer::init()
         m_imbSize = GCFG_HCL_IMB_SIZE.value();
     }
 
-    std::vector<e_devicePoolID> firstPool  = {SCALEOUT_POOL};
-    std::vector<e_devicePoolID> secondPool = {REDUCE_POOL, SCALEUP_AND_ALL2ALL_POOL};
+    std::array<std::vector<e_devicePoolID>, MAX_NUM_POOL_SIZES> poolTypes = {std::vector<e_devicePoolID> {},
+                                                                             std::vector<e_devicePoolID> {}};
 
-    m_firstPool = SCALEOUT_POOL;
-    m_lastPool  = SCALEUP_AND_ALL2ALL_POOL;
-
-    if (GCFG_HCCL_GAUDI_DIRECT.value())
+    if (GCFG_HCL_RS_SO_RECV_CONT_REDUCTION.value())
     {
-        secondPool.push_back(SCALEOUT_GDR_POOL);
-        m_lastPool = SCALEOUT_GDR_POOL;
+        poolTypes[DOUBLE_SLICE_SIZE_POOL_IDX].push_back(SCALEOUT_ACC_POOL);
+        poolTypes[STANDARD_SLICE_SIZE_POOL_IDX].push_back(SCALEOUT_POOL);
+        poolTypes[STANDARD_SLICE_SIZE_POOL_IDX].push_back(SCALEOUT_POOL_1);
     }
+    else
+    {
+        poolTypes[DOUBLE_SLICE_SIZE_POOL_IDX].push_back(SCALEOUT_POOL);
+        if (GCFG_HCCL_GAUDI_DIRECT.value())
+        {
+            poolTypes[STANDARD_SLICE_SIZE_POOL_IDX].push_back(SCALEOUT_GDR_POOL);
+        }
+    }
+    poolTypes[STANDARD_SLICE_SIZE_POOL_IDX].push_back(REDUCE_POOL);
+    poolTypes[STANDARD_SLICE_SIZE_POOL_IDX].push_back(SCALEUP_AND_ALL2ALL_POOL);
 
-    generatePoolParams(m_imbSize * 2, firstPool, m_bufferContainerParams[0]);
-    generatePoolParams(m_imbSize, secondPool, m_bufferContainerParams[1]);
+    if (GCFG_HCCL_PRIM_COLLECTIVE_MASK.value())
+    {
+        poolTypes[DOUBLE_SLICE_SIZE_POOL_IDX].push_back(PRIMITIVE_POOL);
+    }
+    generatePoolParams(m_imbSize * 2, poolTypes[0], m_bufferContainerParams[0]);
+    generatePoolParams(m_imbSize, poolTypes[1], m_bufferContainerParams[1]);
 
     for (unsigned poolSizeIndex = 0; poolSizeIndex < m_bufferContainerParams.size(); poolSizeIndex++)
     {
@@ -66,13 +78,13 @@ void IntermediateBufferContainer::init()
             {{(firstPoolSizeParams.allBufferBaseAddr + (i * firstPoolSizeParams.sizeOfSIB)),
                     firstPoolSizeParams.sliceSize,
                     firstPoolSizeParams.countOfSIB,
-                    firstPool.size()},
+                    poolTypes[0].size()},
                    {(secondPoolSizeParams.allBufferBaseAddr + (i * secondPoolSizeParams.sizeOfSIB)),
                     secondPoolSizeParams.sliceSize,
                     secondPoolSizeParams.countOfSIB,
-                    secondPool.size()}}};
+                    poolTypes[1].size()}}};
 
-        m_sibBuffers.emplace_back(DeviceBufferManager(m_bufferParams, getSIBVector()));
+        m_sibBuffers.emplace_back(DeviceBufferManager(m_bufferParams, getSIBMap(poolTypes)));
     }
 
     allocateFwIntermediateBuffer();
@@ -149,14 +161,18 @@ unsigned IntermediateBufferContainer::getSIBCount(const std::vector<e_devicePool
     return count;
 }
 
-std::vector<unsigned> IntermediateBufferContainer::getSIBVector()
+std::map<e_devicePoolID, unsigned>
+IntermediateBufferContainer::getSIBMap(std::array<std::vector<e_devicePoolID>, MAX_NUM_POOL_SIZES>& poolTypes)
 {
-    std::vector<unsigned> SIBVector = {};
-    for (int i = m_firstPool; i < m_lastPool + 1; i++)
+    std::map<e_devicePoolID, unsigned> SIBMap = {};
+    for (unsigned i = 0; i < MAX_NUM_POOL_SIZES; i++)
     {
-        SIBVector.push_back(IntermediateBuffersAmount::getBufferCount(static_cast<e_devicePoolID>(i)));
+        for (e_devicePoolID pool : poolTypes[i])
+        {
+            SIBMap[pool] = IntermediateBuffersAmount::getBufferCount(pool);
+        }
     }
-    return SIBVector;
+    return SIBMap;
 }
 
 bool IntermediateBufferContainer::verifySIBPoolSizes(const std::vector<e_devicePoolID>& pools)

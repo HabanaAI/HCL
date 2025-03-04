@@ -56,16 +56,16 @@ HclCollectiveRoutinesGaudi3::~HclCollectiveRoutinesGaudi3()
     if (m_remainderCalculator) delete m_remainderCalculator;
 }
 
-void HclCollectiveRoutinesGaudi3::createScaleUpSendRecvOp(hcl::ScalStreamBase& scalStream,
-                                                          const SendRecvArray& sendRecvArray,
-                                                          int                  selfModuleId,
-                                                          HCL_Comm             comm,
-                                                          unsigned             collectiveContextIndex,
-                                                          uint32_t             soAddress,
-                                                          bool                 isSend,
-                                                          bool                 isLast,
-                                                          bool                 notifyRndvAck,
-                                                          bool                 waitForRndvAcks)
+void HclCollectiveRoutinesGaudi3::createScaleUpSendRecvOp(hcl::ScalStreamBase&      scalStream,
+                                                          const SendRecvArray&      sendRecvArray,
+                                                          int                       selfModuleId,
+                                                          HCL_Comm                  comm,
+                                                          [[maybe_unused]] unsigned collectiveContextIndex,
+                                                          uint32_t                  soAddress,
+                                                          bool                      isSend,
+                                                          [[maybe_unused]] bool     isLast,
+                                                          [[maybe_unused]] bool     notifyRndvAck,
+                                                          [[maybe_unused]] bool     waitForRndvAcks)
 {
     HclDynamicCommunicator& dynamicComm = m_device->getComm(comm);
     HclDeviceGaudi3*        device      = dynamic_cast<HclDeviceGaudi3*>(m_device);
@@ -289,12 +289,12 @@ uint64_t RemainderCalculatorGaudi3::getBufferClearSize(HCL_CollectiveOp collecti
     return originalSize;
 }
 
-uint64_t RemainderCalculatorGaudi3::getBoxCount(uint64_t nonRemainderBoxCount,
-                                                uint64_t numBoxes,
-                                                uint64_t ScaleupGroupSize,
-                                                uint64_t boxIndex,
-                                                uint64_t scaleUpCount,
-                                                uint64_t remainderCount)
+uint64_t RemainderCalculatorGaudi3::getBoxCount(uint64_t                  nonRemainderBoxCount,
+                                                uint64_t                  numBoxes,
+                                                [[maybe_unused]] uint64_t ScaleupGroupSize,
+                                                uint64_t                  boxIndex,
+                                                [[maybe_unused]] uint64_t scaleUpCount,
+                                                uint64_t                  remainderCount)
 {
     if (boxIndex == (numBoxes - 1))
     {
@@ -303,14 +303,14 @@ uint64_t RemainderCalculatorGaudi3::getBoxCount(uint64_t nonRemainderBoxCount,
     return nonRemainderBoxCount;
 }
 
-uint64_t RemainderCalculatorGaudi3::getScaleOutCount(uint64_t nonRemainderScaleOutCount,
-                                                     uint64_t numBoxes,
-                                                     uint64_t boxCount,
-                                                     uint64_t boxIndex,
-                                                     uint64_t myRankInScaleupGroup,
-                                                     uint64_t scaleUpCount,
-                                                     uint64_t remainderCount,
-                                                     bool     lastRankInScaleupGroup)
+uint64_t RemainderCalculatorGaudi3::getScaleOutCount(uint64_t                  nonRemainderScaleOutCount,
+                                                     uint64_t                  numBoxes,
+                                                     [[maybe_unused]] uint64_t boxCount,
+                                                     uint64_t                  boxIndex,
+                                                     [[maybe_unused]] uint64_t myRankInScaleupGroup,
+                                                     [[maybe_unused]] uint64_t scaleUpCount,
+                                                     uint64_t                  remainderCount,
+                                                     bool                      lastRankInScaleupGroup)
 {
     if (boxIndex == (numBoxes - 1) && lastRankInScaleupGroup)
     {

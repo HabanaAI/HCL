@@ -56,7 +56,8 @@ void ActiveStreamManagerGen2Arch::initializeDmaStreams(CommonState& commonState,
     if (isActive) fillDmaStream(hcl::DMAStreams::reduction, m_archStreamIdx, schedIdx);
 
     // scaleoutReduction
-    isActive = commonState.m_isMultiScaleupGroup && isLastBox && currentOp == eHCLReduceScatter;
+    isActive = commonState.m_isMultiScaleupGroup && currentOp == eHCLReduceScatter &&
+               (isLastBox || (commonState.isRSContReduction() && commonState.isBufferReductionIter()));
     if (isActive) fillDmaStream(hcl::DMAStreams::scaleoutReduction, m_archStreamIdx, schedIdx);
 
     // signaling
@@ -70,9 +71,10 @@ void ActiveStreamManagerGen2Arch::initializeDmaStreams(CommonState& commonState,
     }
     else if (currentOp == eHCLScatter)
     {
-        bool isRootBox  = commonState.m_dynamicComm.getMyScaleupGroup() == commonState.rootBox();
-        bool isPdmaHnic = m_scaleoutProvider->isHostNic() && !m_scaleoutProvider->isGaudiDirect();
-        isActive        = commonState.m_isMultiScaleupGroup && (!isFirstBox && isPdmaHnic && !isRootBox);
+        bool isRootBox   = commonState.m_dynamicComm.getMyScaleupGroup() == commonState.rootBox();
+        bool isPdmaHnic  = m_scaleoutProvider->isHostNic() && !m_scaleoutProvider->isGaudiDirect();
+        bool isPeersOnly = commonState.m_isMultiScaleupGroup && commonState.m_dynamicComm.getScaleupGroupSize() == 1;
+        isActive = commonState.m_isMultiScaleupGroup && (!isFirstBox && isPdmaHnic && !isRootBox && !isPeersOnly);
     }
 
     VERIFY(isActive || !(commonState.m_syncUpBufferWithLtu && !isFirstBox) ||
@@ -87,7 +89,7 @@ void ActiveStreamManagerGen2Arch::initializeDmaStreams(CommonState& commonState,
 
     // gdr
     isActive = m_scaleoutProvider->isGaudiDirect() && commonState.m_isMultiScaleupGroup &&
-               currentOp == eHCLReduceScatter && !isFirstBox;
+               currentOp == eHCLReduceScatter && !isFirstBox && !commonState.isRSContReduction();
     if (isActive) fillDmaStream(hcl::DMAStreams::gdr, m_archStreamIdx, schedIdx);
 
     for (unsigned i = 0; i < static_cast<size_t>(hcl::DMAStreams::max); i++)

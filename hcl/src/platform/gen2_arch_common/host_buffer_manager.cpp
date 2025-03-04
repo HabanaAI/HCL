@@ -3,20 +3,20 @@
 #include "hcl_utils.h"        // for VERIFY
 #include "hcl_log_manager.h"  // for LOG_*
 
-HostBufferManager::HostBufferManager(const uint64_t               mappedBaseAddr,
-                                     const uint64_t               hostBaseAddr,
-                                     const std::vector<unsigned>& sizes,
-                                     const uint64_t               singleBufferSize)
+HostBufferManager::HostBufferManager(const uint64_t                          mappedBaseAddr,
+                                     const uint64_t                          hostBaseAddr,
+                                     const std::map<e_hostPoolID, unsigned>& sizes,
+                                     const uint64_t                          singleBufferSize)
 : BufferManagerBase(std::array<BufferParams, 1> {{{mappedBaseAddr, singleBufferSize, 0, 2}}}, sizes),
   m_hostBaseAddr(hostBaseAddr)
 
 {
     m_bufferParams[0].m_totalPoolsAmount = 0;
-    for (unsigned i = 0; i < m_poolSizes.size(); ++i)
+    for (const auto& poolEntry : m_poolSizes)
     {
-        m_poolBases.push_back(m_bufferParams[0].m_totalPoolsAmount);
-        m_creditManagers.emplace_back(m_poolSizes[i]);
-        m_bufferParams[0].m_totalPoolsAmount += m_poolSizes[i];
+        m_poolBases.emplace(poolEntry.first, m_bufferParams[0].m_totalPoolsAmount);
+        m_creditManagers.emplace(poolEntry.first, poolEntry.second);
+        m_bufferParams[0].m_totalPoolsAmount += poolEntry.second;
     }
 }
 

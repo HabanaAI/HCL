@@ -1,5 +1,6 @@
 #include "hcl_ibverbs.h"
 #include "helpers.h"
+#include "hcl_types.h"  // for NicLkdEventsEnum
 
 // non-trivial designated initializers not supported
 #define MAX_ERRORS (IBV_EVENT_WQ_FATAL + 1)
@@ -150,6 +151,10 @@ const char* parse_qp_syndrome(uint32_t syndrome)
         str = qp_syndroms[syndrome];
     }
 
+    if (str == nullptr)
+    {
+        str = "Could not parse syndrome";
+    }
     return str;
 }
 
@@ -304,12 +309,18 @@ bool hcl_ibverbs_t::parse_ib_eqe(ibv_async_event* event)
 
 void hcl_ibverbs_t::report_nic_status(const ibv_event_type& event, const uint32_t nic)
 {
-    if (!(event == IBV_EVENT_PORT_ACTIVE || event == IBV_EVENT_PORT_ERR || event == IBV_EVENT_LID_CHANGE))
+    switch (event)
     {
-        CRT_IBV("unknown NIC event: {}", err2str[event]);
-        return;
+        case IBV_EVENT_PORT_ACTIVE:
+            device_->updateNicState(nic, NicLkdEventsEnum::NIC_LKD_EVENTS_UP, false);
+            break;
+        case IBV_EVENT_PORT_ERR:
+            device_->updateNicState(nic, NicLkdEventsEnum::NIC_LKD_EVENTS_DOWN, false);
+            break;
+        case IBV_EVENT_LID_CHANGE:
+            device_->updateNicState(nic, NicLkdEventsEnum::NIC_LKD_EVENTS_SHUTDOWN, false);
+            break;
+        default:
+            CRT_IBV("unknown NIC event: {}", err2str[event]);
     }
-
-    const bool isPortUp = (event == IBV_EVENT_PORT_ACTIVE);
-    device_->updateNicState(nic, isPortUp, false);
 }

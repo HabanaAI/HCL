@@ -7,8 +7,11 @@
 #include "hccl_types.h"  // for hcclRedOp_t
 
 constexpr unsigned MAX_SCALEOUT_FACTOR = 8;
+constexpr unsigned MIN_SCALEOUT_FACTOR = 1;
 
 class HclDeviceGen2Arch;
+
+struct BufferToken;
 
 class sibAddressAndSize
 {
@@ -30,7 +33,8 @@ class DeviceBufferManager : public BufferManagerBase<e_devicePoolID, MAX_NUM_POO
 public:
     virtual ~DeviceBufferManager() = default;
 
-    DeviceBufferManager(std::array<BufferParams, MAX_NUM_POOL_SIZES> bufferParams, const std::vector<unsigned>& sizes);
+    DeviceBufferManager(std::array<BufferParams, MAX_NUM_POOL_SIZES> bufferParams,
+                        const std::map<e_devicePoolID, unsigned>&    sizes);
     DeviceBufferManager(DeviceBufferManager&&)                 = default;  // ALLOW move ctor
     DeviceBufferManager(const DeviceBufferManager&)            = delete;
     DeviceBufferManager& operator=(DeviceBufferManager&&)      = delete;
@@ -55,9 +59,11 @@ public:
     static unsigned       getPoolSizeIndex(const e_devicePoolID poolIdx);
     uint64_t              getBufferAmountInPool(unsigned poolId);
     static const unsigned getFactor(const e_devicePoolID poolIdx);
+    bool                  isPoolAllocated(e_devicePoolID poolIdx);
+    static e_devicePoolID fetchPool(const BufferToken& bufferHandle);
+    static bool           isSiboPool(const e_devicePoolID poolIdx);
 
 private:
-    static unsigned s_gcfgFactor;
     // Granularity requirements for buffers:
     // 8 for scaleup buffers pool
     // All values must be a power of 2

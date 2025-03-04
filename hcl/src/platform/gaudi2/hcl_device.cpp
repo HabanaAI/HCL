@@ -43,6 +43,7 @@ HclDeviceGaudi2::HclDeviceGaudi2(HclDeviceControllerGen2Arch& controller,
 {
     registerOpenQpCallback(LOOPBACK, [&](HCL_Comm comm) { return openQpsLoopback(comm); });
     registerOpenQpCallback(HLS2, [&](HCL_Comm comm) { return openQpsHLS(comm); });
+    registerOpenQpCallback(HL288, [&](HCL_Comm comm) { return openQpsHLS(comm); });
     setHal(serverDef.getHalSharedPtr());
     LOG_HCL_TRACE(HCL, "Test ctor, deviceType={}", deviceConfig.getDeviceTypeStr());
 }
@@ -50,10 +51,25 @@ HclDeviceGaudi2::HclDeviceGaudi2(HclDeviceControllerGen2Arch& controller,
 // Runtime ctor
 HclDeviceGaudi2::HclDeviceGaudi2(HclDeviceControllerGen2Arch& controller,
                                  HclDeviceConfig&             deviceConfig,
-                                 hcl::HalPtr                  halShared,
+                                 [[maybe_unused]] hcl::HalPtr halShared,
                                  Gen2ArchServerDef&           serverDef)
 : HclDeviceGen2Arch(controller, deviceConfig, serverDef)
 {
+    const HclConfigType configType = (HclConfigType)GCFG_BOX_TYPE_ID.value();
+    if ((configType == HLS2) || (configType == LOOPBACK))
+    {
+        m_boxConfigType = HLS2;
+    }
+    else if (configType == HL288)
+    {
+        m_boxConfigType = HL288;
+    }
+    else
+    {
+        VERIFY(false, "Invalid server type {} for G2 device", configType);
+    }
+    LOG_HCL_INFO(HCL, "Set server type to {}", m_boxConfigType);
+
     m_scalManager.getHBMAddressRange(m_allocationRangeStart, m_allocationRangeEnd);
     setHal(serverDef.getHalSharedPtr());
     // The scaleout mode is set according also to if all scaleout ports are disabled by LKD/HCL or not. This is
@@ -84,6 +100,7 @@ HclDeviceGaudi2::HclDeviceGaudi2(HclDeviceControllerGen2Arch& controller,
     m_contextManager->createCollectiveContexts(controller.getGen2ArchCommands() /*, HCL_Comm comm */);
     registerOpenQpCallback(LOOPBACK, [&](HCL_Comm comm) { return openQpsLoopback(comm); });
     registerOpenQpCallback(HLS2, [&](HCL_Comm comm) { return openQpsHLS(comm); });
+    registerOpenQpCallback(HL288, [&](HCL_Comm comm) { return openQpsHLS(comm); });
 
     updateDisabledPorts();
     initNicsMask();
@@ -102,7 +119,7 @@ hlthunk_device_name HclDeviceGaudi2::getDeviceName()
     return HLTHUNK_DEVICE_GAUDI2;
 }
 
-uint8_t HclDeviceGaudi2::getPeerNic(const HCL_Rank rank, const HCL_Comm comm, const uint8_t port)
+uint8_t HclDeviceGaudi2::getPeerNic([[maybe_unused]] const HCL_Rank rank, const HCL_Comm comm, const uint8_t port)
 {
     HclConfigType configType = (HclConfigType)GCFG_BOX_TYPE_ID.value();
     return configType == LOOPBACK ? port : getServerConnectivity().getPeerPort(port, comm);
@@ -110,8 +127,10 @@ uint8_t HclDeviceGaudi2::getPeerNic(const HCL_Rank rank, const HCL_Comm comm, co
 
 unsigned HclDeviceGaudi2::getSenderWqeTableSize()
 {
-    constexpr int SEND_RECV_WQE_FACTOR = 4;  // sendWqeTable size must be 4 * recvWqeTable size = 4 * cgSize
-    return m_cgSize * SEND_RECV_WQE_FACTOR;
+    // sendWqeTable size must be at least 4 * recvWqeTable size because of SW-109975. we set it to 8 because of
+    // SW-211841.
+    constexpr int SEND_RECV_WQE_FACTOR = 8;
+    return getReceiverWqeTableSize() * SEND_RECV_WQE_FACTOR;
 }
 
 unsigned HclDeviceGaudi2::getReceiverWqeTableSize()
@@ -146,7 +165,8 @@ bool HclDeviceGaudi2::isSender(unsigned _qpi)
     return ((_qpi == G2::QP_e::QPE_RS_SEND) || (_qpi == G2::QP_e::QPE_AG_SEND));
 }
 
-uint32_t HclDeviceGaudi2::getQpi(HCL_Comm comm, uint8_t nic, HCL_Rank remoteRank, uint32_t qpn, uint8_t qpSet)
+uint32_t
+HclDeviceGaudi2::getQpi(HCL_Comm comm, uint8_t nic, HCL_Rank remoteRank, uint32_t qpn, [[maybe_unused]] uint8_t qpSet)
 {
     const QPManagerHints hints(comm, remoteRank, nic, INVALID_QP, qpn);
 

@@ -13,7 +13,8 @@ enum PrimType
 {
     SCALEUP_PRIM_TYPE       = 0,
     SCALEOUT_SEND_PRIM_TYPE = 1,
-    SCALEOUT_RECV_PRIM_TYPE = 2
+    SCALEOUT_RECV_PRIM_TYPE = 2,
+    REDUCTION_PRIM_TYPE     = 3
 };
 
 struct hcclSyncInfo
@@ -37,7 +38,6 @@ public:
     HcclPrim()                                             = default;
     virtual ~HcclPrim()                                    = default;
     virtual hcclResult_t process(IHcclGraphEngine* engine) = 0;
-    virtual hcclResult_t compile()                         = 0;
     virtual void         init(HcclGraph* graph, int idx);
 
     inline bool hasWait() const { return !m_waitingSyncs.empty(); }

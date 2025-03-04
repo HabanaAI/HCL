@@ -57,6 +57,8 @@ public:
     virtual nics_mask_t
     getActiveNics(HCL_Rank fromRank, HCL_Rank toRank, int physicalQueueOffset, HCL_Comm comm) override;
 
+    virtual void invalidateCache(HCL_Comm comm);
+
     virtual nics_mask_t getAllPorts(const int deviceId, const nics_mask_t enabledExternalPortsMask) const;
     virtual bool        isScaleOutPort(const uint16_t port, const HCL_Comm comm = DEFAULT_COMM_ID) const override;
 
@@ -68,6 +70,7 @@ public:
     virtual bool              isDramAddressValid(uint64_t addr) const override;
     hcl::Gen2ArchScalManager& getScalManager();
     virtual void              updateDisabledPorts() = 0;
+    virtual void              deleteMigrationQPs(HCL_Comm comm);
     /**
      * @brief Opens QPs to remote (normally non-peers) ranks if not already opened
      *        Avoid deadlocks when communicating with more then 1 remote rank by doing first
@@ -92,7 +95,7 @@ public:
     unsigned                     getEdmaEngineWorkDistributionSize();
     uint8_t                      getNumQpSets(bool isScaleOut, HCL_Comm comm, HCL_Rank remoteRank);
 
-    virtual uint32_t getNicToQpOffset(const uint32_t nic) { return 0; }
+    virtual uint32_t getNicToQpOffset([[maybe_unused]] const uint32_t nic) { return 0; }
 
     Gen2ArchServerDef&       getServerDef() final { return m_serverDef; }
     const Gen2ArchServerDef& getServerDefConst() const final { return m_serverDef; }
@@ -117,9 +120,13 @@ public:
 
     virtual bool      supportNicFaultTolerance() const { return false; }
     NicsEventHandler& getNicsFaultHandler() { return *m_nicsEventsHandler; }
+    virtual void      updateMigrationQpsToRts(const HCL_Comm comm);
+    virtual void      createMigrationQps(const HCL_Comm commId, const uint16_t nicDown);
 
     void
     getAsyncError(const std::vector<HCL_HwModuleId> remoteModuleIDs, const HCL_Comm comm, hcclResult_t* asyncError);
+
+    unsigned getCgSize() { return m_cgSize; };
 
 protected:
     virtual void
@@ -148,6 +155,8 @@ protected:
     void             initRemoteNicsLoopback(const HCL_Comm comm);
     virtual void     setEdmaEngineGroupSizes() = 0;
     virtual uint16_t getMaxNumScaleUpPortsPerConnection(const HCL_Comm hclCommId = DEFAULT_COMM_ID) const final;
+    virtual uint16_t getLogicalScaleoutPortNum(
+        const uint16_t nic) const override;  // Translates scaleout physical nic to scaleout logical port number
 
     hcl::Gen2ArchScalManager&          m_scalManager;
     IEventQueueHandler*                m_eqHandler = nullptr;
@@ -171,9 +180,7 @@ protected:
 
     std::unique_ptr<NicsEventHandler> m_nicsEventsHandler = nullptr;
 
-    unsigned edmaEngineGroupSizes[2] = {
-        0,
-    };
+    unsigned edmaEngineGroupSizes[2] = {};
 
 private:
     virtual HclConfigType getConfigType()                = 0;
