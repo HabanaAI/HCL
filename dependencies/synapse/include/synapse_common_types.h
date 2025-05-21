@@ -30,7 +30,7 @@ typedef struct
     uint64_t size;
 } internalMemcopyParamEntry;
 
-#define MAX_NUM_OF_DEVICES_PER_HOST       (8)
+#define MAX_NUM_OF_DEVICES_PER_HOST       (16)
 
 #define MAX_DIMENSIONS_NUM                5
 #define MAX_CONV_DIMS                     3

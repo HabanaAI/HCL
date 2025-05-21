@@ -1,8 +1,8 @@
 #pragma once
 
-#include <cstdint>                                            // for uint64_t
-#include "hcl_api_types.h"                                    // for HCL_CollectiveOp
-#include "platform/gen2_arch_common/device_buffer_manager.h"  // for e_devicePoolID
+#include <cstdint>                                               // for uint64_t
+#include "hcl_api_types.h"                                       // for HCL_CollectiveOp
+#include "platform/gen2_arch_common/device_simb_pool_manager.h"  // for e_devicePoolID
 #include "explicit_addr_container.h"
 
 class HclCommandsGen2Arch;

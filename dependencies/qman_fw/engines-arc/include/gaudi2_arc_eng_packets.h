@@ -1485,20 +1485,16 @@ struct nic_glbl_ctxt_v2_t {
 			 * data in order
 			 * Actual Address: sib_order_base_addr + (sibo_rank_stride * 8) * index
 			 */
-			uint64_t sib_acc_base_addr;
-			/**<
-			 * Address of Static Intermediate Buffer for accomulation / reduction
-			 * Actual Address: sib_acc_base_addr + sib_acc_base_addr * index
-			 */
+			uint64_t reserved; /* added hcl jobs are failing due to hcl using master code in CI */
+
 			uint32_t sibo_rank_stride;
 			/**<
 			 * sib_order Rank stride, in other words maximum size of sib_order sub buffers
 			 * fpr each rank
 			 */
-			uint32_t siba_stride;
-			/**<
-			 * sib_acc stride, in other words maximum size of the sib_acc buffer
-			 */
+			uint32_t reserved2;/* added hcl jobs are failing due to hcl using master code in CI */
+
+
 			struct nic_sob_pool_info_t sob_pool[NIC_MAX_SOB_POOLS];
 			/**<
 			 * NIC sob pool info
@@ -2157,7 +2153,7 @@ struct arc_cmd_coll_ops_recv_short_inorder_v2_t {
 		/**<
 		 * Collective context ID to be used
 		 */
-		uint32_t siba_index:4;
+		uint32_t reserved2:4;
 		/**<
 		 * Static Intermdiate Buffer for accumulation Index
 		 */
@@ -2166,7 +2162,7 @@ struct arc_cmd_coll_ops_recv_short_inorder_v2_t {
 		 * Static Intermediate Buffer for Ordering Index
 		 * to calculate the source buffer address
 		 */
-		uint32_t num_ranks:3;
+		uint32_t reserved3:3;
 		/**<
 		 * Number of ranks that should be received in SIB Accumulation buffer
 		 * Starting from 0, these many ranks stores data into SIB Order buffer

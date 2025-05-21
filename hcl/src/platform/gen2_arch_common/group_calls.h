@@ -13,8 +13,8 @@ struct SendRecvApiEntry;
 
 namespace hcl
 {
-typedef std::map<uint32_t, SendRecvVector>
-    GroupCallsAggregation;  // key => hw_mod_id, Note: There are always at most GEN2ARCH_HLS_BOX_SIZE entries in map
+typedef std::map<uint32_t, SendRecvVector> GroupCallsAggregation;  // key => hw_mod_id, Note: There are always at most
+                                                                   // number of devices in a box entries in map
 
 typedef std::vector<SendRecvArray> SendRecvArraysVector;
 

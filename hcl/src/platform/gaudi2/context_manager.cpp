@@ -204,15 +204,8 @@ void CachedCollectiveContext::flushNicPassthroughHandler(hcl::ScalStreamBase&   
         .flush(scalStream, m_collectiveContextIndex, selfDevice, comm, syncObjectAddressIndex, isSend, incSOBinNOP);
 }
 
-ContextManager::ContextManager(const std::vector<unsigned>& nicEngines,
-                               QPManager&                   qpManagerScaleUp,
-                               QPManager&                   qpManagerScaleOut,
-                               HclDeviceGaudi2&             device)
-: m_nicEngines(nicEngines),
-  m_qpManagerScaleUp(qpManagerScaleUp),
-  m_qpManagerScaleOut(qpManagerScaleOut),
-  m_device(device),
-  m_serverConnectivity(device.getServerConnectivity())
+ContextManager::ContextManager(const std::vector<unsigned>& nicEngines, HclDeviceGaudi2& device)
+: m_nicEngines(nicEngines), m_device(device), m_serverConnectivity(device.getServerConnectivity())
 {
     std::fill(m_activeNics.begin(), m_activeNics.end(), false);
 }
@@ -307,7 +300,7 @@ inline uint32_t ContextManager::idx2qpi(unsigned ctxIndex)
     // ctxIndex < (s_hal.getCollectiveContextsCount() / 2) : 0-7 are Recv contexts, 8-15 are Send contexts
     const bool isSend = (ctxIndex >= (s_hal.getCollectiveContextsCount() / 2));
 
-    return m_qpManagerScaleUp.getQPi(collectiveOp, isSend);
+    return m_device.getCollectiveQpi(collectiveOp, isSend);
 }
 
 void ContextManager::serializeUpdateCollectiveContextScaleUp(hcl::ScalStreamBase&             scalStream,
@@ -345,8 +338,9 @@ void ContextManager::serializeUpdateCollectiveContextScaleUp(hcl::ScalStreamBase
 
             const QPManagerHints hints(comm, HCL_INVALID_RANK, nic, idx2qpi(collectiveContextIndex));
 
-            std::pair<unsigned, uint32_t> result =
-                cachedCollectiveContext.m_activeCommunicatorDescriptor.useQP(comm, m_qpManagerScaleUp.getQPn(hints));
+            std::pair<unsigned, uint32_t> result = cachedCollectiveContext.m_activeCommunicatorDescriptor.useQP(
+                comm,
+                m_device.getComm(comm).m_qpManagers[nic]->getQPn(hints));
             commDescWithQPs[result].push_back(nic);  // make active, get QPs
         }
 
@@ -512,7 +506,7 @@ uint16_t ContextManager::getRemoteRankQp(unsigned collectiveContextIndex,
 {
     const QPManagerHints hints(comm, remoteRank, nic, idx2qpi(collectiveContextIndex), INVALID_QP, qpSet);
 
-    return m_qpManagerScaleOut.getQPn(hints);
+    return m_device.getComm(comm).m_qpManagers[nic]->getQPn(hints);
 }
 
 g2fw::nic_coll_ctxt_dword_t
@@ -681,9 +675,9 @@ void ContextManager::updateCollectiveContextScaleUp(hcl::ScalStreamBase&        
 
                 const QPManagerHints hints(comm, HCL_INVALID_RANK, nic, idx2qpi(collectiveContextIndex));
 
-                std::pair<unsigned, uint32_t> result =
-                    cachedCollectiveContext.m_activeCommunicatorDescriptor.useQP(comm,
-                                                                                 m_qpManagerScaleUp.getQPn(hints));
+                std::pair<unsigned, uint32_t> result = cachedCollectiveContext.m_activeCommunicatorDescriptor.useQP(
+                    comm,
+                    m_device.getComm(comm).m_qpManagers[nic]->getQPn(hints));
                 commDescIndex = result.first;
                 cachedCollectiveContext.m_activeCommunicatorDescriptor.markCommDownload(comm);
             }

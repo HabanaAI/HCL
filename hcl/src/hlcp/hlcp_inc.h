@@ -14,7 +14,7 @@
         {                                                                                                              \
             if (is_expired())                                                                                          \
             {                                                                                                          \
-                HLCP_ERR("operation: {} timeout ({}) expired while waiting for: " #cond, timeout_sec, reason);         \
+                COORD_ERR("operation: {} timeout ({}) expired while waiting for: " #cond, timeout_sec, reason);        \
                 return false;                                                                                          \
             }                                                                                                          \
             usleep(wait_sleep);                                                                                        \
@@ -27,23 +27,19 @@
 #define RET_ON_ERR(func)                                                                                               \
     if (func == -1)                                                                                                    \
     {                                                                                                                  \
-        HLCP_ERR(#func " returned with error. ({}) {}", errno, strerror(errno));                                       \
+        COORD_ERR(#func " returned with error. ({}) {}", errno, strerror(errno));                                      \
         return false;                                                                                                  \
     }
 
-#define RET_ON_FAIL(func)                                                                                              \
+#define SYS_FUNC_CALL(func)                                                                                            \
+    if (func == -1)                                                                                                    \
     {                                                                                                                  \
-        hcclResult_t __rc = func;                                                                                      \
-        if (__rc != hcclSuccess)                                                                                       \
-        {                                                                                                              \
-            LOG_HCL_ERR(HCL, #func " failed: {}", __rc);                                                               \
-            return __rc;                                                                                               \
-        }                                                                                                              \
+        COORD_WRN(#func " returned with error. ({}) {}", errno, strerror(errno));                                      \
     }
 
 #define _DEF_IMPL_                                                                                                     \
     {                                                                                                                  \
-        HLCP_LOG("[ default(empty) implementation ]");                                                                 \
+        COORD_LOG("[ default(empty) implementation ]");                                                                \
     }
 
 #ifndef LOCAL_BUILD
@@ -51,11 +47,11 @@
 #include "hcl_utils.h"
 #include "hcl_sockaddr.h"
 
-#define HLCP_LOG(...) LOG_HCL_TRACE(HCL_COORD, ##__VA_ARGS__)
-#define HLCP_DBG(...) LOG_HCL_DEBUG(HCL_COORD, ##__VA_ARGS__)
-#define HLCP_ERR(...) LOG_HCL_ERR(HCL_COORD, ##__VA_ARGS__)
-#define HLCP_INF(...) LOG_HCL_INFO(HCL_COORD, ##__VA_ARGS__)
-#define HLCP_CRT(...) LOG_HCL_CRITICAL(HCL_COORD, ##__VA_ARGS__)
-#define HLCP_WRN(...) LOG_HCL_WARN(HCL_COORD, ##__VA_ARGS__)
+#define COORD_LOG(FMT, ...) LOG_HCL_TRACE(HCL_COORD, FMT, ##__VA_ARGS__)
+#define COORD_DBG(FMT, ...) LOG_HCL_DEBUG(HCL_COORD, FMT, ##__VA_ARGS__)
+#define COORD_ERR(FMT, ...) LOG_HCL_ERR(HCL_COORD, FMT, ##__VA_ARGS__)
+#define COORD_INF(FMT, ...) LOG_HCL_INFO(HCL_COORD, FMT, ##__VA_ARGS__)
+#define COORD_CRT(FMT, ...) LOG_HCL_CRITICAL(HCL_COORD, FMT, ##__VA_ARGS__)
+#define COORD_WRN(FMT, ...) LOG_HCL_WARN(HCL_COORD, FMT, ##__VA_ARGS__)
 
 #endif

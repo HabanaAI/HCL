@@ -1,14 +1,14 @@
 #include "platform/gaudi2/hcl_mem_handler.h"
 #include "platform/gen2_arch_common/hcl_mem_handler.h"
 #include "platform/gen2_arch_common/hcl_device_controller.h"
-#include "platform/gen2_arch_common/intermediate_buffer_container.h"
+#include "platform/gen2_arch_common/simb_pool_container_allocator.h"
 
-HclCollectiveMemHandlerGaudi2::HclCollectiveMemHandlerGaudi2(int                   archStreamId,
-                                                             HclAddressGenerator&  addressGenerator,
-                                                             DeviceBufferManager&  intermediateBufferManager,
-                                                             HclCommandsGen2Arch&  commands,
-                                                             HclGraphSyncGen2Arch& graphSync)
-: HclCollectiveMemHandlerGen2Arch(archStreamId, addressGenerator, intermediateBufferManager, commands, graphSync)
+HclCollectiveMemHandlerGaudi2::HclCollectiveMemHandlerGaudi2(int                        archStreamId,
+                                                             HclAddressGenerator&       addressGenerator,
+                                                             DeviceSimbPoolManagerBase& deviceSimbPoolManager,
+                                                             HclCommandsGen2Arch&       commands,
+                                                             HclGraphSyncGen2Arch&      graphSync)
+: HclCollectiveMemHandlerGen2Arch(archStreamId, addressGenerator, deviceSimbPoolManager, commands, graphSync)
 {
 }
 
@@ -29,34 +29,35 @@ void HclCollectiveMemHandlerGaudi2::generateBaseAddressOrSubBuffIdx(SliceState& 
     else
     {
         subBuffIndex = m_addressGenerator.generateScaleUpRecvIndices(sliceState, m_archStreamId) /
-                       DeviceBufferManager::getFactor(SCALEUP_AND_ALL2ALL_POOL);
+                       DeviceSimbPoolManagerBase::getFactor(SCALEUP_AND_ALL2ALL_POOL);
         m_addressGenerator.addressContainer().consumeScaleUpRecvAddress(sliceState);
         LOG_HCL_TRACE(HCL, "Setting scale-up receive index to {}", subBuffIndex);
     }
 }
 
-void HclCollectiveMemHandlerGaudi2::memsetIMBs(IntermediateBufferContainer* imbContainer,
-                                               SignalsManager*              signalsManager,
-                                               SliceState&                  sendSliceState,
-                                               SliceState&                  recvSliceState,
-                                               unsigned int                 sizeInBytes,
-                                               hcl::syncInfo                longSo,
-                                               unsigned                     schedIdx,
-                                               hcl::ScalStream&             garbageCollectionStream,
-                                               HCL_StreamId                 m_streamId,
-                                               e_devicePoolID               poolId,
-                                               uint8_t                      streamCtxtID,
-                                               hcclDataType_t               dataType)
+void HclCollectiveMemHandlerGaudi2::memsetIMBs(SimbPoolContainerAllocator* simbPoolContainerAllocator,
+                                               SignalsManager*             signalsManager,
+                                               SliceState&                 sendSliceState,
+                                               SliceState&                 recvSliceState,
+                                               unsigned int                sizeInBytes,
+                                               hcl::syncInfo               longSo,
+                                               unsigned                    schedIdx,
+                                               hcl::ScalStream&            garbageCollectionStream,
+                                               HCL_StreamId                m_streamId,
+                                               e_devicePoolID              poolId,
+                                               uint8_t                     streamCtxtID,
+                                               hcclDataType_t              dataType)
 {
-    if (m_intermediateBufferManager.isPoolAllocated(poolId) && m_intermediateBufferManager.bufferExpired(poolId))
+    if (m_deviceSimbPoolManager.isPoolAllocated(poolId) && m_deviceSimbPoolManager.bufferExpired(poolId))
     {
         // get relevant slice
-        unsigned indexOfSubBuffer = m_intermediateBufferManager.getSliceId(poolId, m_streamId);
+        unsigned indexOfSubBuffer = m_deviceSimbPoolManager.getSliceId(poolId, m_streamId);
 
         // get correct index by relevant granularity
-        indexOfSubBuffer /= m_intermediateBufferManager.getFactor(poolId);
+        indexOfSubBuffer /= m_deviceSimbPoolManager.getFactor(poolId);
 
-        unsigned bufferSize = imbContainer->getSliceSize(DeviceBufferManager::getPoolSizeIndex(poolId));
+        unsigned bufferSize =
+            simbPoolContainerAllocator->getSimbSize(simbPoolContainerAllocator->getPoolContainerIndex(poolId));
 
         VERIFY(sizeInBytes <= bufferSize,
                "Unsupported buffer size, sizeInBytes={}, bufferSize={}",
@@ -122,7 +123,7 @@ void HclCollectiveMemHandlerGaudi2::memsetIMBs(IntermediateBufferContainer* imbC
                                               dataType,
                                               effectiveOp,
                                               true,  // true for sibo memset v3, false for lin memset
-                                              DeviceBufferManager::getPoolSizeIndex(poolId),
+                                              simbPoolContainerAllocator->getPoolContainerIndex(poolId),
                                               false,  // isForScaleout
                                               currNumberOfRanks,
                                               currNumberOfSubBuffers,
@@ -135,7 +136,7 @@ void HclCollectiveMemHandlerGaudi2::enqueueInternalCompletionMemsetSignals(Signa
                                                                            e_devicePoolID  poolId)
 {
     const unsigned memsetLoops = 1;
-    if (m_intermediateBufferManager.bufferExpired(poolId))
+    if (m_deviceSimbPoolManager.bufferExpired(poolId))
     {
         for (unsigned i = 0; i < memsetLoops; ++i)
         {

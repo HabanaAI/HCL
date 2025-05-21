@@ -18,60 +18,48 @@ class Gen2ArchScalWrapper;
 
 using namespace hcl;
 
-ArchStream::ArchStream(unsigned                 streamIdx,
-                       Gen2ArchScalWrapper&     scalWrapper,
-                       scal_comp_group_handle_t externalCgHandle,
-                       scal_comp_group_handle_t internalCgHandle,
-                       ScalJsonNames&           scalNames,
-                       HclCommandsGen2Arch&     commands,
-                       CyclicBufferType         type)
-: m_streamIdx(streamIdx),
+ArchStream::ArchStream(unsigned                    archStreamIdx,
+                       Gen2ArchScalWrapper&        scalWrapper,
+                       scal_comp_group_handle_t    externalCgHandle,
+                       scal_comp_group_handle_t    internalCgHandle,
+                       ScalJsonNames&              scalNames,
+                       HclCommandsGen2Arch&        commands,
+                       CyclicBufferType            type,
+                       const Gen2ArchStreamLayout& streamLayout)
+: m_archStreamIdx(archStreamIdx),
   m_scalWrapper(scalWrapper),
   m_externalCg(scalWrapper, externalCgHandle),
   m_internalCg(scalWrapper, internalCgHandle),
   m_scalNames(scalNames)
 {
-    for (size_t schedIdx = 0; schedIdx < m_streams.size(); schedIdx++)
+    // Iterate over each stream in the stream layout
+    for (unsigned i = 0; i < streamLayout.getTotalMicroArchStreamCount(); i++)
     {
-        unsigned numOfStreamsBase = scalNames.numberOfMicroArchStreams[schedIdx] * streamIdx;
-        for (size_t j = 0; j < scalNames.numberOfMicroArchStreams[schedIdx]; j++)
-        {
-            unsigned    streamNum = numOfStreamsBase + j;
-            std::string schedNameAndStreamNum =
-                std::string(scalNames.schedulersNames.at((SchedulersIndex)schedIdx)) + std::to_string(streamNum);
+        HclStreamIndex hclStreamIdx = (HclStreamIndex)i;
+        // Get the scheduler index and micro-architecture stream index for the current stream
+        size_t schedIdx       = streamLayout.getUarchStreamInfo(hclStreamIdx).schedIndex;
+        size_t uarchStreamIdx = streamLayout.getUarchStreamInfo(hclStreamIdx).scalUarchstreamIndex;
 
-            std::string streamName = "";
-            if (schedIdx && (NetworkStreams)(streamNum) < NetworkStreams::max)
-            {
-                streamName = std::string(scalNames.networkStreamNames.at((NetworkStreams)(streamNum)));
-            }
-            else if (!schedIdx && (DMAStreams)(streamNum) < DMAStreams::max)
-            {
-                streamName = std::string(scalNames.dmaStreamNames.at((DMAStreams)(streamNum)));
-            }
-            else
-            {
-                streamName = std::to_string(streamNum);
-            }
-            std::string schedAndStreamName =
-                std::string(scalNames.schedulersNames.at((SchedulersIndex)schedIdx)) + "-" + streamName;
+        // Get the scheduler name and stream number for the current stream
+        std::string schedNameAndStreamNum = streamLayout.getSchedNameAndStreamNum(m_archStreamIdx, hclStreamIdx);
+        // Get the scheduler name and micro-architecture stream name for the current stream
+        std::string schedAndStreamName = streamLayout.getSchedNameAndStreamName(hclStreamIdx);
 
-            CompletionGroup& cg =
-                ((SchedulersIndex)schedIdx == SchedulersIndex::dma && (DMAStreams)j == DMAStreams::garbageCollection)
-                    ? m_internalCg
-                    : m_externalCg;
+        // Determine the appropriate completion group based on the stream index
+        CompletionGroup& cg =
+            streamLayout.getUarchStreamInfo(hclStreamIdx).cgType == eInternal ? m_internalCg : m_externalCg;
 
-            m_streams[schedIdx][j] = std::make_shared<ScalStream>(scalNames,
-                                                                  schedNameAndStreamNum,
-                                                                  schedAndStreamName,
-                                                                  m_scalWrapper,
-                                                                  cg,
-                                                                  schedIdx,
-                                                                  j,
-                                                                  streamIdx,
-                                                                  commands,
-                                                                  type);
-        }
+        // Create a new ScalStream object and store it in the m_streams array
+        m_streams[schedIdx][uarchStreamIdx] = std::make_shared<ScalStream>(m_scalNames,
+                                                                           schedNameAndStreamNum,
+                                                                           schedAndStreamName,
+                                                                           m_scalWrapper,
+                                                                           cg,
+                                                                           schedIdx,
+                                                                           uarchStreamIdx,
+                                                                           archStreamIdx,
+                                                                           commands,
+                                                                           type);
     }
 }
 

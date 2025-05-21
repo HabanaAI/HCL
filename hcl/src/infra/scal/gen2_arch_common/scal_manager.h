@@ -1,19 +1,20 @@
 #pragma once
 
-#include <cstddef>                                            // for NULL, size_t
-#include <algorithm>                                          // for max
-#include <array>                                              // for array
-#include <cstdint>                                            // for uint64_t, uint32_t
-#include <memory>                                             // for unique_ptr
-#include <string>                                             // for string
-#include <utility>                                            // for pair, make_pair
-#include <vector>                                             // for vector
-#include "infra/scal/gen2_arch_common/scal_names.h"           // for ScalJsonNames
-#include "scal.h"                                             // for scal_comp_group_...
-#include "scal_types.h"                                       // for SmInfo
-#include "scal_wrapper.h"                                     // for Gen2ArchScalWrapper
-#include "platform/gen2_arch_common/device_buffer_manager.h"  // for sibAddressAndSize
-#include "factory_types.h"                                    // for CyclicBufferType
+#include <cstddef>                                             // for NULL, size_t
+#include <algorithm>                                           // for max
+#include <array>                                               // for array
+#include <cstdint>                                             // for uint64_t, uint32_t
+#include <memory>                                              // for unique_ptr
+#include <string>                                              // for string
+#include <utility>                                             // for pair, make_pair
+#include <vector>                                              // for vector
+#include "infra/scal/gen2_arch_common/scal_names.h"            // for ScalJsonNames
+#include "scal.h"                                              // for scal_comp_group_...
+#include "scal_types.h"                                        // for SmInfo
+#include "scal_wrapper.h"                                      // for Gen2ArchScalWrapper
+#include "platform/gen2_arch_common/simb_pool_manager_base.h"  // for PoolContainerParamsPerStream
+#include "factory_types.h"                                     // for CyclicBufferType
+#include "infra/scal/gen2_arch_common/stream_layout.h"         // for Gen2ArchStreamLayout
 
 class HclCommandsGen2Arch;
 class HclDeviceGen2Arch;
@@ -82,21 +83,17 @@ public:
 
     Gen2ArchScalWrapper::CgComplex getCgInfo(const std::string& cgName) const;
 
-    size_t getMicroArchStreams(unsigned schedIdx);
-
     /**
      * @brief Get a ScalStream instance for submission
+     * IMPORTANT - do not use without reference the stream layout
      *
      * @param archStreamIdx  - Arch Stream Index, needs to be < ScalJsonNames::numberOfArchsStreams
      * @param schedIdx - The scheduler index inside the ArchStream, ordered by  ScalJsonNames::SchedulersIndex
-     * @param streamIdx - The MicroArchStream index in the scheduler, ordered by ScalJsonName.numberOfMicroArchStreams
+     * @param uArchstreamIdx - The MicroArchStream index in the scheduler
      */
-    hcl::ScalStream& getScalStream(unsigned archStreamIdx, unsigned schedIdx, unsigned streamIdx);
+    hcl::ScalStream& getScalStream(unsigned archStreamIdx, unsigned schedIdx, unsigned uArchstreamIdx);
 
     uint64_t getMonitorPayloadAddr(SchedulersIndex schedIdx, unsigned fenceIdx);
-
-    virtual void initGlobalContext(HclDeviceGen2Arch* device, uint8_t apiId);
-    virtual void initSimb(HclDeviceGen2Arch* device, uint8_t apiID);
 
     /**
      * @brief event synchronize (blocking)
@@ -131,9 +128,9 @@ public:
 
     unsigned getNumberOfEdmaEngines(unsigned groupNum);
 
-    inline void addStaticBufferAddrAndSize(uint64_t addr, uint64_t size, uint64_t poolSize)
+    inline void addContainerParamsPerStream(SimbPoolContainerParamsPerStream& poolContainerParamsPerStream)
     {
-        m_staticBufferAddressesAndSizes.push_back(sibAddressAndSize(addr, size, poolSize));
+        m_containerParamsPerStreamVec.push_back(poolContainerParamsPerStream);
     }
 
     inline void signalFromHost(unsigned smIdx, unsigned soIdx, uint32_t value)
@@ -153,6 +150,13 @@ public:
     void waitOnCg(Gen2ArchScalWrapper::CgComplex& cgComplex, const uint64_t target);
 
     virtual uint32_t getCMaxTargetValue() = 0;
+    virtual uint64_t getInitCgNextSo();
+
+    // Getter for m_staticBufferAddressesAndSizes
+    const std::vector<SimbPoolContainerParamsPerStream>& getContainerParamsPerStreamVec() const
+    {
+        return m_containerParamsPerStreamVec;
+    }
 
 private:
     std::string prettyPrint() const;
@@ -169,8 +173,8 @@ private:
 
 protected:
     HclCommandsGen2Arch& m_commands;
-    virtual void         init(CyclicBufferType type);
-    void                 initScalData(CyclicBufferType type);
+    virtual void         init(const Gen2ArchStreamLayout& streamLayout, CyclicBufferType type);
+    void                 initScalData(const Gen2ArchStreamLayout& streamLayout, CyclicBufferType type);
 
     std::unique_ptr<Gen2ArchScalWrapper> m_scalWrapper;
     std::array<std::array<Gen2ArchScalWrapper::CgComplex, (int)SchedulerType::count>,
@@ -180,7 +184,9 @@ protected:
     };
     std::array<std::unique_ptr<ArchStream>, ScalJsonNames::numberOfArchsStreams> m_archStreams;
     ScalJsonNames                                                                m_scalNames;
-    std::vector<sibAddressAndSize>                                               m_staticBufferAddressesAndSizes;
+
+    // one for each pool container
+    std::vector<SimbPoolContainerParamsPerStream> m_containerParamsPerStreamVec;
 };
 
 }  // namespace hcl

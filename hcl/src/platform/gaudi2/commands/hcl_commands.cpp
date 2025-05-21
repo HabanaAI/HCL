@@ -26,19 +26,19 @@ class ScalStreamBase;
 
 HclCommandsGaudi2::HclCommandsGaudi2() : HclCommandsGen2Arch() {}
 
-static uint32_t calculateRemoteIndex(std::array<int, HLS2_BOX_SIZE>& deviceToRemoteIndex,
-                                     int                             selfModuleId,
-                                     int                             remoteDevice,
-                                     HCL_CollectiveOp                currentOp,
-                                     bool                            isSend,
-                                     bool                            isComplexCollective,
-                                     bool                            isReductionInIMB,
-                                     bool                            isReduction,
-                                     bool                            isHierarchical,
-                                     uint64_t                        count,
-                                     uint64_t                        cellCount,
-                                     HCL_CollectiveOp                complexCollective,
-                                     bool                            isRoot)
+static uint32_t calculateRemoteIndex(const box_devices_t& deviceToRemoteIndex,
+                                     int                  selfModuleId,
+                                     int                  remoteDevice,
+                                     HCL_CollectiveOp     currentOp,
+                                     bool                 isSend,
+                                     bool                 isComplexCollective,
+                                     bool                 isReductionInIMB,
+                                     bool                 isReduction,
+                                     bool                 isHierarchical,
+                                     uint64_t             count,
+                                     uint64_t             cellCount,
+                                     HCL_CollectiveOp     complexCollective,
+                                     bool                 isRoot)
 {
     if ((currentOp != eHCLScatter && currentOp != eHCLGather && currentOp != eHCLSimpleBroadcast) &&
         (deviceToRemoteIndex[remoteDevice] == -1 || deviceToRemoteIndex[selfModuleId] == -1))
@@ -140,19 +140,22 @@ void HclCommandsGaudi2::serializeDmaCommand(hcl::ScalStreamBase& scalStream, Dma
                                                 useReductionInd);
 }
 
-void HclCommandsGaudi2::serializeGlobalDmaCommand(hcl::ScalStreamBase&                  scalStream,
-                                                  uint32_t                              soAddressLSB,
-                                                  const std::vector<sibAddressAndSize>& sibAddressesAndSizes,
-                                                  uint32_t                              fwStrideSize,
-                                                  uint64_t                              fwBaseAddress)
+void HclCommandsGaudi2::serializeGlobalDmaCommand(
+    hcl::ScalStreamBase&                                 scalStream,
+    unsigned                                             schedIdx,
+    uint32_t                                             soAddressLSB,
+    const std::vector<SimbPoolContainerParamsPerStream>& containerParamsPerStreamVec,
+    uint32_t                                             fwStrideSize,
+    uint64_t                                             fwBaseAddress)
 {
     SchedArcCommandsGaudi2::serializeGlobalDmaCommand(
         scalStream,
+        schedIdx,
         soAddressLSB,
-        sibAddressesAndSizes,
+        containerParamsPerStreamVec,
         fwStrideSize,
         fwBaseAddress,
-        ScalNetworkGarbageCollectorAndReductionGroups::SCAL_EDMA_NETWORK_GC_REDUCTION_GROUP0);
+        (unsigned)ScalNetworkGarbageCollectorAndReductionGroups::SCAL_EDMA_NETWORK_GC_REDUCTION_GROUP0);
 }
 
 void HclCommandsGaudi2::serializeMemsetCommand(hcl::ScalStreamBase& scalStream,
@@ -200,16 +203,17 @@ void HclCommandsGaudi2::serializeMemsetCommand(hcl::ScalStreamBase& scalStream,
                                                 memsetValue);
 }
 
-void HclCommandsGaudi2::serializeInitSequenceCommands(hcl::ScalStreamBase&                  recvStream,
-                                                      hcl::ScalStreamBase&                  recvSOStream,
-                                                      hcl::ScalStreamBase&                  dmaStream,
-                                                      unsigned                              indexOfCg,
-                                                      uint64_t                              soAddressLSB,
-                                                      const std::vector<sibAddressAndSize>& sibAddressesAndSizes,
-                                                      ContextManager&                       contextManager,
-                                                      uint32_t                              fwStrideSize,
-                                                      uint64_t                              fwBaseAddress,
-                                                      uint8_t                               apiId)
+void HclCommandsGaudi2::serializeInitSequenceCommands(
+    hcl::ScalStreamBase&                                 recvStream,
+    hcl::ScalStreamBase&                                 recvSOStream,
+    hcl::ScalStreamBase&                                 dmaStream,
+    unsigned                                             indexOfCg,
+    uint64_t                                             soAddressLSB,
+    const std::vector<SimbPoolContainerParamsPerStream>& containerParamsPerStreamVec,
+    ContextManager&                                      contextManager,
+    uint32_t                                             fwStrideSize,
+    uint64_t                                             fwBaseAddress,
+    uint8_t                                              apiId)
 {
     HclCommandsGaudi2  commands;
     HclGraphSyncGaudi2 graphSync(0, commands);
@@ -220,7 +224,7 @@ void HclCommandsGaudi2::serializeInitSequenceCommands(hcl::ScalStreamBase&      
     // *global DMA command does not signal to CG if not V3.
     unsigned numberOfSignals =
         contextManager.getServerConnectivity().getNumScaleUpPorts(/*HCL_Comm comm*/) * INIT_SEQUENCE_SIGNALS_FACTOR +
-        sibAddressesAndSizes.size();
+        containerParamsPerStreamVec.size();
 
     if (contextManager.getServerConnectivity().isUpdateScaleOutGlobalContextRequired(/*HCL_Comm comm*/))
     {
@@ -238,39 +242,45 @@ void HclCommandsGaudi2::serializeInitSequenceCommands(hcl::ScalStreamBase&      
         soAddressLSB,
         graphSync.getSoConfigValue(COMP_SYNC_GROUP_CMAX_TARGET - numberOfSignals, true));
 
-    for (size_t index = 0; index < sibAddressesAndSizes.size(); index++)
+    for (size_t index = 0; index < containerParamsPerStreamVec.size(); index++)
     {
         LOG_TRACE(HCL,
                   "intermediateBaseAddress[{}] 0x{:x}, slice size: 0x{:x}",
                   index,
-                  sibAddressesAndSizes[index].sibBaseAddr,
-                  sibAddressesAndSizes[index].sibSize);
+                  containerParamsPerStreamVec[index].m_streamBaseAddrInContainer,
+                  containerParamsPerStreamVec[index].m_simbSize);
     }
 
     // The address passed here is used by the NIC and main usage is in-order receive for scale-up, so we pass only the
     // buffer that contains scale-up pools
-    contextManager.serializeUpdateGlobalContext(recvStream,
-                                                soAddressLSB & 0xffffffff,
-                                                sibAddressesAndSizes[1].sibBaseAddr,
-                                                sibAddressesAndSizes[1].sibSize);
+    contextManager.serializeUpdateGlobalContext(
+        recvStream,
+        soAddressLSB & 0xffffffff,
+        containerParamsPerStreamVec[SIBO_STANDARD_SIMB_SIZE].m_streamBaseAddrInContainer,
+        containerParamsPerStreamVec[SIBO_STANDARD_SIMB_SIZE].m_simbSize);
 
     if (contextManager.getServerConnectivity().isUpdateScaleOutGlobalContextRequired(/*HCL_Comm comm*/))
     {
         contextManager.serializeUpdateGlobalContextScaleOut(recvSOStream, soAddressLSB & 0xffffffff);
     }
-    serializeGlobalDmaCommand(dmaStream, soAddressLSB & 0xffffffff, sibAddressesAndSizes, fwStrideSize, fwBaseAddress);
+    serializeGlobalDmaCommand(dmaStream,
+                              (unsigned)hcl::SchedulersIndex::gp,
+                              soAddressLSB & 0xffffffff,
+                              containerParamsPerStreamVec,
+                              fwStrideSize,
+                              fwBaseAddress);
 
     uint8_t streamCtxtID = getEdmaStreamCtxtId(apiId, hcl::DEFAULT_STREAM_IDX);
     // sibAddressesAndSizes = pools per stream
     // {stream 0 {SO_POOL=pool 0, SU_POOL+REDUCE_POOl=pool 1},
     // {stream 1 {SO_POOL=pool 0, SU_POOL+REDUCE_POOl=pool 1},
     // {stream 2 {SO_POOL=pool 0, SU_POOL+REDUCE_POOl=pool 1}}
-    for (auto& addrAndSize : sibAddressesAndSizes)
+    for (auto& addrAndSize : containerParamsPerStreamVec)
     {
         serializeMemsetCommand(dmaStream,
-                               (unsigned)hcl::SchedulersIndex::dma,
-                               addrAndSize.sibBaseAddr,
-                               addrAndSize.sibSize * addrAndSize.sibAmount,
+                               (unsigned)hcl::SchedulersIndex::gp,
+                               addrAndSize.m_streamBaseAddrInContainer,
+                               addrAndSize.m_simbSize * addrAndSize.m_simbCountPerStream,
                                soAddressLSB & 0xffffffff,
                                streamCtxtID,
                                hcclFloat32,
@@ -617,7 +627,7 @@ void HclCommandsGaudi2::serializeAllocBarrierCommand(hcl::ScalStreamBase& scalSt
                                                      unsigned             schedIdx,
                                                      uint32_t             completionGroupIndex,
                                                      uint32_t             requiredSobs,
-                                                     llvm_vecsmall::SmallVector<uint32_t, MAX_STREAM_TO_INC>* fences,
+                                                     llvm_vecsmall::SmallVector<uint32_t, MAX_STREAM_PER_SCHED>* fences,
                                                      const LBWBurstData_t* destBurstData)
 {
     SchedArcCommandsGaudi2::serializeAllocBarrierCommand(scalStream,

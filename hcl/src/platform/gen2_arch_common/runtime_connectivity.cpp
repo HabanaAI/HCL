@@ -8,7 +8,7 @@
 #include "platform/gen2_arch_common/types.h"  // for HCL_INVALID_PORT, MAX_NICS_GEN2ARCH
 #include "ibverbs/hcl_ibverbs.h"              // for hcl_ibverbs_t
 
-#include "platform/gen2_arch_common/server_connectivity_types.h"        // for ServerNicsConnectivityArray
+#include "platform/gen2_arch_common/server_connectivity_types.h"        // for ServerNicsConnectivityVector
 #include "platform/gen2_arch_common/server_connectivity_user_config.h"  // for ServerConnectivityUserConfig
 #include "platform/gen2_arch_common/server_connectivity.h"              // for Gen2ArchServerConnectivity
 #include "platform/gen2_arch_common/runtime_connectivity.h"             // for Gen2ArchRuntimeConnectivity
@@ -24,7 +24,7 @@ Gen2ArchRuntimeConnectivity::Gen2ArchRuntimeConnectivity(const int              
     LOG_HCL_DEBUG(HCL, "m_moduleId={}, hclCommId={}", m_moduleId, hclCommId);
 }
 
-void Gen2ArchRuntimeConnectivity::logPortMappingConfig(const ServerNicsConnectivityArray& mapping)
+void Gen2ArchRuntimeConnectivity::logPortMappingConfig(const ServerNicsConnectivityVector& mapping)
 {
     unsigned deviceIndex = 0;
     for (auto& device : mapping)
@@ -49,14 +49,14 @@ void Gen2ArchRuntimeConnectivity::logPortMappingConfig(const ServerNicsConnectiv
     }
 }
 
-void Gen2ArchRuntimeConnectivity::init(const ServerNicsConnectivityArray&  serverNicsConnectivityArray,
+void Gen2ArchRuntimeConnectivity::init(const ServerNicsConnectivityVector& serverNicsConnectivityVector,
                                        const ServerConnectivityUserConfig& usersConnectivityConfig,
                                        const bool                          readLkdPortsMask)
 {
     LOG_HCL_DEBUG(HCL, "Started, m_hclCommId={}, readLkdPortsMask={}", m_hclCommId, readLkdPortsMask);
 
     // Keep the order of functions here
-    assignDefaultMapping(serverNicsConnectivityArray);
+    assignDefaultMapping(serverNicsConnectivityVector);
     assignCustomMapping(usersConnectivityConfig);
     logPortMappingConfig(m_mappings);
     readAllPorts();
@@ -73,12 +73,13 @@ void Gen2ArchRuntimeConnectivity::init(const ServerNicsConnectivityArray&  serve
     initServerSpecifics();
 }
 
-void Gen2ArchRuntimeConnectivity::assignDefaultMapping(const ServerNicsConnectivityArray& serverNicsConnectivityArray)
+void Gen2ArchRuntimeConnectivity::assignDefaultMapping(const ServerNicsConnectivityVector& serverNicsConnectivityVector)
 {
-    for (unsigned moduleId = 0; moduleId < serverNicsConnectivityArray.size(); moduleId++)
+    m_mappings.resize(serverNicsConnectivityVector.size());
+    for (unsigned moduleId = 0; moduleId < serverNicsConnectivityVector.size(); moduleId++)
     {
         LOG_HCL_DEBUG(HCL, "Assign m_hclCommId={}, moduleId={}", m_hclCommId, moduleId);
-        m_mappings[moduleId] = serverNicsConnectivityArray[moduleId];
+        m_mappings[moduleId] = serverNicsConnectivityVector[moduleId];
     }
 }
 
@@ -157,6 +158,11 @@ void Gen2ArchRuntimeConnectivity::setNumScaleUpPorts()
         {
             m_enabledScaleupPorts.set(port_idx);
         }
+    }
+
+    if (g_ibv.has_ib_device())
+    {
+        g_ibv.nic_mask_to_ib_port_mask(m_enabledScaleupPorts, false /* isScaleout */);
     }
 }
 
@@ -330,6 +336,12 @@ void Gen2ArchRuntimeConnectivity::setNumScaleOutPortsGlbl()
             }
         }
     }
+
+    if (g_ibv.has_ib_device())
+    {
+        g_ibv.nic_mask_to_ib_port_mask(m_enabledScaleoutPortsGlbl, true /* isScaleout */);
+    }
+
     LOG_HCL_INFO(HCL,
                  "Enabled number of scaleout ports for comm {} by LKD/user mask is: {} out of {} possible.",
                  m_hclCommId,
@@ -406,8 +418,7 @@ SetPortsMaskOutput setPortsMasksCommon(const SetPortsMaskInput input)
     // |           0xc00100            |          0xFFFFFE         |            22,23            |
     // |         Enabled 8,22,23       |        Disable 8          |                             |
     // +-------------------------------+---------------------------+-----------------------------+
-    const uint16_t maxScaleoutPorts =
-        input.serverConnectivity.getAllScaleoutPorts().count();
+    const uint16_t           maxScaleoutPorts = input.serverConnectivity.getAllScaleoutPorts().count();
     static const nics_mask_t allScaleoutNicsBits(NBITS(maxScaleoutPorts));
     const nics_mask_t logicalScaleoutPortsMaskBits(allScaleoutNicsBits & GCFG_LOGICAL_SCALE_OUT_PORTS_MASK.value() &
                                                    input.operationalScaleOutPortsMask);

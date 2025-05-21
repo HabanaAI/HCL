@@ -2,6 +2,7 @@
 
 #include <string>
 #include <vector>
+#include <chrono>
 #include "hlgcfg_defs.hpp"
 
 namespace hl_gcfg{
@@ -36,5 +37,9 @@ public:
 protected:
     virtual void reset() = 0;
     friend void reset();
+public:
+    // must be at the end in order not to break ABI
+    using TimePoint = std::chrono::steady_clock::time_point;
+    virtual TimePoint lastUpdateTime() const = 0;
 };
 }}

@@ -56,6 +56,8 @@ typedef enum
     GRAPH_ATTRIBUTE_INFERENCE,
     GRAPH_ATTRIBUTE_QUANTIZATION,
     GRAPH_ATTRIBUTE_BACKOFF_FACTOR,
+    GRAPH_ATTRIBUTE_IS_HW_ALIGNED_SCALE,
+    GRAPH_ATTRIBUTE_SCALE_METHOD_HASH_ID,
     GRAPH_ATTRIBUTE_MAX
 } synGraphAttribute;
 
@@ -246,7 +248,7 @@ typedef struct
     TSize strides[SYN_MAX_TENSOR_DIM + 1];
 } synDynamicStridedDmaH2dTensor;
 
- typedef struct
+typedef struct
 {
     TSize dims;
     TSize steps[SYN_MAX_TENSOR_DIM];

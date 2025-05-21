@@ -9,7 +9,7 @@
 
 #include "hcl_api_types.h"                                              // for HCL_Comm
 #include "platform/gen2_arch_common/server_connectivity_user_config.h"  // for ServerConnectivityUserConfig
-#include "platform/gen2_arch_common/server_connectivity_types.h"        // for ServerNicsConnectivityArray
+#include "platform/gen2_arch_common/server_connectivity_types.h"        // for ServerNicsConnectivityVector
 
 #include "hcl_bits.h"  // for nics_mask_t
 
@@ -29,7 +29,7 @@ public:
     Gen2ArchRuntimeConnectivity(const Gen2ArchRuntimeConnectivity&)            = delete;
     Gen2ArchRuntimeConnectivity& operator=(const Gen2ArchRuntimeConnectivity&) = delete;
 
-    virtual void init(const ServerNicsConnectivityArray&  serverNicsConnectivityArray,
+    virtual void init(const ServerNicsConnectivityVector& serverNicsConnectivityVector,
                       const ServerConnectivityUserConfig& usersConnectivityConfig,
                       const bool                          readLkdPortsMask);  // can be overriden for unit tests
 
@@ -68,7 +68,7 @@ protected:
     Gen2ArchServerConnectivity& m_serverConnectivity;
 
     // Vars per comm
-    ServerNicsConnectivityArray            m_mappings;
+    ServerNicsConnectivityVector           m_mappings;
     nics_mask_t                            m_enabledExternalPortsMaskGlbl {};  // After masking by LKD & HCL
     uint16_t                               m_maxSubNicScaleup  = 0;            // w/o any masks
     uint16_t                               m_maxSubNicScaleout = 0;            // w/o any masks
@@ -84,8 +84,8 @@ private:
      * @brief Logs the mapping data structure to log file
      *
      */
-    void logPortMappingConfig(const ServerNicsConnectivityArray& mapping);
-    void assignDefaultMapping(const ServerNicsConnectivityArray& serverNicsConnectivityArray);
+    void logPortMappingConfig(const ServerNicsConnectivityVector& mapping);
+    void assignDefaultMapping(const ServerNicsConnectivityVector& serverNicsConnectivityVector);
     void assignCustomMapping(const ServerConnectivityUserConfig& usersConnectivityConfig);
     void readAllPorts();  // From ports map configuration, regardless of masks
     void verifyPortsConfiguration() const;

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "infra/scal/gen2_arch_common/scal_stream.h"
-#include "platform/gen2_arch_common/intermediate_buffer_container.h"
+#include "platform/gen2_arch_common/simb_pool_container_allocator.h"
 #include "hcl_utils.h"
 #include "platform/gen2_arch_common/commands/hcl_commands_types.h"
 #include "internal/hcl_profiler_api.h"
@@ -46,12 +46,13 @@ public:
                                         uint32_t             indexOfSubBuffer   = 0,
                                         uint32_t             memsetValue        = 0) = 0;
 
-    virtual void serializeAllocBarrierCommand(hcl::ScalStreamBase& scalStream,
-                                              unsigned             schedIdx,
-                                              uint32_t             completionGroupIndex,
-                                              uint32_t             requiredSobs,
-                                              llvm_vecsmall::SmallVector<uint32_t, MAX_STREAM_TO_INC>* fences = nullptr,
-                                              const LBWBurstData_t* destData = nullptr) = 0;
+    virtual void
+    serializeAllocBarrierCommand(hcl::ScalStreamBase&                                        scalStream,
+                                 unsigned                                                    schedIdx,
+                                 uint32_t                                                    completionGroupIndex,
+                                 uint32_t                                                    requiredSobs,
+                                 llvm_vecsmall::SmallVector<uint32_t, MAX_STREAM_PER_SCHED>* fences   = nullptr,
+                                 const LBWBurstData_t*                                       destData = nullptr) = 0;
 
     virtual void serializeLbwWriteCommand(hcl::ScalStreamBase& scalStream,
                                           unsigned             schedIdx,
@@ -86,11 +87,13 @@ public:
      * @param fwBaseAddress the base address of the required FW SIMB pool
      * @param engineType DMA engine type
      */
-    virtual void serializeGlobalDmaCommand(hcl::ScalStreamBase&                  scalStream,
-                                           uint32_t                              soAddressLSB,
-                                           const std::vector<sibAddressAndSize>& sibAddressesAndSizes,
-                                           uint32_t                              fwStrideSize,
-                                           uint64_t                              fwBaseAddress) = 0;
+    virtual void
+    serializeGlobalDmaCommand(hcl::ScalStreamBase&                                 scalStream,
+                              unsigned                                             schedIdx,
+                              uint32_t                                             soAddressLSB,
+                              const std::vector<SimbPoolContainerParamsPerStream>& containerParamsPerStreamVec,
+                              uint32_t                                             fwStrideSize,
+                              uint64_t                                             fwBaseAddress) = 0;
 
     virtual void serializeFenceIncCommand(hcl::ScalStreamBase& scalStream, unsigned schedIdx, uint32_t fenceIndex) = 0;
 

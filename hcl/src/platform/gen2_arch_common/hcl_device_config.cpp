@@ -15,7 +15,7 @@
 #include "network_utils.h"
 #include "hccl_device.h"
 
-using json = nlohmannV340::json;
+using json = nlohmann::json;
 
 const std::map<HclConfigType, std::string> g_boxTypeIdToStr = {{BACK_2_BACK, "BACK_2_BACK"},
                                                                {LOOPBACK, "LOOPBACK"},
@@ -27,6 +27,7 @@ const std::map<HclConfigType, std::string> g_boxTypeIdToStr = {{BACK_2_BACK, "BA
                                                                {HL288, "HL288"},
                                                                {HLS3, "HLS3"},
                                                                {HL338, "HL338"},
+                                                               {HL3_RACK, "HL3_RACK"},
                                                                {UNKNOWN, "UNKNOWN"},
 };
 

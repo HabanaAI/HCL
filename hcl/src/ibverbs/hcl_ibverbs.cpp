@@ -155,6 +155,22 @@ void hcl_ibverbs_t::map_ib_ports(const nics_mask_t nics_mask)
     }
 }
 
+void hcl_ibverbs_t::nic_mask_to_ib_port_mask(const nics_mask_t& nicsMask, bool isScaleout)
+{
+    nics_mask_t& ibPortsMask = isScaleout ? scaleout_ports_ : scaleup_ports_;
+    ibPortsMask              = 0;
+
+    for (auto nic : nicsMask)
+    {
+        ibPortsMask[nic2port_[nic]] = 1;
+    }
+
+    LOG_IBV("nicsMask=0x{:x}, {}=0x{:x}",
+            (uint64_t)nicsMask,
+            isScaleout ? "ibScaleoutPortsMask" : "ibScaleupPortsMask",
+            (uint64_t)ibPortsMask);
+}
+
 #define _free_objs(objs, lambda)                                                                                       \
     std::for_each(objs.begin(), objs.end(), lambda);                                                                   \
     objs.clear()
@@ -171,17 +187,22 @@ void hcl_ibverbs_t::close()
         }
     }
 
+    for (auto& [comm, qp_map] : qps_())
     {
-        std::lock_guard<std::mutex> lock(qps_lock_);
-        if (qps_.size())
+        for (auto& [key, ibqp] : qp_map)
         {
-            LOG_IBV("Destroying {} QPs", qps_.size());
+            WRN_IBV("not destroyed qp: {}, nic: {}, comm: {}", ibvqp_key_t(key).qpn, ibvqp_key_t(key).nic, comm);
+            ibv_.ibv_destroy_qp(ibqp);
         }
-        _free_objs(qps_, [&](auto& _pair) { ibv_.ibv_destroy_qp(_pair.second); });
+        qp_map.clear();
     }
+
+    qps_.clear();
+
     _free_objs(cqs_, [&](auto& _cq) {
         if (_cq) ibv_.ibv_destroy_cq(_cq);
     });
+
     _free_objs(fifos_, [&](auto& _fifo) {
         if (_fifo) ibv_.hbldv_destroy_usr_fifo(_fifo);
     });
@@ -193,6 +214,24 @@ void hcl_ibverbs_t::close()
 
     ibpd_  = nullptr;
     ibctx_ = nullptr;
+}
+
+void hcl_ibverbs_t::on_comm_init(comm_t comm)
+{
+    VERIFY(!qps_.exists(comm), "comm {} already exists", comm);
+
+    qps_.emplace(comm, ibvqp_map_t());
+}
+
+void hcl_ibverbs_t::on_comm_destroy(comm_t comm)
+{
+    for (auto& [key, ibqp] : qps_.at(comm))
+    {
+        WRN_IBV("not destroyed qp: {}, nic: {}, comm: {}", ibvqp_key_t(key).qpn, ibvqp_key_t(key).nic, comm);
+        ibv_.ibv_destroy_qp(ibqp);
+    }
+
+    qps_.erase(comm);
 }
 
 void hcl_ibverbs_t::setup_nic(uint32_t nic, uint32_t num_wqes, uint32_t bp, eNicType nt)
@@ -232,7 +271,7 @@ void hcl_ibverbs_t::setup_nic(uint32_t nic, uint32_t num_wqes, uint32_t bp, eNic
         port_attr.wq_arr_attr[HBLDV_WQ_ARRAY_TYPE_GENERIC].mem_id = dram_enabled_ ? HBLDV_MEM_DEVICE : HBLDV_MEM_HOST;
         port_attr.wq_arr_attr[HBLDV_WQ_ARRAY_TYPE_GENERIC].max_num_of_wqes_in_wq = device_->getSenderWqeTableSize();
         port_attr.wq_arr_attr[HBLDV_WQ_ARRAY_TYPE_GENERIC].swq_granularity       = HBLDV_SWQE_GRAN_32B;
-        port_attr.wq_arr_attr[HBLDV_WQ_ARRAY_TYPE_GENERIC].max_num_of_wqs = 300;  // This needs to be addressed!!!!
+        port_attr.wq_arr_attr[HBLDV_WQ_ARRAY_TYPE_GENERIC].max_num_of_wqs        = num_wqes;
     }
     int ret = ibv_.hbldv_set_port_ex(ibctx_, &port_attr);
 
@@ -268,6 +307,12 @@ void hcl_ibverbs_t::get_port_mask(portMaskConfig& portsMasks)
     int rc = ibv_.hbldv_query_device(ibctx_, &device_attr);
     VERIFY(rc == 0, "hbldv_query_device() failed. rc: {}", rc);
 
+    // mask out scaleup ports for HL3_RACK (P0)
+    if ((HclConfigType)GCFG_BOX_TYPE_ID.value() == HL3_RACK)
+    {
+        device_attr.ext_ports_mask &= (((1 << 23) | (1 << 22) | (1 << 8)) << 1);  // 1-based
+    }
+
     portsMasks.hwPortsMask = device_attr.hw_ports_mask;
 
     const nics_mask_t hw_nics_mask      = device_attr.hw_ports_mask;
@@ -286,9 +331,9 @@ void hcl_ibverbs_t::get_port_mask(portMaskConfig& portsMasks)
     }
 }
 
-uint32_t hcl_ibverbs_t::create_qp(bool sender, uint32_t nic, uint32_t qpHint)
+uint32_t hcl_ibverbs_t::create_qp(comm_t comm, bool sender, uint32_t nic, uint32_t qpHint)
 {
-    LOG_IBV("for {}, nic: {}, hint: {}", sender ? "SEND" : "RECV", nic, qpHint);
+    LOG_IBV("comm: {}, for {}, nic: {}, hint: {}", comm, sender ? "SEND" : "RECV", nic, qpHint);
 
     ibv_cq*             ibv_cq       = cqs_[nic];
     ibv_qp_init_attr    qp_init_attr = {};
@@ -351,26 +396,22 @@ uint32_t hcl_ibverbs_t::create_qp(bool sender, uint32_t nic, uint32_t qpHint)
     rc = ibv_.hbldv_query_qp(ibqp, &dv_qp_attr);
     VERIFY(rc == 0, "hbldv_query_qp() failed: {}, nic: {}", rc, nic);
 
-    {
-        std::lock_guard<std::mutex> lock(qps_lock_);
-        qps_.emplace(nic, dv_qp_attr.qp_num, ibqp);
-    }
+    qps_.at(comm).emplace(nic, dv_qp_attr.qp_num, ibqp);
     LOG_IBV("--> {}", dv_qp_attr.qp_num);
 
     return dv_qp_attr.qp_num;
 }
 
-uint32_t hcl_ibverbs_t::create_migration_qp(const bool     sender,
-                                            const uint32_t nic,
-                                            const uint32_t migratedNic,
-                                            const uint32_t migratedQpn,
-                                            const uint32_t qpHint)
+uint32_t hcl_ibverbs_t::create_migration_qp(comm_t   comm,
+                                            bool     sender,
+                                            uint32_t nic,
+                                            uint32_t migratedNic,
+                                            uint32_t migratedQpn,
+                                            uint32_t qpHint)
 {
-    ibv_qp* migrated_qp {};
-    {
-        std::lock_guard<std::mutex> lock(qps_lock_);
-        migrated_qp = qps_(migratedNic, migratedQpn);
-    }
+    auto& qps = qps_.at(comm);
+
+    ibv_qp*             migrated_qp  = qps(migratedNic, migratedQpn);
     ibv_cq*             ibv_cq       = cqs_[nic];
     ibv_qp_init_attr    qp_init_attr = {};
     hbldv_query_qp_attr dv_qp_attr   = {};
@@ -434,42 +475,38 @@ uint32_t hcl_ibverbs_t::create_migration_qp(const bool     sender,
     rc = ibv_.hbldv_query_qp(ibqp, &dv_qp_attr);
     VERIFY(rc == 0, "hbldv_query_qp() failed: {}, nic: {}", rc, nic);
 
-    {
-        std::lock_guard<std::mutex> lock(qps_lock_);
-        qps_.emplace(nic, dv_qp_attr.qp_num, ibqp);
-    }
+    qps.emplace(nic, dv_qp_attr.qp_num, ibqp);
+
     LOG_IBV("--> {}", dv_qp_attr.qp_num);
 
     return dv_qp_attr.qp_num;
 }
 
-void hcl_ibverbs_t::set_migration_qp_rtr(const uint32_t nic,
-                                         const uint32_t qpn,
-                                         const uint32_t migratedNic,
-                                         const uint32_t migratedQpn,
-                                         const uint32_t src_ip,
-                                         const uint64_t src_mac,
-                                         const uint32_t dst_ip,
-                                         const uint64_t dst_mac,
-                                         const uint32_t dst_qp)
+void hcl_ibverbs_t::set_migration_qp_rtr(comm_t   comm,
+                                         uint32_t nic,
+                                         uint32_t qpn,
+                                         uint32_t migratedNic,
+                                         uint32_t migratedQpn,
+                                         uint32_t src_ip,
+                                         uint64_t src_mac,
+                                         uint32_t dst_ip,
+                                         uint64_t dst_mac,
+                                         uint32_t dst_qp)
 {
-    ibv_qp* migrated_qp {};
-    ibv_qp* ibqp {};
-    {
-        std::lock_guard<std::mutex> lock(qps_lock_);
-        migrated_qp = qps_(migratedNic, migratedQpn);
+    LOG_IBV("comm: {}, for nic: {}, qpn {}, migrated nic {}, migrated qpn {}",
+            comm,
+            nic,
+            qpn,
+            migratedNic,
+            migratedQpn);
 
-        if (!qps_.exists(nic, qpn))
-        {
-            LOG_IBV("RTR migrated QP not found: nic: {}, qpn: {}", nic, qpn);
-        }
+    const auto& qps = qps_.at(comm);
 
-        ibqp = qps_(nic, qpn);
-    }
     ibv_qp_attr   qp_attr    = {};
     hbldv_qp_attr hl_qp_attr = {};
 
-    LOG_IBV("for nic: {}, qpn {}, migrated nic {}, migrated qpn {}", nic, qpn, migratedNic, migratedQpn);
+    ibv_qp* migrated_qp = qps(migratedNic, migratedQpn);
+    ibv_qp* ibqp        = qps(nic, qpn);
 
     /* 2. Transition QP from RESET to INIT state. */
     qp_attr.qp_state              = IBV_QPS_RTR;
@@ -495,28 +532,26 @@ void hcl_ibverbs_t::set_migration_qp_rtr(const uint32_t nic,
     VERIFY(rc == 0, "hbldv_modify_qp(RTR) failed: {}, nic: {}", rc, nic);
 }
 
-void hcl_ibverbs_t::set_migration_qp_rts(const uint32_t nic,
-                                         const uint32_t qpn,
-                                         const uint32_t migratedNic,
-                                         const uint32_t migratedQpn)
+void hcl_ibverbs_t::set_migration_qp_rts(comm_t   comm,
+                                         uint32_t nic,
+                                         uint32_t qpn,
+                                         uint32_t migratedNic,
+                                         uint32_t migratedQpn)
 {
-    ibv_qp* migrated_qp {};
-    ibv_qp* ibqp {};
-    {
-        std::lock_guard<std::mutex> lock(qps_lock_);
+    LOG_IBV("comm: {}, for nic: {}, qpn {}, migrated nic {}, migrated qpn {}",
+            comm,
+            nic,
+            qpn,
+            migratedNic,
+            migratedQpn);
 
-        if (!qps_.exists(migratedNic, migratedQpn))
-        {
-            LOG_IBV("RTS migrated QP not found: nic: {}, qpn: {}", migratedNic, migratedQpn);
-        }
-
-        migrated_qp = qps_(migratedNic, migratedQpn);
-        ibqp        = qps_(nic, qpn);
-    }
     ibv_qp_attr   qp_attr    = {};
     hbldv_qp_attr hl_qp_attr = {};
 
-    LOG_IBV("for nic: {}, qpn {}, migrated nic {}, migrated qpn {}", nic, qpn, migratedNic, migratedQpn);
+    const auto& qps = qps_.at(comm);
+
+    ibv_qp* migrated_qp = qps(migratedNic, migratedQpn);
+    ibv_qp* ibqp        = qps(nic, qpn);
 
     /* 2. Transition QP from RESET to INIT state. */
     qp_attr.qp_state         = IBV_QPS_RTS;
@@ -527,21 +562,19 @@ void hcl_ibverbs_t::set_migration_qp_rts(const uint32_t nic,
     VERIFY(rc == 0, "hbldv_modify_qp(RTS) failed: {}, nic: {}", rc, nic);
 }
 
-void hcl_ibverbs_t::migrate_qp(const uint32_t nic, const uint32_t qpn)
+void hcl_ibverbs_t::migrate_qp(comm_t comm, uint32_t nic, uint32_t qpn)
 {
-    int     rc = 0;
-    ibv_qp* ibqp;
-    {
-        std::lock_guard<std::mutex> lock(qps_lock_);
-        ibqp = qps_(nic, qpn);
-        rc   = ibv_.hbldv_migrate_qp(ibqp);
-    }
+    const auto& qps = qps_.at(comm);
+
+    ibv_qp* ibqp = qps(nic, qpn);
+    int     rc   = ibv_.hbldv_migrate_qp(ibqp);
     VERIFY(rc == 0, "hbldv_migrate_qp failed: {}, nic: {} qpn {}", rc, nic, qpn);
 }
 
 uint32_t hcl_ibverbs_t::reserve_collective_qp(bool is_scale_out)
 {
-    hbldv_coll_qp_attr coll_qp_attr = {.is_scale_out = is_scale_out};
+    uint64_t           ports_mask   = is_scale_out ? scaleout_ports_ : scaleup_ports_;
+    hbldv_coll_qp_attr coll_qp_attr = {.is_scale_out = is_scale_out, .ports_mask = ports_mask};
     hbldv_coll_qp      coll_qp      = {};
 
     int        rc        = EBUSY;
@@ -653,7 +686,8 @@ ibv_gid hcl_ibverbs_t::dgid(uint32_t dst_ip, uint64_t dst_mac)
     return gid;
 }
 
-void hcl_ibverbs_t::set_qp_ctx(uint32_t qpn,
+void hcl_ibverbs_t::set_qp_ctx(comm_t   comm,
+                               uint32_t qpn,
                                uint32_t nic,
                                uint32_t src_ip,
                                uint64_t src_mac,
@@ -663,7 +697,8 @@ void hcl_ibverbs_t::set_qp_ctx(uint32_t qpn,
                                uint8_t  lagIdx,
                                uint8_t  lastInLag)
 {
-    LOG_IBV("qp:{}->{} nic:{} ip:{} -> {} mac: 0x{:x} -> 0x{:x}",
+    LOG_IBV("comm:{}, qp:{}->{} nic:{} ip:{} -> {} mac: 0x{:x} -> 0x{:x}",
+            comm,
             qpn,
             dst_qp,
             nic,
@@ -675,11 +710,7 @@ void hcl_ibverbs_t::set_qp_ctx(uint32_t qpn,
     ibv_qp_attr   qp_attr    = {};
     hbldv_qp_attr hl_qp_attr = {};
 
-    ibv_qp* ibv_qp {};
-    {
-        std::lock_guard<std::mutex> lock(qps_lock_);
-        ibv_qp = qps_(nic, qpn);
-    }
+    ibv_qp* ibv_qp = qps_.at(comm).at(nic, qpn);
 
     /* Initialize the generic IBV QP params */
     qp_attr.qp_state           = IBV_QPS_RTR;  // Responder
@@ -736,16 +767,12 @@ void hcl_ibverbs_t::set_qp_ctx(uint32_t qpn,
     VERIFY(rc == 0, "hbldv_modify_qp(RTS) failed ({}) nic:{}, qp:{}", rc, nic, qpn);
 }
 
-void hcl_ibverbs_t::destroy_qp(uint32_t nic, uint32_t qpn)
+void hcl_ibverbs_t::destroy_qp(comm_t comm, uint32_t nic, uint32_t qpn)
 {
-    LOG_IBV("nic: {} qp: {}", nic, qpn);
+    LOG_IBV("comm: {}, nic: {} qp: {}", comm, nic, qpn);
 
-    {
-        std::lock_guard<std::mutex> lock(qps_lock_);
-
-        ibv_.ibv_destroy_qp(qps_(nic, qpn));
-        qps_.erase(nic, qpn);
-    }
+    ibv_.ibv_destroy_qp(qps_.at(comm).at(nic, qpn));
+    qps_.at(comm).erase(nic, qpn);
 }
 
 void hcl_ibverbs_t::create_fifos(scal_handle_t scal_handle)

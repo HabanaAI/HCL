@@ -189,6 +189,14 @@ struct so_set_config_t {
 	/**<
 	 * Monitor ID to be used by this SO Set to detect end of ECB list
 	 */
+	uint32_t mon_id_reset_completion;
+	/**<
+	 * Monitor ID to be used by this SO Set to reset completion msg
+	 */
+	uint32_t sob_id_track_signal;
+	/**<
+	 * SOB ID to be used by this SO Set to track signal from completion group, cme fw and eof ecb list
+	 */
 };
 
 #define DCCM_QUEUE_COUNT	5
@@ -316,6 +324,10 @@ struct cme_config_t {
 	 * Synapse parameters for cme engine instance.
 	 * This will be used for backward compatibility until synapse moves to
 	 * cme enabled
+	 */
+	uint32_t sob_id_track_signal[SO_SET_COUNT];
+	/**<
+	 * SOB ID to be used by this SO Set to track signal from completion group, cme fw and eof ecb list
 	 */
 };
 
@@ -591,23 +603,27 @@ struct comp_sync_group_config_t {
  * we can reduce the NUM_SOS_PER_CENTRAL_SO_SET to Gaudi3
  * related sync scheme (40)
  */
-#define NUM_SOS_PER_CENTRAL_SO_SET		128
-#define NUM_SOS_PER_LOCAL_SO_SET		64
+#define NUM_SOS_PER_CENTRAL_SO_SET		    128
+#define NUM_SOS_PER_LOCAL_SO_SET		    64
 #define NUM_SOS_PER_LOCAL_SO_SET_IN_HDCORE	8
 
-#define SOB_OFFSET_MME_IN_SO_SET		0
-#define SOB_OFFSET_TPC_IN_SO_SET		16
-#define SOB_OFFSET_MME_XPOSE_IN_SO_SET		80
-#define SOB_OFFSET_ROT_IN_SO_SET		96
-#define SOB_OFFSET_DEBUG_IN_SO_SET		112
-#define SOB_OFFSET_SEMAPHORE_SO_SET	120
+enum {
+	SOB_OFFSET_MME_IN_SO_SET = 0,
+	SOB_OFFSET_TPC_IN_SO_SET = 8,
+	SOB_OFFSET_MME_XPOSE_IN_SO_SET = 16,
+	SOB_OFFSET_ROT_IN_SO_SET = 24,
+	SOB_OFFSET_DEBUG_IN_SO_SET = 32,
+	SOB_OFFSET_SEMAPHORE_SO_SET = 36
+};
 
-#define SOB_COUNT_MME_IN_SO_SET			16
-#define SOB_COUNT_TPC_IN_SO_SET			64
-#define SOB_COUNT_MME_XPOSE_IN_SO_SET		16
-#define SOB_COUNT_ROT_IN_SO_SET			16
-#define SOB_COUNT_DEBUG_IN_SO_SET		8
-#define SOB_COUNT_SEMAPHORE_SO_SET		8
+enum {
+	SOB_COUNT_MME_IN_SO_SET = 8,
+	SOB_COUNT_TPC_IN_SO_SET = 8,
+	SOB_COUNT_MME_XPOSE_IN_SO_SET = 8,
+	SOB_COUNT_ROT_IN_SO_SET = 8,
+	SOB_COUNT_DEBUG_IN_SO_SET = 4,
+	SOB_COUNT_SEMAPHORE_SO_SET = 1
+};
 
 /**
  * \struct  mcid_set_config_t

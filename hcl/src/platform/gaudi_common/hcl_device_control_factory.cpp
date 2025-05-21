@@ -18,6 +18,7 @@
 #include "platform/gen2_arch_common/runtime_connectivity.h"      // for Gen2ArchRuntimeConnectivity
 #include "platform/gaudi3/hls3_server_def.h"                     // for HLS3ServerDef
 #include "platform/gaudi3/hls3pcie_server_def.h"                 // for HLS3PCIEServerDef
+#include "platform/gaudi3/hls3rack_server_def.h"                 // for HLS3RackServerDef
 #include "platform/gaudi2/hls2_server_def.h"                     // for HLS2ServerDef
 #include "platform/gen2_arch_common/fault_injection_device.h"    // for FaultInjectionDevice
 #include "platform/gen2_arch_common/nics_events_handler_impl.h"  // for NicsEventHandler
@@ -52,6 +53,9 @@ hccl_device_t* HclControlDeviceFactory::initDevice(HclDeviceConfig& deviceConf)
             break;
         case HL338:
             s_serverDef = std::make_unique<HLS3PCIEServerDef>(fd, deviceConfig.getHwModuleId(), deviceConfig, false);
+            break;
+        case HL3_RACK:
+            s_serverDef = std::make_unique<HLS3RackServerDef>(fd, deviceConfig.getHwModuleId(), deviceConfig, false);
             break;
         // support special modes and unit tests
         case LOOPBACK:

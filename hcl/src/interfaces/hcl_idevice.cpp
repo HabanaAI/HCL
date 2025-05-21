@@ -54,16 +54,15 @@ IHclDevice::IHclDevice(HclDeviceConfig& deviceConfig)
 
 IHclDevice::~IHclDevice() noexcept(false) {}
 
-hcclResult_t IHclDevice::destroy(bool force)
+void IHclDevice::destroy()
 {
-    LOG_HCL_TRACE(HCL, "interface force({})", force);
+    LOG_HCL_TRACE(HCL, "");
 
     if (m_ofiPlugin != nullptr)
     {
         delete m_ofiPlugin;
         m_ofiPlugin = nullptr;
     }
-    return hcclSuccess;
 }
 
 hcclResult_t IHclDevice::destroyComm([[maybe_unused]] HCL_Comm comm, bool force)
@@ -114,7 +113,12 @@ HCL_Rank IHclDevice::getGlobalRankForComm([[maybe_unused]] HCL_Comm comm, HCL_Ra
     return rankID;
 }
 
-HclDynamicCommunicator& IHclDevice::getComm(HCL_Comm comm)
+HclDynamicCommunicator& IHclDevice::getComm(const HCL_Comm comm)
+{
+    return m_dynamicComms.getComm(comm);
+}
+
+const HclDynamicCommunicator& IHclDevice::getComm(const HCL_Comm comm) const
 {
     return m_dynamicComms.getComm(comm);
 }
@@ -394,7 +398,7 @@ void IHclDevice::initNicsMask()
 
     const nics_mask_t shutdownSimPortsMask =
         GCFG_HCL_FAULT_TOLERANCE_LOGICAL_PORTS_SHUTDOWN_MASK.value();  // Used for CI testing only
-    HLFT_DBG("shutdownSimPortsMask={:024b}", (uint64_t)shutdownSimPortsMask);
+    LOG_HCL_INFO(HCL, "shutdownSimPortsMask={:024b}", (uint64_t)shutdownSimPortsMask);
     for (uint32_t nic = 0; nic < m_hal->getMaxNics(); nic++)
     {
         const NicLkdEventsEnum event =
@@ -406,10 +410,10 @@ void IHclDevice::initNicsMask()
         if (GCFG_HCL_FAULT_TOLERANCE_ENABLE.value() && m_hclNic.mask[nic] && isScaleOutPort(nic))
         {
             const eIbvNicPhysicalState nicPhysicalState = getNicPhysicalState(nic);
-            HLFT_INF("scaleout nic {} physical status {}", nic, nicPhysicalState);
             if ((nicPhysicalState == eIbvNicPhysicalState::Shutdown) ||
                 ((shutdownSimPortsMask != 0) && shutdownSimPortsMask.get(getLogicalScaleoutPortNum(nic))))
             {
+                HLFT_INF("scaleout nic {} physical status {}", nic, nicPhysicalState);
                 m_failedScaleOutPortsMask.set(getLogicalScaleoutPortNum(nic));
             }
         }
@@ -494,10 +498,11 @@ uint32_t IHclDevice::allocateQp(uint32_t port, HCL_Rank rank, HCL_Comm comm, uin
 
     uint32_t& qpn = getComm(comm).m_rankInfo.remoteInfo[rank].gaudiNicQPs[port].qp[qpSet][qpId];
 
-    qpn = createQpnInLKD(port, qpId);
+    qpn = createQpnInLKD(comm, port, qpId);
 
     LOG_HCL_DEBUG(HCL,
-                  "Allocate QP, remoteRank({}){} nic: {} qpSet: {}, qpn: {}, qpIdx: {}",
+                  "Allocate QP, comm {} remoteRank({}){} nic: {} qpSet: {}, qpn: {}, qpIdx: {}",
+                  comm,
                   rank,
                   getMyRank(comm) == rank ? " Loopback connection, " : "",
                   port,
@@ -518,11 +523,11 @@ hcclResult_t IHclDevice::openQpToRemoteRanks(const HCL_Comm comm)
     hcclResult_t  rc;
     HclConfigType configType = (HclConfigType)GCFG_BOX_TYPE_ID.value();
 
-    LOG_HCL_DEBUG(HCL, "Config type ({}), null-submit ({})", configType, GCFG_HCL_NULL_SUBMIT.value());
+    LOG_HCL_DEBUG(HCL, "Comm {} Config type ({}), null-submit ({})", comm, configType, GCFG_HCL_NULL_SUBMIT.value());
 
     if (m_openQpsCallbacks.count(configType) == 0)
     {
-        LOG_HCL_ERR(HCL, "Unknown config type ({})", configType);
+        LOG_HCL_ERR(HCL, "Comm {} Unknown config type ({})", comm, configType);
         return hcclInvalidArgument;
     }
     rc = m_openQpsCallbacks[configType](comm);
@@ -572,7 +577,7 @@ hcclResult_t IHclDevice::connectRankQps(HCL_Comm comm, HCL_Rank rank)
 
     // don't use getActiveNics so loopback mode also works
     // access GaudiNicQPs by index and translate to port
-    LOG_HCL_INFO(HCL_COORD, "Rank comm({}) rank({}) start", comm, rank);
+    LOG_HCL_INFO(HCL, "Rank comm({}) rank({}) start", comm, rank);
     uint32_t opened_qps = 0;
     for (uint8_t index = 0; index < getMaxNumScaleUpPortsPerConnection(); index++)
     {
@@ -585,7 +590,7 @@ hcclResult_t IHclDevice::connectRankQps(HCL_Comm comm, HCL_Rank rank)
                 if (qpn == 0 || rank == getMyRank(comm)) continue;
 
                 const uint16_t nic = getComm(comm).m_rankInfo.remoteInfo[rank].gaudiNicQPs.qp[index].nic;
-                LOG_HCL_DEBUG(HCL_COORD,
+                LOG_HCL_DEBUG(HCL,
                               "comm({}), rank({}), index={}, stream({}), nic({}), qpn({}), qpSet({}) calling "
                               "establishQpConnectionWithPeerQp",
                               comm,
@@ -606,7 +611,7 @@ hcclResult_t IHclDevice::connectRankQps(HCL_Comm comm, HCL_Rank rank)
             }
         }
     }
-    LOG_HCL_INFO(HCL_COORD, "Rank comm({}) rank({}) done, opened({}) QPs", comm, rank, opened_qps);
+    LOG_HCL_INFO(HCL, "Rank comm({}) rank({}) done, opened({}) QPs", comm, rank, opened_qps);
     return hcclSuccess;
 }
 
@@ -703,13 +708,6 @@ void IHclDevice::setScaleoutMode(const unsigned scaleOutGNICs)
     if (GCFG_HCCL_OVER_OFI.value())
     {
         LOG_HCL_INFO(HCL, "ofi selected by user");
-    }
-
-    // check if stand-alone device
-    else if (!g_ibv.has_ib_device())
-    {
-        LOG_HCL_INFO(HCL, "No IB device detected. No scale-up or scale-out ports");
-        m_scaleoutAvailable = false;
     }
 
     // Start auto-detection flow - if scaleout mode wasn't specified by the user, identify it

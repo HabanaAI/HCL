@@ -63,12 +63,12 @@ scal_comp_group_handle_t Gen2ArchScalManager::getCgHandle(unsigned archStreamIdx
     }
 }
 
-void Gen2ArchScalManager::init(CyclicBufferType type)
+void Gen2ArchScalManager::init(const Gen2ArchStreamLayout& streamLayout, CyclicBufferType type)
 {
-    initScalData(type);
+    initScalData(streamLayout, type);
 }
 
-void Gen2ArchScalManager::initScalData(CyclicBufferType type)
+void Gen2ArchScalManager::initScalData(const Gen2ArchStreamLayout& streamLayout, CyclicBufferType type)
 {
     m_scalWrapper->initMemory();
 
@@ -90,21 +90,22 @@ void Gen2ArchScalManager::initScalData(CyclicBufferType type)
     {
         scal_comp_group_handle_t internalCgHandle = m_cgInfoArray[i][(int)SchedulerType::internal].cgHandle;
         scal_comp_group_handle_t externalCgHandle = m_cgInfoArray[i][(int)SchedulerType::external].cgHandle;
-        m_archStreams[i]                          = std::unique_ptr<ArchStream>(
-            new ArchStream(i, *m_scalWrapper, externalCgHandle, internalCgHandle, m_scalNames, m_commands, type));
+        m_archStreams[i]                          = std::make_unique<ArchStream>(i,
+                                                        *m_scalWrapper,
+                                                        externalCgHandle,
+                                                        internalCgHandle,
+                                                        m_scalNames,
+                                                        m_commands,
+                                                        type,
+                                                        streamLayout);
     }
 
     LOG_TRACE(HCL_SCAL, "{}", prettyPrint());
 }
 
-size_t Gen2ArchScalManager::getMicroArchStreams(unsigned schedIdx)
+hcl::ScalStream& Gen2ArchScalManager::getScalStream(unsigned archStreamIdx, unsigned schedIdx, unsigned uArchstreamIdx)
 {
-    return m_scalNames.numberOfMicroArchStreams[schedIdx];
-}
-
-hcl::ScalStream& Gen2ArchScalManager::getScalStream(unsigned archStreamIdx, unsigned schedIdx, unsigned streamIdx)
-{
-    return m_archStreams[archStreamIdx]->getScalStream(schedIdx, streamIdx);
+    return m_archStreams[archStreamIdx]->getScalStream(schedIdx, uArchstreamIdx);
 }
 
 bool Gen2ArchScalManager::isACcbHalfFullForDeviceBenchMark(const unsigned archStreamIdx)
@@ -127,19 +128,15 @@ uint64_t Gen2ArchScalManager::getMonitorPayloadAddr(SchedulersIndex schedIdx, un
     return m_scalWrapper->getMonitorPayloadAddr(m_scalNames.schedulersNames[(SchedulersIndex)schedIdx], fenceIdx);
 }
 
-void Gen2ArchScalManager::initGlobalContext([[maybe_unused]] HclDeviceGen2Arch* device, [[maybe_unused]] uint8_t apiId)
+uint64_t Gen2ArchScalManager::getInitCgNextSo()
 {
-    LOG_HCL_ERR(HCL_SCAL, "initGlobalContext has not been implemented on this device");
-}
+    LOG_HCL_ERR(HCL_SCAL, "getInitCgNextSo has not been implemented on this device");
+    return 0;
+};
 
 Gen2ArchScalWrapper::CgComplex Gen2ArchScalManager::getCgInfo(const std::string& cgName) const
 {
     return m_scalWrapper->getCgInfo(cgName);
-}
-
-void Gen2ArchScalManager::initSimb([[maybe_unused]] HclDeviceGen2Arch* device, [[maybe_unused]] uint8_t apiID)
-{
-    LOG_HCL_ERR(HCL_SCAL, "initSimb has not been implemented on this device");
 }
 
 bool Gen2ArchScalManager::eventQuery(scal_comp_group_handle_t cgHandle, uint64_t targetValue)

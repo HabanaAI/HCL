@@ -85,6 +85,12 @@ public:
     }
 
     VoidOutcome updateFromEnv(bool enableExperimental) override;
+
+    TimePoint lastUpdateTime() const override
+    {
+        return m_lastUpdateTime;
+    }
+
 protected:
     VoidOutcome updateObservers(const std::string& value);
     GcfgSource m_setFrom;
@@ -98,6 +104,7 @@ private:
     bool                             m_shouldUnregister;
 protected:
     std::vector<GcfgItemObserver*> m_observers;
+    TimePoint                      m_lastUpdateTime;
 };
 
 template<class T, class R = T>

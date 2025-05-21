@@ -9,14 +9,14 @@
 #include "platform/gen2_arch_common/signals/calculator.h"  // for nicsPerCon...
 
 #include "interfaces/hcl_unique_sorted_vector.h"
-#include "hcl_types.h"            // for HostNicConnectInfo
-#include "buffer_manager_base.h"  // for e_hostPoolID
+#include "hcl_types.h"               // for HostNicConnectInfo
+#include "simb_pool_manager_base.h"  // for e_hostPoolID
 
 struct SliceState;
 class NonCollectiveState;
 class HclDeviceGen2Arch;
 class HostScheduler;
-class HostBufferManager;
+class HostSimbPoolManager;
 class SignalsManager;
 class ofi_t;  // for getOfiHandle()
 
@@ -56,10 +56,10 @@ public:
     virtual void closeConnections(HCL_Comm comm) = 0;  // Close outer peer and non-peer ranks
     virtual void destroy()                       = 0;
 
-    virtual void               requestScaleoutResources(SliceState& sliceState, SignalsManager& signalsManager) = 0;
-    virtual void               requestScaleoutResources(NonCollectiveState& nonCollectiveState)                 = 0;
-    virtual unsigned           getNumOfNicsPerDevice(const HCL_Comm comm) const                                 = 0;
-    virtual HostBufferManager* getHostBufferManager(unsigned streamIdx);
+    virtual void                 requestScaleoutResources(SliceState& sliceState, SignalsManager& signalsManager) = 0;
+    virtual void                 requestScaleoutResources(NonCollectiveState& nonCollectiveState)                 = 0;
+    virtual unsigned             getNumOfNicsPerDevice(const HCL_Comm comm) const                                 = 0;
+    virtual HostSimbPoolManager* getHostSimbPoolManager(unsigned streamIdx);
 
     static ScaleoutProvider* createScaleOutProvider(HclDeviceGen2Arch* device);
 
@@ -126,7 +126,7 @@ public:
     virtual void     requestScaleoutResources(NonCollectiveState& nonCollectiveState) override;
     void             notifyHostScheduler(int archStreamIdx);
 
-    virtual HostBufferManager* getHostBufferManager(unsigned streamIdx) override;
+    virtual HostSimbPoolManager* getHostSimbPoolManager(unsigned streamIdx) override;
 
     SignalEvent getScaleoutSendSignal() override;
     SignalEvent getScaleoutRecvSignal(bool doReduction = false) override;
@@ -142,7 +142,7 @@ public:
     unsigned m_streamsPerHostSched;
     uint64_t m_numArchStreams;
 
-    std::vector<HostBufferManager*> m_hostBufferManager;
+    std::vector<HostSimbPoolManager*> m_hostSimbPoolManager;
 
 private:
     bool                                        m_isGaudiDirect = false;

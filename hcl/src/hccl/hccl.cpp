@@ -364,7 +364,7 @@ hcclResult_t hcclDfaUpdateState_Original(DfaPhase dfaPhase)
             {
                 updateErr = true;
             }
-            g_status = hcclResult_t::hcclSuccess;
+            setGlobalDfaStatus(hcclSuccess);
             break;
 
         case DfaPhase::STARTED:
@@ -377,7 +377,7 @@ hcclResult_t hcclDfaUpdateState_Original(DfaPhase dfaPhase)
             {
                 updateErr = true;
             }
-            g_status = hcclResult_t::hcclInternalError;
+            setGlobalDfaStatus(hcclResult_t::hcclInternalError);
             break;
         }
 
@@ -390,7 +390,7 @@ hcclResult_t hcclDfaUpdateState_Original(DfaPhase dfaPhase)
             {
                 updateErr = true;
             }
-            g_status = hcclResult_t::hcclInternalError;
+            setGlobalDfaStatus(hcclResult_t::hcclInternalError);
             break;
     }
 
@@ -590,10 +590,21 @@ HCCL_API_CALL const char* hcclGetErrorString_impl(hcclResult_t result)
     return (*functions_pointers_table->pfn_hcclGetErrorString)(result);
 }
 
+HCCL_API_CALL const char* hcclGetLastErrorMessage_impl()
+{
+    return hcclGetLastErrorMessage_Wrapper();
+}
+
 hcclResult_t HCCL_API_CALL hcclCommGetAsyncError_impl(hcclComm_t comm, hcclResult_t* asyncError)
 {
-    HCL_API_LOG_ENTRY();
+    HCL_API_LOG_ENTRY("(&comm={:p})", (void*)comm);
     return (*functions_pointers_table->pfn_hcclCommGetAsyncError)(comm, asyncError);
+}
+
+HCCL_API_CALL const char* hcclCommGetAsyncErrorMessage_impl(hcclComm_t comm)
+{
+    HCL_API_LOG_ENTRY("(&comm={:p})", (void*)comm);
+    return hcclCommGetAsyncErrorMessage_Wrapper(comm);
 }
 
 hcclResult_t HCCL_API_CALL hcclCommCount_impl(hcclComm_t comm, int* count)
@@ -628,6 +639,8 @@ hcclResult_t HCCL_API_CALL hcclReduceScatter_impl(const void*     sendbuff,
                                                   hcclComm_t      comm,
                                                   synStreamHandle stream_handle)
 {
+    RETURN_ON_INVALID_DATA_TYPE(datatype);
+
     auto* hccl_comm = hccl_ctx.communicator(comm);
     RETURN_ON_INVALID_HCCL_COMM(hccl_comm);
     HCCL_CHECK_STOP_COLL_API_COMM_UNTIL(hccl_comm);
@@ -672,6 +685,8 @@ hcclResult_t HCCL_API_CALL hcclAllReduce_impl(const void*     sendbuff,
                                               hcclComm_t      comm,
                                               synStreamHandle stream_handle)
 {
+    RETURN_ON_INVALID_DATA_TYPE(datatype);
+
     auto* hccl_comm = hccl_ctx.communicator(comm);
     RETURN_ON_INVALID_HCCL_COMM(hccl_comm);
     HCCL_CHECK_STOP_COLL_API_COMM_UNTIL(hccl_comm);
@@ -717,6 +732,8 @@ hcclResult_t HCCL_API_CALL hcclReduce_impl(const void*     sendbuff,
                                            hcclComm_t      comm,
                                            synStreamHandle stream_handle)
 {
+    RETURN_ON_INVALID_DATA_TYPE(datatype);
+
     auto* hccl_comm = hccl_ctx.communicator(comm);
     RETURN_ON_INVALID_HCCL_COMM(hccl_comm);
     HCCL_CHECK_STOP_COLL_API_COMM_UNTIL(hccl_comm);
@@ -793,6 +810,8 @@ hcclResult_t HCCL_API_CALL hcclBroadcast_impl(const void*     sendbuff,
                                               hcclComm_t      comm_handle,
                                               synStreamHandle stream_handle)
 {
+    RETURN_ON_INVALID_DATA_TYPE(datatype);
+
     auto* hccl_comm = hccl_ctx.communicator(comm_handle);
     RETURN_ON_INVALID_HCCL_COMM(hccl_comm);
     HCCL_CHECK_STOP_COLL_API_COMM_UNTIL(hccl_comm);
@@ -835,6 +854,8 @@ hcclResult_t HCCL_API_CALL hcclAllGather_impl(const void*     sendbuff,
                                               hcclComm_t      comm_handle,
                                               synStreamHandle stream_handle)
 {
+    RETURN_ON_INVALID_DATA_TYPE(datatype);
+
     auto* hccl_comm = hccl_ctx.communicator(comm_handle);
     RETURN_ON_INVALID_HCCL_COMM(hccl_comm);
     HCCL_CHECK_STOP_COLL_API_COMM_UNTIL(hccl_comm);
@@ -884,6 +905,8 @@ hcclResult_t HCCL_API_CALL hcclAlltoAll_impl(const void*     sendbuff,
                                              hcclComm_t      comm,
                                              synStreamHandle stream_handle)
 {
+    RETURN_ON_INVALID_DATA_TYPE(datatype);
+
     auto* hccl_comm = hccl_ctx.communicator(comm);
     RETURN_ON_INVALID_HCCL_COMM(hccl_comm);
     HCCL_CHECK_STOP_COLL_API_COMM_UNTIL(hccl_comm);
@@ -924,6 +947,8 @@ hcclResult_t HCCL_API_CALL hcclSend_impl(const void*     sendbuff,
                                          hcclComm_t      comm_handle,
                                          synStreamHandle stream_handle)
 {
+    RETURN_ON_INVALID_DATA_TYPE(datatype);
+
     auto* hccl_comm = hccl_ctx.communicator(comm_handle);
     RETURN_ON_INVALID_HCCL_COMM(hccl_comm);
 
@@ -961,6 +986,8 @@ hcclResult_t HCCL_API_CALL hcclRecv_impl(void*           recvbuff,
                                          hcclComm_t      comm_handle,
                                          synStreamHandle stream_handle)
 {
+    RETURN_ON_INVALID_DATA_TYPE(datatype);
+
     auto* hccl_comm = hccl_ctx.communicator(comm_handle);
     RETURN_ON_INVALID_HCCL_COMM(hccl_comm);
 

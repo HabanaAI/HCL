@@ -17,8 +17,6 @@ public:
     virtual uint32_t getQPi(const QPManagerHints& hints) const override;
 
 private:
-    void resizeDBForNewComms(const HCL_Comm comm);
-
-    // m_qpInfoScaleUp[comm][nic][qpi] -> qpn
-    std::vector<std::array<std::array<QPn, MAX_QPS_PER_CONNECTION_G2>, MAX_NICS_GEN2ARCH>> m_qpInfoScaleUp;
+    // m_qpInfoScaleUp[nic][qpi] -> qpn
+    std::array<std::array<QPn, MAX_QPS_PER_CONNECTION_G2>, MAX_NICS_GEN2ARCH> m_qpInfoScaleUp;
 };

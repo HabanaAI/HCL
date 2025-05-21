@@ -1,6 +1,7 @@
 #include "hcl_ibverbs.h"
 #include "helpers.h"
 #include "hcl_types.h"  // for NicLkdEventsEnum
+#include "fault_tolerance_inc.h"
 
 // non-trivial designated initializers not supported
 #define MAX_ERRORS (IBV_EVENT_WQ_FATAL + 1)
@@ -19,33 +20,33 @@ static void init_error_tables()
     err2str[IBV_EVENT_PORT_ACTIVE]         = "Link up";
     err2str[IBV_EVENT_PORT_ERR]            = "Link down";
     err2str[IBV_EVENT_LID_CHANGE]          = "Link shutdown";
-    err2str[IBV_EVENT_GID_CHANGE]          = "GID table change",
+    err2str[IBV_EVENT_GID_CHANGE]          = "GID table change";
 
     /* Rx packet errors*/
-        qp_syndroms[0x1] = "[RX] pkt err, pkt bad format";
-    qp_syndroms[0x2]     = "[RX] pkt err, pkt tunnel invalid";
-    qp_syndroms[0x3]     = "[RX] pkt err, BTH opcode invalid";
-    qp_syndroms[0x4]     = "[RX] pkt err, syndrome invalid";
-    qp_syndroms[0x5]     = "[RX] pkt err, Reliable QP max size invalid";
-    qp_syndroms[0x6]     = "[RX] pkt err, Reliable QP min size invalid";
-    qp_syndroms[0x7]     = "[RX] pkt err, Raw min size invalid";
-    qp_syndroms[0x8]     = "[RX] pkt err, Raw max size invalid";
-    qp_syndroms[0x9]     = "[RX] pkt err, QP invalid";
-    qp_syndroms[0xa]     = "[RX] pkt err, Transport Service mismatch";
-    qp_syndroms[0xb]     = "[RX] pkt err, QPC Requester QP state invalid";
-    qp_syndroms[0xc]     = "[RX] pkt err, QPC Responder QP state invalid";
-    qp_syndroms[0xd]     = "[RX] pkt err, QPC Responder resync invalid";
-    qp_syndroms[0xe]     = "[RX] pkt err, QPC Requester PSN invalid";
-    qp_syndroms[0xf]     = "[RX] pkt err, QPC Requester PSN unset";
-    qp_syndroms[0x10]    = "[RX] pkt err, QPC Responder RKEY invalid";
-    qp_syndroms[0x11]    = "[RX] pkt err, WQE index mismatch";
-    qp_syndroms[0x12]    = "[RX] pkt err, WQE write opcode invalid";
-    qp_syndroms[0x13]    = "[RX] pkt err, WQE Rendezvous opcode invalid";
-    qp_syndroms[0x14]    = "[RX] pkt err, WQE Read  opcode invalid";
-    qp_syndroms[0x15]    = "[RX] pkt err, WQE Write Zero";
-    qp_syndroms[0x16]    = "[RX] pkt err, WQE multi zero";
-    qp_syndroms[0x17]    = "[RX] pkt err, WQE Write send big";
-    qp_syndroms[0x18]    = "[RX] pkt err, WQE multi big";
+    qp_syndroms[0x1]  = "[RX] pkt err, pkt bad format";
+    qp_syndroms[0x2]  = "[RX] pkt err, pkt tunnel invalid";
+    qp_syndroms[0x3]  = "[RX] pkt err, BTH opcode invalid";
+    qp_syndroms[0x4]  = "[RX] pkt err, syndrome invalid";
+    qp_syndroms[0x5]  = "[RX] pkt err, Reliable QP max size invalid";
+    qp_syndroms[0x6]  = "[RX] pkt err, Reliable QP min size invalid";
+    qp_syndroms[0x7]  = "[RX] pkt err, Raw min size invalid";
+    qp_syndroms[0x8]  = "[RX] pkt err, Raw max size invalid";
+    qp_syndroms[0x9]  = "[RX] pkt err, QP invalid";
+    qp_syndroms[0xa]  = "[RX] pkt err, Transport Service mismatch";
+    qp_syndroms[0xb]  = "[RX] pkt err, QPC Requester QP state invalid";
+    qp_syndroms[0xc]  = "[RX] pkt err, QPC Responder QP state invalid";
+    qp_syndroms[0xd]  = "[RX] pkt err, QPC Responder resync invalid";
+    qp_syndroms[0xe]  = "[RX] pkt err, QPC Requester PSN invalid";
+    qp_syndroms[0xf]  = "[RX] pkt err, QPC Requester PSN unset";
+    qp_syndroms[0x10] = "[RX] pkt err, QPC Responder RKEY invalid";
+    qp_syndroms[0x11] = "[RX] pkt err, WQE index mismatch";
+    qp_syndroms[0x12] = "[RX] pkt err, WQE write opcode invalid";
+    qp_syndroms[0x13] = "[RX] pkt err, WQE Rendezvous opcode invalid";
+    qp_syndroms[0x14] = "[RX] pkt err, WQE Read  opcode invalid";
+    qp_syndroms[0x15] = "[RX] pkt err, WQE Write Zero";
+    qp_syndroms[0x16] = "[RX] pkt err, WQE multi zero";
+    qp_syndroms[0x17] = "[RX] pkt err, WQE Write send big";
+    qp_syndroms[0x18] = "[RX] pkt err, WQE multi big";
 
     /* QPC errors */
     qp_syndroms[0x40] = "[qpc] [TMR] max-retry-cnt exceeded";
@@ -309,6 +310,8 @@ bool hcl_ibverbs_t::parse_ib_eqe(ibv_async_event* event)
 
 void hcl_ibverbs_t::report_nic_status(const ibv_event_type& event, const uint32_t nic)
 {
+    HLFT_TRC("nic: {} {}", nic, event);
+
     switch (event)
     {
         case IBV_EVENT_PORT_ACTIVE:

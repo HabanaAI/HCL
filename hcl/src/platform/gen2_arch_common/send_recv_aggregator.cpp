@@ -45,5 +45,5 @@ std::ostream& operator<<(std::ostream& os, const SendRecvArray& sendRecvArray)
 
 bool SendRecvAggregatorBase::willFlush()
 {
-    return m_arrays.size() > 0;
+    return m_aggEntryArrays.size() > 0;
 }

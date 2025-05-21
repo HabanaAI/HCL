@@ -16,40 +16,9 @@
 
 QPManagerGaudi3ScaleUp::QPManagerGaudi3ScaleUp(HclDeviceGaudi3& device) : QPManagerGaudi3(device)
 {
-    m_remoteRankOffsets.resize(DEFAULT_COMMUNICATORS_SIZE);
-    m_myRankOffsets.resize(DEFAULT_COMMUNICATORS_SIZE);
-
-    for (auto& commRemoteRankOffsets : m_remoteRankOffsets)
-    {
-        commRemoteRankOffsets.fill((uint16_t)-1);
-    }
-    for (auto& commMyRankOffsets : m_myRankOffsets)
-    {
-        commMyRankOffsets.fill((uint16_t)-1);
-    }
-
-    m_qpInfoScaleUp.resize(DEFAULT_COMMUNICATORS_SIZE);
-    for (auto& qpi : m_qpInfoScaleUp)
-    {
-        qpi.fill(INVALID_QP);
-    }
-}
-
-void QPManagerGaudi3ScaleUp::resizeDBForNewComms(const HCL_Comm comm)
-{
-    const size_t oldSize = m_qpInfoScaleUp.size();
-    const size_t newSize = oldSize + DEFAULT_COMMUNICATORS_SIZE;
-
-    LOG_HCL_INFO(HCL, "resizing m_qpInfoScaleUp for comm {} from {} to {}", comm, oldSize, newSize);
-
-    m_qpInfoScaleUp.resize(newSize);
-    for (unsigned index = oldSize; index < newSize; index++)
-    {
-        for (auto& qpn : m_qpInfoScaleUp.at(index))
-        {
-            qpn = INVALID_QP;
-        }
-    }
+    m_remoteRankOffsets.fill((uint16_t)-1);
+    m_myRankOffsets.fill((uint16_t)-1);
+    m_qpInfoScaleUp.fill(INVALID_QP);
 }
 
 void QPManagerGaudi3ScaleUp::addQPsToQPManagerDB(const QPManagerHints& hints, const QpsVector& qps)
@@ -62,16 +31,11 @@ void QPManagerGaudi3ScaleUp::addQPsToQPManagerDB(const QPManagerHints& hints, co
            qps.size(),
            comm);
 
-    if (unlikely(comm >= m_qpInfoScaleUp.size()))
-    {
-        resizeDBForNewComms(comm);
-    }
-
     for (unsigned qpi = 0; qpi < m_maxQPsPerConnection; qpi++)
     {
-        m_qpInfoScaleUp.at(comm).at(qpi) = qps[qpi];
+        m_qpInfoScaleUp.at(qpi) = qps[qpi];
 
-        LOG_HCL_DEBUG(HCL, "m_qpInfoScaleUp[comm {}][qpi {}] = qpn {}", comm, qpi, m_qpInfoScaleUp.at(comm).at(qpi));
+        LOG_HCL_DEBUG(HCL, "m_qpInfoScaleUp[comm {}][qpi {}] = qpn {}", comm, qpi, m_qpInfoScaleUp.at(qpi));
     }
 }
 
@@ -86,27 +50,25 @@ void QPManagerGaudi3ScaleUp::setNicOffsetsAndLastRank(hcl::ScalStream& stream, c
 
 uint32_t QPManagerGaudi3ScaleUp::getQPn(const QPManagerHints& hints) const
 {
-    const HCL_Comm comm = hints.m_comm;
-    const unsigned qpi  = hints.m_qpi;
+    const unsigned qpi = hints.m_qpi;
 
-    return m_qpInfoScaleUp.at(comm).at(qpi);
+    return m_qpInfoScaleUp.at(qpi);
 }
 
 uint32_t QPManagerGaudi3ScaleUp::getQPi(const QPManagerHints& hints) const
 {
-    const HCL_Comm comm = hints.m_comm;
-    const unsigned nic  = hints.m_nic;
-    const unsigned qpn  = hints.m_qpn;
+    const unsigned nic = hints.m_nic;
+    const unsigned qpn = hints.m_qpn;
 
     for (unsigned qpi = 0; qpi < m_maxQPsPerConnection; qpi++)
     {
-        if (m_qpInfoScaleUp.at(comm).at(qpi) + m_device.getNicToQpOffset(nic) == qpn)
+        if (m_qpInfoScaleUp.at(qpi) + m_device.getNicToQpOffset(nic) == qpn)
         {
             return qpi;
         }
     }
 
-    VERIFY(false, "could not find a match for comm {} qpn {}", comm, qpn);
+    VERIFY(false, "could not find a match for qpn {}", qpn);
 }
 
 uint32_t QPManagerGaudi3ScaleUp::getLastRankPortMask(HclDynamicCommunicator& dynamicComm,
@@ -127,10 +89,7 @@ void QPManagerGaudi3ScaleUp::setNicOffsets(hcl::ScalStream&       stream,
                                            const bool             isSend)
 {
     // for each scenario all nics use the same qpn
-    const QPManagerHints hints(comm,
-                               HCL_INVALID_RANK,
-                               INVALID_QP,
-                               QPManagerGaudi3::getQPi(collectiveOp, isSend));
+    const QPManagerHints hints(comm, HCL_INVALID_RANK, INVALID_QP, QPManagerGaudi3::getQPi(collectiveOp, isSend));
     const uint32_t       qpn = getQPn(hints);
 
     LOG_HCL_TRACE(HCL, "comm={}, collectiveOp={}, qpn={}, isSend={}", comm, collectiveOp, qpn, isSend);
@@ -143,19 +102,10 @@ void QPManagerGaudi3ScaleUp::setNicOffsets(hcl::ScalStream&       stream,
     commands.serializeUpdateNicOffsets(stream, isSend, true, qpn, remoteIndices);
 }
 
-void QPManagerGaudi3ScaleUp::resizeOffsetDBs(const HCL_Comm comm)
+void QPManagerGaudi3ScaleUp::resizeOffsetDBs()
 {
-    VERIFY(m_remoteRankOffsets.size() == m_myRankOffsets.size(), "Offsets DBs must be equal");
-    size_t old_size = m_remoteRankOffsets.size();
-    LOG_HCL_INFO(HCL, "Resizing m_remoteRankOffsets and m_myRankOffsets for new comm({})", comm);
-
-    m_remoteRankOffsets.resize(old_size + DEFAULT_COMMUNICATORS_SIZE);
-    m_myRankOffsets.resize(old_size + DEFAULT_COMMUNICATORS_SIZE);
-    for (size_t i = old_size; i < m_remoteRankOffsets.size(); i++)
-    {
-        m_remoteRankOffsets[i].fill((uint16_t)-1);
-        m_myRankOffsets[i].fill((uint16_t)-1);
-    }
+    m_remoteRankOffsets.fill((uint16_t)-1);
+    m_myRankOffsets.fill((uint16_t)-1);
 }
 
 std::array<uint16_t, MAX_NICS_GEN2ARCH>&
@@ -172,15 +122,9 @@ QPManagerGaudi3ScaleUp::getRemoteRankIndices(HCL_Comm comm, HCL_CollectiveOp col
                   nicsStatusMask,
                   maxNics);
 
-    // resize if needed
-    if (comm >= m_remoteRankOffsets.size())
-    {
-        resizeOffsetDBs(comm);
-    }
-
     // this is an array of offsets for the nics, please note that all offsets can be set later to zero
     // if the disregard rank bit is set to true in the collectiveOp command
-    std::array<uint16_t, MAX_NICS_GEN2ARCH>& remoteRankOffsets = m_remoteRankOffsets[comm];
+    std::array<uint16_t, MAX_NICS_GEN2ARCH>& remoteRankOffsets = m_remoteRankOffsets;
 
     bool needsRemoteRankIndex = (collectiveOp == eHCLAll2All ||
                                  ((collectiveOp == eHCLAllGather && !isSend) || (collectiveOp == eHCLReduceScatter)));
@@ -215,7 +159,7 @@ QPManagerGaudi3ScaleUp::getRemoteRankIndices(HCL_Comm comm, HCL_CollectiveOp col
     }
 
     // Loop through all the nics
-    std::array<uint16_t, MAX_NICS_GEN2ARCH>& myRankOffsets = m_myRankOffsets[comm];
+    std::array<uint16_t, MAX_NICS_GEN2ARCH>& myRankOffsets = m_myRankOffsets;
     for (uint16_t nicIndex = 0; nicIndex < maxNics; nicIndex++)
     {
         // If a nic is not active we do not need to configure it
@@ -239,10 +183,7 @@ void QPManagerGaudi3ScaleUp::setLastRankScaleup(hcl::ScalStream&       stream,
     HclDynamicCommunicator&     dynamicComm        = device.getComm(comm);
 
     // for each scenario all nics use the same qpn
-    const QPManagerHints hints(comm,
-                               HCL_INVALID_RANK,
-                               INVALID_QP,
-                               QPManagerGaudi3::getQPi(collectiveOp, isSend));
+    const QPManagerHints hints(comm, HCL_INVALID_RANK, INVALID_QP, QPManagerGaudi3::getQPi(collectiveOp, isSend));
     uint32_t             qpn = getQPn(hints);
 
     // we need to set the port mask to 1 for port that go out to the last rank
@@ -282,9 +223,6 @@ void QPManagerGaudi3ScaleUp::ReleaseQPsResource(const QPManagerHints& hints)
     const HCL_Comm            comm  = hints.m_comm;
     const UniqueSortedVector& ranks = m_device.getComm(comm).getInnerRanksExclusive();
 
-    // if a comm doesn't have scaleup, it didn't increase the m_qpInfoScaleUp size
-    if (m_qpInfoScaleUp.size() <= comm) return;
-
     for (unsigned qpi = 0; qpi < m_maxQPsPerConnection; qpi++)
     {
         for (auto& rank : ranks)
@@ -293,15 +231,15 @@ void QPManagerGaudi3ScaleUp::ReleaseQPsResource(const QPManagerHints& hints)
             {
                 if (m_device.isScaleOutPort(nic, comm)) continue;
 
-                const uint32_t qpBase = m_qpInfoScaleUp.at(comm).at(qpi);
+                const uint32_t qpBase = m_qpInfoScaleUp.at(qpi);
                 if (isInvalidQPn(qpBase)) continue;
 
                 const uint32_t qpn = qpBase + m_device.getNicToQpOffset(nic);
                 LOG_HCL_TRACE(HCL, "closing QP: comm({}) nic({}) qpi({}) qpn({})", comm, nic, qpi, qpn);
 
-                m_device.destroyQp(nic, qpn);
+                m_device.destroyQp(comm, nic, qpn);
             }
         }
-        m_qpInfoScaleUp.at(comm).at(qpi) = 0;
+        m_qpInfoScaleUp.at(qpi) = 0;
     }
 }

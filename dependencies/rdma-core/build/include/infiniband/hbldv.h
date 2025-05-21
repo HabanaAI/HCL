@@ -431,9 +431,11 @@ struct hbldv_query_cq_attr {
 /**
  * struct hbldv_coll_qp_attr - HBL Collective QP attributes.
  * @is_scale_out: Is this collective connection for scale out.
+ * @ports_mask: Mask of ports to be used in the collective connection.
  */
 struct hbldv_coll_qp_attr {
 	uint8_t is_scale_out;
+	uint64_t ports_mask;
 };
 
 /**
@@ -530,10 +532,10 @@ struct hbldv_coll_sched_resources {
 /**
  * struct hbldv_device_attr - Device specific attributes.
  * @caps: Capabilities mask.
- * @num_ports: Number of available ports.
- * @ext_ports_mask: Mask of IB indexes of relevant external ports for this context (1-based);
+ * @num_ports: Number of available ports for this context.
+ * @ext_ports_mask: Mask of IB indexes of relevant external ports for this device (1-based);
  *                  this is subset from all the available ports.
- * @hw_ports_mask: Mask of HW indexes of relevant ports for this context (0-based).
+ * @hw_ports_mask: Mask of HW indexes of relevant ports for this device (0-based).
  */
 struct hbldv_device_attr {
 	uint64_t caps;

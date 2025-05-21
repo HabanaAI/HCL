@@ -1,5 +1,7 @@
 #include "api_aggregator.h"
-#include <unordered_set>                                        // for unordered_set
+
+#include <unordered_set>  // for unordered_set
+
 #include "hcl_exceptions.h"                                     // for NotImplementedExc...
 #include "hcl_utils.h"                                          // for LOG_HCL_INFO, VERIFY
 #include "interfaces/hcl_icollective_routines.h"                // for IHclCollectiveRou...
@@ -10,7 +12,10 @@
 #include "platform/gen2_arch_common/hcl_device.h"
 #include "hccl_context.h"
 #include "hccl_prim_collectives.h"
-#include "hccl_api_inc.h"  // for HCCL_CHECK_STOP*
+#include "hccl_api_inc.h"                           // for HCCL_CHECK_STOP*
+#include "hccl_communicator.h"                      // for hccl_communicator
+#include "interfaces/hcl_idevice.h"                 // for IHclDevice
+#include "platform/gen2_arch_common/hccl_device.h"  // for hccl_device()
 
 ApiAggregatorGen2Arch::ApiAggregatorGen2Arch(HclCollectiveRoutinesGen2Arch* collectiveRoutines)
 : m_collectiveRoutines(collectiveRoutines)
@@ -30,6 +35,8 @@ hcclResult_t ApiAggregatorGen2Arch::addGroupStart()
 
 hcclResult_t ApiAggregatorGen2Arch::onGroupEnd()
 {
+    LOG_HCL_TRACE(HCL, "m_comms.size()={}, m_groupCalls.size()={}", m_comms.size(), m_groupCalls.size());
+
     if (m_groupCalls.size() == 0 && m_sendRecvMemCpyVec.size() == 0)
     {
         m_collectiveRoutines->setGroupContext(false);
@@ -45,6 +52,7 @@ hcclResult_t ApiAggregatorGen2Arch::onGroupEnd()
                                        comm,
                                        m_remoteRanks[comm],
                                        hccl_ctx.generateApiId());
+
         LOG_HCL_TRACE(HCL, "Finished comm={}", comm);
     }
 
@@ -99,7 +107,7 @@ uint64_t ApiAggregatorGen2Arch::checkGroupCollectiveDependency()
         auto&&      device = m_collectiveRoutines->getDevice();
         CommonState commonState {
             params,
-            m_collectiveRoutines->getIntermediateBufferManager(),
+            m_collectiveRoutines->getDeviceSimbPoolManager(),
             false,
             device->getScaleOutProvider()->isGaudiDirect(),
             device->getEdmaEngineWorkDistributionSize(),
@@ -236,6 +244,10 @@ hcclResult_t ApiAggregatorGen2Arch::addSendRecvApiCall(HCL_Rank myRank, const Se
     addGroupStart();
 
     m_comms.insert(entry.comm);
+    if (hccl_device()->getComm(entry.comm).isCommunicatorMultiScaleupGroup())
+    {
+        hccl_device()->addScaleoutCommsCurrentGroup(entry.comm);
+    }
 
     if (myRank == entry.remoteRank)
     {
@@ -249,7 +261,8 @@ hcclResult_t ApiAggregatorGen2Arch::addSendRecvApiCall(HCL_Rank myRank, const Se
         m_remoteRanks[entry.comm].insert(entry.remoteRank);
     }
 
-    return addGroupEnd();
+    LOG_HCL_TRACE(HCL, "calling addGroupEnd2");
+    return addGroupEnd(true);
 }
 
 hcclResult_t ApiAggregatorGen2Arch::addCollectiveApiCall(HclCollectiveParams& params)
@@ -269,13 +282,21 @@ hcclResult_t ApiAggregatorGen2Arch::addCollectiveApiCall(HclCollectiveParams& pa
     if (!checkCallsCounter()) return hcclInvalidUsage;
 
     m_comms.insert(params.m_dynamicComm);
+    if (hccl_device()->getComm(params.m_dynamicComm).isCommunicatorMultiScaleupGroup())
+    {
+        hccl_device()->addScaleoutCommsCurrentGroup(params.m_dynamicComm);
+    }
     m_collectiveStack.push_back(params);
 
     return hcclSuccess;
 }
 
-hcclResult_t ApiAggregatorGen2Arch::addGroupEnd()
+hcclResult_t ApiAggregatorGen2Arch::addGroupEnd(const bool firstStream)
 {
+    LOG_HCL_TRACE(HCL, "m_counter={}, m_comms.size()={}, firstStream={}", m_counter, m_comms.size(), firstStream);
+    // The following code section can be moved outside this function, as the group recursive counter is one per device
+    // not per stream
+
     --m_counter;
 
     if (m_counter > 0)
@@ -290,7 +311,22 @@ hcclResult_t ApiAggregatorGen2Arch::addGroupEnd()
         return hcclInvalidUsage;
     }
 
-    if (m_comms.size() == 0) return hcclSuccess;
+    // Fault tolerance, Gaudi3 only - handle only in first aggregator stream to block API
+    if (firstStream)
+    {
+        if (GCFG_HCL_FAULT_TOLERANCE_ENABLE.value())
+        {
+            hccl_device()->handleFaultToleranceGroupEndApi();
+        }
+    }
+
+    if (m_comms.size() == 0)
+    {
+        const HCL_StreamId myStream = (HCL_StreamId)m_collectiveRoutines->getArchStream();
+        LOG_HCL_TRACE(HCL, "Empty group, stream={}", myStream);
+
+        return hcclSuccess;
+    }
 
     checkGroupCollectiveDependency();
 

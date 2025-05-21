@@ -13,18 +13,18 @@ enum ApiType
 
 struct SendRecvApiEntry
 {
-    ApiType         apiType;
-    uint8_t         apiId;
-    void*           streamHandle;
-    uint64_t        address;
-    uint64_t        count;
-    hcclDataType_t  dataType;
-    HCL_Rank        remoteRank;
-    HCL_Comm        comm;
-    uint32_t        hwModuleID;
-    bool            isRankInsideScaleupGroup;
-    bool            isValid = false;
-    bool            isLast  = false;
+    ApiType        apiType;
+    uint8_t        apiId;
+    void*          streamHandle;
+    uint64_t       address;
+    uint64_t       count;
+    hcclDataType_t dataType;
+    HCL_Rank       remoteRank;
+    HCL_Comm       comm;
+    uint32_t       hwModuleID;
+    bool           isRankInsideScaleupGroup;
+    bool           isValid = false;
+    bool           isLast  = false;
 };
 
 struct SendRecvMemCopyEntry

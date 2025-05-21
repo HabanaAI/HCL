@@ -143,8 +143,8 @@ void Gen2ArchScalWrapper::completionGroupRegisterTimestamp(const scal_comp_group
               longSoValue,
               timestampHandle,
               timestampsOffset);
-    const int rc = scal_completion_group_register_timestamp(compGrp, longSoValue, timestampHandle, timestampsOffset);
 
+    int rc = scal_completion_group_register_timestamp(compGrp, longSoValue, timestampHandle, timestampsOffset);
     if (rc != SCAL_SUCCESS)
     {
         LOG_ERR(HCL_SCAL, "scal_completion_group_register_timestamp failed with {}", rc);

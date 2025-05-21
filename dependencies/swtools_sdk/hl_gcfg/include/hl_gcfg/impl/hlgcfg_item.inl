@@ -70,9 +70,7 @@ VoidOutcome GcfgItem::updateFromEnv(bool enableExperimental)
     for (const auto& name : m_names)
     {
         const char* envValue = nullptr;
-        if (getModeType() == NNExecutionMode::inference) {
-            envValue = getenv((name + "_INFERENCE").c_str());
-        }
+
         if (envValue == nullptr) {
             envValue = getenv(name.c_str());
         }
@@ -273,6 +271,7 @@ VoidOutcome GcfgItemImpl<T, R>::setValue(const U& value, bool fromObserver)
     }
 
     std::swap(m_value, newValue);
+    m_lastUpdateTime = std::chrono::steady_clock::now();
     HLGCFG_LOG_DEBUG("configuration parameter name={}, value={}", primaryName(), toString(m_value));
     if (fromObserver)
     {

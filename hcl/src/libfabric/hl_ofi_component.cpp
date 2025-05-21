@@ -185,6 +185,7 @@ int ofi_component_t::ofi_progress(struct fid_cq* const cq)
         if (rc > 0)
         {
             OFI_EXIT_ON_ERROR(process_completions(cq_buf, rc));
+            break;
         }
         else if (OFI_UNLIKELY(rc == -FI_EAVAIL))
         {
@@ -203,9 +204,12 @@ int ofi_component_t::ofi_progress(struct fid_cq* const cq)
             req->state     = OFI_REQ_ERROR;
             req->size      = err_buffer.len;
             LOG_HCL_ERR(HCL_OFI,
-                        "Error state, w_fi_cq_read RC: {}, ERROR: {}",
+                        "Error state, w_fi_cq_read RC: {}, ofiDevice: {}, tag: {} ERROR: {}",
                         prev_rc,
+                        req->ofiDevice,
+                        req->ofiComm->tag,
                         ofi_plugin->w_fi_cq_strerror(cq, err_buffer.prov_errno, err_buffer.err_data, nullptr, 0));
+            return hcclLibfabricError;
         }
         else if (rc == -FI_EAGAIN)
         {
@@ -348,6 +352,7 @@ int ofi_component_t::test(ofi_req_t* req, int* done, size_t* size)
         }
         if (OFI_UNLIKELY(req->state == OFI_REQ_ERROR))
         {
+            LOG_HCL_ERR(HCL_OFI, "Request failed with an error");
             delete req;
             return hcclLibfabricError;
         }

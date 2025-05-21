@@ -22,6 +22,13 @@
 #include "hcl_math_utils.h"
 #include "platform/gen2_arch_common/hcl_device_controller.h"
 
+static const unsigned edmaOpCodesPerSched[(unsigned)hcl::SchedulersIndex::count] = {
+    g2fw::SCHED_GC_REDUCTION_ARC_CMD_NIC_EDMA_OPS,
+    g2fw::SCHED_SCALEUP_SEND_ARC_CMD_NIC_EDMA_OPS,
+    INVALID_SCHED,
+    INVALID_SCHED,
+    g2fw::SCHED_SCALEOUT_RECV_ARC_CMD_NIC_EDMA_OPS};
+
 void SchedArcCommandsGaudi2::serializeNopCommand(hcl::ScalStreamBase& scalStream, unsigned schedIdx, uint32_t padding)
 {
     g2fw::sched_arc_cmd_nop_t* command =
@@ -38,12 +45,12 @@ void SchedArcCommandsGaudi2::serializeNopCommand(hcl::ScalStreamBase& scalStream
 }
 
 void SchedArcCommandsGaudi2::serializeAllocBarrierCommand(
-    hcl::ScalStreamBase&                                     scalStream,
-    unsigned                                                 schedIdx,
-    uint32_t                                                 completionGroupIndex,
-    uint32_t                                                 requiredSobs,
-    llvm_vecsmall::SmallVector<uint32_t, MAX_STREAM_TO_INC>* fences,
-    const LBWBurstData_t*                                    destBurstData)
+    hcl::ScalStreamBase&                                        scalStream,
+    unsigned                                                    schedIdx,
+    uint32_t                                                    completionGroupIndex,
+    uint32_t                                                    requiredSobs,
+    llvm_vecsmall::SmallVector<uint32_t, MAX_STREAM_PER_SCHED>* fences,
+    const LBWBurstData_t*                                       destBurstData)
 {
     uint32_t fenceCnt    = fences == nullptr ? 0 : fences->size();
     uint32_t lbwBurstCnt = destBurstData == nullptr ? 0 : destBurstData->size();
@@ -71,6 +78,7 @@ void SchedArcCommandsGaudi2::serializeAllocBarrierCommand(
     SET_FIELD(command->cmd_size_dwords, cmdSize >> 2);
     SET_FIELD(command->fence_count, fenceCnt);
 
+    // fence_arr is defined as 0 size, we don't use it directly to avoid compiler error on u24.
     uint8_t* fence_arr_ptr = (uint8_t*)command + sizeof(g2fw::sched_arc_cmd_alloc_nic_barrier_t);
     for (unsigned i = 0; i < fenceCnt; i++)
     {
@@ -311,11 +319,6 @@ void SchedArcCommandsGaudi2::serializeDmaCommand(hcl::ScalStreamBase& scalStream
         reinterpret_cast<g2fw::sched_arc_cmd_nic_edma_ops_t*>(scalStream.getNextPtr(sizeInBytes));
     memset(command, 0, sizeInBytes);
 
-    static const unsigned opcodes[(unsigned)hcl::SchedulersIndex::count] = {
-        g2fw::SCHED_GC_REDUCTION_ARC_CMD_NIC_EDMA_OPS,
-        g2fw::SCHED_SCALEUP_SEND_ARC_CMD_NIC_EDMA_OPS,
-    };
-
     static const unsigned groupEngine[(unsigned)hcl::SchedulersIndex::count][g2fw::NIC_EDMA_COUNT] = {
         {SCAL_EDMA_NETWORK_GC_REDUCTION_GROUP0,
          SCAL_EDMA_NETWORK_GC_REDUCTION_GROUP0,
@@ -333,9 +336,12 @@ void SchedArcCommandsGaudi2::serializeDmaCommand(hcl::ScalStreamBase& scalStream
          0,
          0},  // scaleup recv scheduler
         {0, 0, 0, 0},
-        {0, 0, 0, 0}};
+        {SCAL_EDMA_NETWORK_SCALE_OUT_RECV_GROUP0,
+         SCAL_EDMA_NETWORK_SCALE_OUT_RECV_GROUP0,
+         SCAL_EDMA_NETWORK_SCALE_OUT_RECV_GROUP0,
+         SCAL_EDMA_NETWORK_SCALE_OUT_RECV_GROUP0}};  // scaleout recv scheduler
 
-    SET_FIELD(command->opcode, opcodes[schedIdx]);
+    SET_FIELD(command->opcode, edmaOpCodesPerSched[schedIdx]);
     switch (dmaType)
     {
         case g2fw::NIC_EDMA_CMD_SIBO_OPS_V3:
@@ -457,7 +463,7 @@ void SchedArcCommandsGaudi2::serializeDmaCommand(hcl::ScalStreamBase& scalStream
         SET_FIELD(edma_ops->input_datasize, (is16BitMemcpy ? 1 : 2));  // 16bit / 32bit
         SET_FIELD(edma_ops->output_datasize,
                   (((is16BitMemcpy && !useCasting) || (!is16BitMemcpy && useCasting)) ? 1 : 2));  // 16bit / 32bit
-        SET_FIELD(edma_ops->dtype, (((is16BitMemcpy || useCasting) && isBFloat) ? 3 : 2));
+        SET_FIELD(edma_ops->dtype, get_nic_edma_dtype(dataType, is16BitMemcpy, useCasting, isBFloat));
         SET_FIELD(edma_ops->reduction_ind, (useReductionInd ? 1 : 0));
         SET_FIELD(edma_ops->context_id, streamCtxtID);
 
@@ -656,12 +662,14 @@ void SchedArcCommandsGaudi2::serializePdmaCommand(hcl::ScalStreamBase& scalStrea
     PRINT_PACKET_TRACE(scalStream, "schedIdx:{}", schedIdx);
 }
 
-void SchedArcCommandsGaudi2::serializeGlobalDmaCommand(hcl::ScalStreamBase&                  scalStream,
-                                                       uint32_t                              soAddressLSB,
-                                                       const std::vector<sibAddressAndSize>& sibAddressesAndSizes,
-                                                       uint32_t                              fwStrideSize,
-                                                       uint64_t                              fwBaseAddress,
-                                                       uint32_t                              engineType)
+void SchedArcCommandsGaudi2::serializeGlobalDmaCommand(
+    hcl::ScalStreamBase&                                 scalStream,
+    unsigned                                             schedIdx,
+    uint32_t                                             soAddressLSB,
+    const std::vector<SimbPoolContainerParamsPerStream>& containerParamsPerStreamVec,
+    uint32_t                                             fwStrideSize,
+    uint64_t                                             fwBaseAddress,
+    uint32_t                                             engineType)
 {
     const unsigned numDwords            = div(sizeof(g2fw::edma_nic_glbl_ctxt_v3_t), sizeof(uint32_t));
     const unsigned activateAllDwordsMap = (1 << numDwords) - 1;
@@ -674,7 +682,7 @@ void SchedArcCommandsGaudi2::serializeGlobalDmaCommand(hcl::ScalStreamBase&     
         reinterpret_cast<g2fw::sched_arc_cmd_nic_edma_ops_t*>(scalStream.getNextPtr(sizeInBytes));
     memset(command, 0, sizeInBytes);
 
-    SET_FIELD(command->opcode, g2fw::SCHED_GC_REDUCTION_ARC_CMD_NIC_EDMA_OPS);
+    SET_FIELD(command->opcode, edmaOpCodesPerSched[schedIdx]);
     SET_FIELD(command->cmd_size, sizeInBytes);
     SET_FIELD(command->engine_group_type, engineType);
 
@@ -688,10 +696,16 @@ void SchedArcCommandsGaudi2::serializeGlobalDmaCommand(hcl::ScalStreamBase&     
 
     struct g2fw::edma_nic_glbl_ctxt_v3_t* edma_ctxt = (struct g2fw::edma_nic_glbl_ctxt_v3_t*)&edma_ops->data;
 
-    SET_FIELD(edma_ctxt->sib_base_addr[0], sibAddressesAndSizes.at(0).sibBaseAddr);
-    SET_FIELD(edma_ctxt->sib_base_addr[1], sibAddressesAndSizes.at(1).sibBaseAddr);
-    SET_FIELD(edma_ctxt->sibo_rank_stride[0], sibAddressesAndSizes.at(0).sibSize);
-    SET_FIELD(edma_ctxt->sibo_rank_stride[1], sibAddressesAndSizes.at(1).sibSize);
+    static_assert(SIBO_DOUBLE_SIMB_SIZE == 0 && SIBO_STANDARD_SIMB_SIZE == 1);
+
+    SET_FIELD(edma_ctxt->sib_base_addr[SIBO_DOUBLE_SIMB_SIZE],
+              containerParamsPerStreamVec.at(SIBO_DOUBLE_SIMB_SIZE).m_streamBaseAddrInContainer);
+    SET_FIELD(edma_ctxt->sib_base_addr[SIBO_STANDARD_SIMB_SIZE],
+              containerParamsPerStreamVec.at(SIBO_STANDARD_SIMB_SIZE).m_streamBaseAddrInContainer);
+    SET_FIELD(edma_ctxt->sibo_rank_stride[SIBO_DOUBLE_SIMB_SIZE],
+              containerParamsPerStreamVec.at(SIBO_DOUBLE_SIMB_SIZE).m_simbSize);
+    SET_FIELD(edma_ctxt->sibo_rank_stride[SIBO_STANDARD_SIMB_SIZE],
+              containerParamsPerStreamVec.at(SIBO_STANDARD_SIMB_SIZE).m_simbSize);
     SET_FIELD(edma_ctxt->sirb_base_addr, fwBaseAddress);
     SET_FIELD(edma_ctxt->sirb_size, fwStrideSize);
 
@@ -716,10 +730,11 @@ void SchedArcCommandsGaudi2::serializeGlobalDmaCommand(hcl::ScalStreamBase&     
         edma_ops->opcode,
         edma_ops->update_bitmap,
         edma_ops->num_dwords,
-        ((struct g2fw::edma_nic_glbl_ctxt_v3_t*)(command->edma_ctxt_v3->data))->sib_base_addr[0],
-        ((struct g2fw::edma_nic_glbl_ctxt_v3_t*)(command->edma_ctxt_v3->data))->sibo_rank_stride[0],
-        ((struct g2fw::edma_nic_glbl_ctxt_v3_t*)(command->edma_ctxt_v3->data))->sib_base_addr[1],
-        ((struct g2fw::edma_nic_glbl_ctxt_v3_t*)(command->edma_ctxt_v3->data))->sibo_rank_stride[1],
+        ((struct g2fw::edma_nic_glbl_ctxt_v3_t*)(command->edma_ctxt_v3->data))->sib_base_addr[SIBO_DOUBLE_SIMB_SIZE],
+        ((struct g2fw::edma_nic_glbl_ctxt_v3_t*)(command->edma_ctxt_v3->data))->sibo_rank_stride[SIBO_DOUBLE_SIMB_SIZE],
+        ((struct g2fw::edma_nic_glbl_ctxt_v3_t*)(command->edma_ctxt_v3->data))->sib_base_addr[SIBO_STANDARD_SIMB_SIZE],
+        ((struct g2fw::edma_nic_glbl_ctxt_v3_t*)(command->edma_ctxt_v3->data))
+            ->sibo_rank_stride[SIBO_STANDARD_SIMB_SIZE],
         ((struct g2fw::edma_nic_glbl_ctxt_v3_t*)(command->edma_ctxt_v3->data))->sirb_base_addr,
         ((struct g2fw::edma_nic_glbl_ctxt_v3_t*)(command->edma_ctxt_v3->data))->sirb_size,
         ((struct g2fw::edma_nic_glbl_ctxt_v3_t*)(command->edma_ctxt_v3->data))->comp_cfg[0],

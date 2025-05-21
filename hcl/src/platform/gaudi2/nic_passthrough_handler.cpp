@@ -22,7 +22,6 @@ NicPassthroughHandler::NicPassthroughHandler(const std::vector<unsigned>&      n
                                              HclCommandsGen2Arch&              commands)
 : NicPassthroughHandlerBase(), m_serverConnectivity(serverConnectivity), m_commands((HclCommandsGaudi2&)commands)
 {
-    memset(m_dupMasksPerDevice, 0, sizeof(m_dupMasksPerDevice));
     memset(m_dupMasksPerNic, 0, sizeof(m_dupMasksPerNic));
 
     for (unsigned deviceId = 0; deviceId < m_serverConnectivity.getBoxSize(); deviceId++)
@@ -140,7 +139,7 @@ void NicPassthroughHandler::addDeviceBuffer(const DwordsBoxesArray& deviceBuffer
 {
     NicsDwordsArray nicBuffer;
 
-    for (size_t deviceId = 0; deviceId < deviceBuffer.size(); deviceId++)
+    for (size_t deviceId = 0; deviceId < m_serverConnectivity.getBoxSize(); deviceId++)
     {
         for (unsigned nic : m_serverConnectivity.getAllPortsGlbl(deviceId, comm))
         {
@@ -192,9 +191,12 @@ std::array<int, HLS2_BOX_SIZE> NicPassthroughHandler::getCreditsPerDevice(std::v
 
     for (pRecordWithMetadata& record : records)
     {
-        for (unsigned deviceId = 0; deviceId < m_serverConnectivity.getBoxSize(); deviceId++)
+        for (auto& dupMaskForDevicePair : m_dupMasksPerDevice)
         {
-            if ((record->data.dup_mask & m_dupMasksPerDevice[deviceId]) == 0) continue;
+            uint32_t deviceId         = dupMaskForDevicePair.first;
+            uint32_t dupMaskForDevice = dupMaskForDevicePair.second;
+
+            if ((record->data.dup_mask & dupMaskForDevice) == 0) continue;
 
             if (record->data.is_nop)
             {
@@ -256,9 +258,10 @@ void NicPassthroughHandler::fillInNicNops(std::vector<pRecordWithMetadata>& reco
         LOG_HCL_INFO(HCL, "Adding a NIC NOP for an empty send/recv for collectiveContext({})", collectiveContextIndex);
 
         uint32_t dupMask = 0;
-        for (unsigned deviceId = 0; deviceId < m_serverConnectivity.getBoxSize(); deviceId++)
+        for (auto& dupMaskForDevicePair : m_dupMasksPerDevice)
         {
-            dupMask |= m_dupMasksPerDevice[deviceId];
+            uint32_t dupMaskForDevice = dupMaskForDevicePair.second;
+            dupMask |= dupMaskForDevice;
         }
 
         records.push_back(make_shared());
@@ -268,18 +271,22 @@ void NicPassthroughHandler::fillInNicNops(std::vector<pRecordWithMetadata>& reco
                                           sizeof(uint32_t),
                                           syncObjectAddressIndex,
                                           isLast && incSOBinNOP);
+
         return;
     }
 
-    for (unsigned deviceId = 0; deviceId < m_serverConnectivity.getBoxSize(); deviceId++)
+    for (auto& dupMaskForDevicePair : m_dupMasksPerDevice)
     {
+        uint32_t deviceId         = dupMaskForDevicePair.first;
+        uint32_t dupMaskForDevice = dupMaskForDevicePair.second;
+
         if (deviceId == (unsigned)selfModuleId) continue;
 
         int missingCredits = maxCredits - creditsPerDevice[deviceId];
         if (missingCredits > 0)
         {
             // Need to add credits to deviceId! Coalesce with other deviceIds.
-            creditsForMask[missingCredits] |= m_dupMasksPerDevice[deviceId];
+            creditsForMask[missingCredits] |= dupMaskForDevice;
         }
     }
 

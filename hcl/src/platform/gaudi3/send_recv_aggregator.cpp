@@ -38,22 +38,26 @@ SendRecvAggregatorGaudi3::SendRecvAggregatorGaudi3(const bool                   
 
 void SendRecvAggregatorGaudi3::addSendRecvArray(const SendRecvArray& arr)
 {
-    LOG_HCL_TRACE(HCL, "m_selfModuleId={}, m_arrays.size={}", m_selfModuleId, m_arrays.size());
+    LOG_HCL_TRACE(HCL, "m_selfModuleId={}, m_aggEntryArrays.size={}", m_selfModuleId, m_aggEntryArrays.size());
     size_t index = 0;
     for (auto& entry : arr)
     {
-        LOG_HCL_TRACE(HCL, "arr[{}]={}", index++, entry);
+        if (entry.isValid)
+        {
+            LOG_HCL_TRACE(HCL, "arr[{}]={}", index, entry);
+        }
+        index++;
     }
     AggregatedEntryArray aggregatedArray {};
-    for (uint32_t deviceId = 0; deviceId < aggregatedArray.size(); deviceId++)
+    for (uint32_t deviceId = 0; deviceId < m_serverConnectivity.getNumberOfDevicesPerHost(); deviceId++)
     {
         if (deviceId == m_selfModuleId) continue;
 
         const SendRecvEntry& entry = arr[deviceId];
         aggregatedArray[deviceId]  = AggregatedEntry {entry, /*isNop*/ false, /*isLast=*/false};
     }
-    m_arrays.push_back(aggregatedArray);
-    LOG_HCL_TRACE(HCL, "After adding, m_arrays.size={}", m_arrays.size());
+    m_aggEntryArrays.push_back(aggregatedArray);
+    LOG_HCL_TRACE(HCL, "After adding, m_aggEntryArrays.size={}", m_aggEntryArrays.size());
 }
 
 void SendRecvAggregatorGaudi3::flush(hcl::ScalStreamBase& scalStream,
@@ -67,7 +71,7 @@ void SendRecvAggregatorGaudi3::flush(hcl::ScalStreamBase& scalStream,
         HCL,
         "Flush for send/recv aggregator triggered for comm={}, {} arrays, m_selfModuleId={}, m_isSend={}, qpn={}",
         comm,
-        m_arrays.size(),
+        m_aggEntryArrays.size(),
         m_selfModuleId,
         m_isSend,
         qpn);
@@ -83,9 +87,9 @@ void SendRecvAggregatorGaudi3::flush(hcl::ScalStreamBase& scalStream,
 
     LOG_HCL_TRACE(HCL, "m_hwModules=[ {} ]", m_hwModules);
 
-    for (unsigned i = 0; i < m_arrays.size(); i++)
+    for (unsigned i = 0; i < m_aggEntryArrays.size(); i++)
     {
-        const AggregatedEntryArray& arr = m_arrays[i];
+        const AggregatedEntryArray& arr = m_aggEntryArrays[i];
 
         for (const HCL_HwModuleId deviceId : m_hwModules)
         {
@@ -188,14 +192,14 @@ void SendRecvAggregatorGaudi3::flush(hcl::ScalStreamBase& scalStream,
 
     int savings = 0;
 
-    for (size_t i = 0; i < m_arrays.size(); i++)
+    for (size_t i = 0; i < m_aggEntryArrays.size(); i++)
     {
-        const AggregatedEntryArray& arr = m_arrays[i];
+        const AggregatedEntryArray& arr = m_aggEntryArrays[i];
 
-        DwordsBoxesArray bufferPair0 = {};
-        DwordsBoxesArray bufferPair1 = {};
+        DwordsBoxesArray bufferPair0;
+        DwordsBoxesArray bufferPair1;
 
-        for (size_t deviceId = 0; deviceId < bufferPair0.size(); deviceId++)
+        for (size_t deviceId = 0; deviceId < m_serverConnectivity.getNumberOfDevicesPerHost(); deviceId++)
         {
             if (deviceId == m_selfModuleId) continue;
 
@@ -282,5 +286,5 @@ void SendRecvAggregatorGaudi3::flush(hcl::ScalStreamBase& scalStream,
     }
     LOG_HCL_TRACE(HCL, "Total saved {} Dwords", savings);
 
-    m_arrays.clear();
+    m_aggEntryArrays.clear();
 }

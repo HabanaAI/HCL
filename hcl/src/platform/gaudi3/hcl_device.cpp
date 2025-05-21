@@ -14,8 +14,8 @@
 #include "platform/gaudi3/commands/hcl_commands.h"        // for HclComm...
 #include "platform/gen2_arch_common/eq_handler.h"         // for IEventQ...
 #include "platform/gaudi3/hcl_graph_sync.h"
-#include "platform/gaudi3/qp_manager.h"                           // for QPManager
-#include "platform/gaudi_common/intermediate_buffer_container.h"  // for IntermediateBufferContainerGaudiCommon
+#include "platform/gaudi3/qp_manager.h"                     // for QPManager
+#include "platform/gaudi3/simb_pool_container_allocator.h"  // for SimbP...
 #include "platform/gen2_arch_common/scaleout_provider.h"
 #include "ibverbs/hcl_ibverbs.h"
 #include "interfaces/hcl_hal.h"                        // for HalPtr
@@ -26,8 +26,12 @@
 #include "platform/gaudi3/nics_events_handler_impl.h"  // for NicsEventsHandlerGaudi3
 #include "hccl_communicator.h"
 #include "fault_tolerance_inc.h"  // for HLFT.* macros
+#include "hccl_api_inc.h"         // for g_faultsCheckStopApi
 
 class QPManagerScaleOutGaudi3;
+
+// TLS
+thread_local CommsSet HclDeviceGaudi3::s_faultToleranceGroupScaleoutComms = {};
 
 /* tests only constructor */
 HclDeviceGaudi3::HclDeviceGaudi3(HclDeviceControllerGen2Arch& controller,
@@ -39,6 +43,7 @@ HclDeviceGaudi3::HclDeviceGaudi3(HclDeviceControllerGen2Arch& controller,
     registerOpenQpCallback(LOOPBACK, [&](HCL_Comm comm) { return openQpsLoopback(comm); });
     registerOpenQpCallback(HLS3, [&](HCL_Comm comm) { return openQpsHLS(comm); });
     registerOpenQpCallback(HL338, [&](HCL_Comm comm) { return openQpsHLS(comm); });
+    registerOpenQpCallback(HL3_RACK, [&](HCL_Comm comm) { return openQpsHLS(comm); });
     setHal(serverDef.getHalSharedPtr());
 }
 
@@ -59,33 +64,21 @@ HclDeviceGaudi3::HclDeviceGaudi3(HclDeviceControllerGen2Arch& controller,
     {
         m_boxConfigType = HL338;
     }
+    else if (configType == HL3_RACK)
+    {
+        m_boxConfigType = HL3_RACK;
+    }
     else
     {
         VERIFY(false, "Invalid server type {} for G3 device", configType);
     }
     LOG_HCL_INFO(HCL, "Set server type to {}", m_boxConfigType);
 
-    std::shared_ptr<QPManager> qpManagerScaleUp  = std::make_shared<QPManagerGaudi3ScaleUp>(*this);
-    std::shared_ptr<QPManager> qpManagerScaleOut = std::make_shared<QPManagerGaudi3ScaleOut>(*this);
-
-    m_migrationQpManager = std::make_unique<MigrationScaleOutQpManagerGaudi3>(getGaudi3Hal().getMaxQPsPerNic());
-
-    for (unsigned nic = 0; nic < MAX_NICS_GEN2ARCH; nic++)
-    {
-        if (isScaleOutPort(nic /*, HCL_Comm comm*/))
-        {
-            m_qpManagers.at(nic) = qpManagerScaleOut;
-        }
-        else
-        {
-            m_qpManagers.at(nic) = qpManagerScaleUp;
-        }
-    }
-
     m_scalManager.getHBMAddressRange(m_allocationRangeStart, m_allocationRangeEnd);
     registerOpenQpCallback(LOOPBACK, [&](HCL_Comm comm) { return openQpsLoopback(comm); });
     registerOpenQpCallback(HLS3, [&](HCL_Comm comm) { return openQpsHLS(comm); });
     registerOpenQpCallback(HL338, [&](HCL_Comm comm) { return openQpsHLS(comm); });
+    registerOpenQpCallback(HL3_RACK, [&](HCL_Comm comm) { return openQpsHLS(comm); });
 
     updateDisabledPorts();
     initNicsMask();
@@ -97,8 +90,8 @@ HclDeviceGaudi3::HclDeviceGaudi3(HclDeviceControllerGen2Arch& controller,
     // The scaleout mode is set according also to if all scaleout ports are disabled by LKD/HCL or not. This is
     // regardless of communicator setup.
     setScaleoutMode(getServerConnectivity().getNumScaleOutPortsGlbl());
-    m_sibContainer = std::make_unique<IntermediateBufferContainerGaudiCommon>(m_hal->getMaxStreams());
-    m_sibContainer->init();
+    m_sibContainerManager = std::make_unique<SimbPoolContainerAllocatorGaudi3>(m_hal->getMaxArchStreams());
+    m_sibContainerManager->init();
     createOfiPlugin();
     m_scaleoutProvider = ScaleoutProvider::createScaleOutProvider(this);
     setEdmaEngineGroupSizes();
@@ -117,7 +110,7 @@ void HclDeviceGaudi3::addQPsToQPManagerDB(const HCL_Comm   comm,
 {
     const QPManagerHints hints(comm, remoteRank);
 
-    m_qpManagers.at(nic)->addQPsToQPManagerDB(hints, qps);
+    getComm(comm).m_qpManagers.at(nic)->addQPsToQPManagerDB(hints, qps);
 }
 
 void HclDeviceGaudi3::setDefaultScaleUpPortQPWithNicOffsets(hcl::ScalStream& stream,
@@ -125,7 +118,7 @@ void HclDeviceGaudi3::setDefaultScaleUpPortQPWithNicOffsets(hcl::ScalStream& str
                                                             const bool       isSend)
 {
     const uint16_t defaultScaleUpPort = getServerConnectivity().getDefaultScaleUpPort(comm);
-    m_qpManagers.at(defaultScaleUpPort)->setNicOffsetsAndLastRank(stream, comm, isSend);
+    getComm(comm).m_qpManagers.at(defaultScaleUpPort)->setNicOffsetsAndLastRank(stream, comm, isSend);
 }
 
 QPUsage HclDeviceGaudi3::getBaseQpAndUsage(const HclDynamicCommunicator& dynamicComm,
@@ -146,28 +139,71 @@ QPUsage HclDeviceGaudi3::getBaseQpAndUsage(const HclDynamicCommunicator& dynamic
 {
     const unsigned nic = isScaleOut ? getServerConnectivity().getDefaultScaleOutPortByIndex()
                                     : getServerConnectivity().getDefaultScaleUpPort(dynamicComm);
-    return m_qpManagers.at(nic)->getBaseQpAndUsage(dynamicComm,
-                                                   collectiveOp,
-                                                   isSend,
-                                                   isComplexCollective,
-                                                   isReductionInIMB,
-                                                   isHierarchical,
-                                                   count,
-                                                   cellCount,
-                                                   boxType,
-                                                   isScaleOut,
-                                                   remoteRank,
-                                                   qpSet,
-                                                   isReduction,
-                                                   complexCollective,
-                                                   isRoot);
+    return dynamicComm.m_qpManagers.at(nic)->getBaseQpAndUsage(dynamicComm,
+                                                               collectiveOp,
+                                                               isSend,
+                                                               isComplexCollective,
+                                                               isReductionInIMB,
+                                                               isHierarchical,
+                                                               count,
+                                                               cellCount,
+                                                               boxType,
+                                                               isScaleOut,
+                                                               remoteRank,
+                                                               qpSet,
+                                                               isReduction,
+                                                               complexCollective,
+                                                               isRoot);
 }
 
 void HclDeviceGaudi3::handleScaleoutNicStatusChange(const uint16_t nic, const bool up)
 {
-    const uint16_t scaleoutPortNum = getLogicalScaleoutPortNum(nic);
-    HLFT_WRN("Scaleout nic={} {}, scaleoutPortNum={}", nic, up ? "up" : "shutdown", scaleoutPortNum);
-    reportCommNicStatus(scaleoutPortNum, up);
+    const uint16_t port = getLogicalScaleoutPortNum(nic);
+    HLFT_WRN("Scaleout nic={} {}, scaleoutPortNum={}", nic, up ? "up" : "shutdown", port);
+
+    if (!up && m_delayedReports[port].cancel())
+    {
+        // cancel() returned true -> we had an outstanding NIC_UP event, and we removed it
+        HLFT_TRC("canceled port {} up event", port);
+        return;
+    }
+
+    if (m_failedScaleOutPortsMask[port] != up)
+    {
+        // If we are here, then we already know about the new state. For shutdown (!up), we don't expect double
+        // notification, log an error. For "up", we can get multiple notifications, as up is sent also in case of a port
+        // down (not only for shutdown), and port toggling will cause it. In this case log an info message.
+        if (!up)
+        {
+            HLFT_ERR("port={} is already marked shutdown, not expected to get another notification", port);
+        }
+        else
+        {
+            HLFT_INF("port={} is already marked up. Another notification can happen because of port toggling", port);
+        }
+
+        // In both cases there is nothing to do
+        return;
+    }
+
+    if (up)
+    {
+        if (m_delayedReports[port].cancel())
+        {
+            // cancel() returned true -> we had an outstanding NIC_UP event for this nic
+            // LKD bug ( SW-22312 ) sometimes we get NIC_UP event twice
+            // but we can tolerate this (mis)behavior
+            HLFT_WRN("LKD reported port {} up event twice, reseting the timer", port);
+        }
+
+        int64_t delay_ms = 1000 * GCFG_HCL_FAULT_TOLERANCE_FAILBACK_DELAY.value();
+        HLFT_TRC("delaying report of port {} up event for {} ms", nic, delay_ms);
+
+        m_delayedReports[port].delay_execution([=]() { m_nicReports.add(port, true); }, delay_ms);
+        return;
+    }
+
+    m_nicReports.add(port, false);
 }
 
 bool HclDeviceGaudi3::isSender(unsigned _qpi)
@@ -179,7 +215,7 @@ uint32_t HclDeviceGaudi3::getQpi(HCL_Comm comm, uint8_t nic, HCL_Rank remoteRank
 {
     const QPManagerHints hints(comm, remoteRank, nic, INVALID_QP, qpn, qpSet);
 
-    return m_qpManagers.at(nic)->getQPi(hints);
+    return getComm(comm).m_qpManagers.at(nic)->getQPi(hints);
 }
 
 uint32_t HclDeviceGaudi3::requestCollectiveQpnFromLKD(bool isScaleOut)
@@ -218,7 +254,8 @@ void HclDeviceGaudi3::reserveRankQps(HCL_Comm comm, const bool isScaleOut, const
             }
 
             LOG_HCL_DEBUG(HCL,
-                          "Allocate QP, remoteRank({}){} qpSet: {}, QPi: {}, QPn: {}",
+                          "Allocate QP, Comm={}, remoteRank({}){} qpSet: {}, QPi: {}, QPn: {}",
+                          comm,
                           remoteRank,
                           remoteRank == getMyRank(comm) ? " Loopback connection, " : "",
                           qpSet,
@@ -232,11 +269,11 @@ void HclDeviceGaudi3::reserveRankQps(HCL_Comm comm, const bool isScaleOut, const
     addQPsToQPManagerDB(comm, remoteRank, qpnArr, nic);
 }
 
-inline uint32_t HclDeviceGaudi3::createQpnInLKD(const uint32_t nic, const unsigned qpId, uint32_t coll_qpn)
+uint32_t HclDeviceGaudi3::createQpnInLKD(HCL_Comm comm, const uint32_t nic, const unsigned qpId, uint32_t coll_qpn)
 {
     auto offs = getNicToQpOffset(nic);
 
-    return g_ibv.create_qp(isSender(qpId), nic, coll_qpn + offs);
+    return g_ibv.create_qp(comm, isSender(qpId), nic, coll_qpn + offs);
 }
 
 void HclDeviceGaudi3::createRankQps(HCL_Comm    comm,
@@ -245,7 +282,12 @@ void HclDeviceGaudi3::createRankQps(HCL_Comm    comm,
                                     QpsVector&  qpnArr,
                                     const bool  isScaleOut)
 {
-    LOG_HCL_TRACE(HCL, "Processing rank={}", rank);
+    LOG_HCL_TRACE(HCL,
+                  "Processing comm={} rank={}, nics=0x{:x}, isScaleOut={}",
+                  comm,
+                  rank,
+                  (uint64_t)(nics),
+                  isScaleOut);
 
     uint8_t qpSets = getNumQpSets(isScaleOut, comm, rank);
 
@@ -297,9 +339,18 @@ void HclDeviceGaudi3::createNicQps(HCL_Comm comm, HCL_Rank rank, uint8_t nic, Qp
         {
             uint8_t qpnArrIndex = qpSetBase + i;
             if (qpnArr[qpnArrIndex] == 0) continue;
-            uint32_t qpnWithOffset = createQpnInLKD(nic, i, qpnArr[qpnArrIndex]);
+            uint32_t qpnWithOffset = createQpnInLKD(comm, nic, i, qpnArr[qpnArrIndex]);
 
             getComm(comm).m_rankInfo.remoteInfo[rank].gaudiNicQPs[nic].qp[qpSet][i] = qpnWithOffset;
+
+            LOG_HCL_TRACE(HCL,
+                          "Allocate QP, comm {} remoteRank({}){} nic: {} qpSet: {}, qpn: {}",
+                          comm,
+                          rank,
+                          getMyRank(comm) == rank ? " Loopback connection, " : "",
+                          nic,
+                          qpSet,
+                          qpnWithOffset);
         }
     }
 }
@@ -308,7 +359,7 @@ void HclDeviceGaudi3::createNicQps(HCL_Comm comm, HCL_Rank rank, uint8_t nic, Qp
 
 hcclResult_t HclDeviceGaudi3::openQpsHlsScaleUp(HCL_Comm comm)
 {
-    LOG_HCL_TRACE(HCL, "comm={}", comm);
+    LOG_HCL_DEBUG(HCL, "comm={}", comm);
 
     // comm is scale-out only, no need for internal QPs
     if (getComm(comm).getInnerRanksExclusive().size() == 0)
@@ -336,10 +387,7 @@ hcclResult_t HclDeviceGaudi3::openQpsHlsScaleUp(HCL_Comm comm)
 
 hcclResult_t HclDeviceGaudi3::openQpsScaleOut(HCL_Comm comm, const UniqueSortedVector& outerRanks)
 {
-    LOG_HCL_TRACE(HCL, "comm={}, outerRanks={}", comm, outerRanks);
-
-    // allocate scale-out QPs memory for communicator
-    allocateQPDBStorage(comm);
+    LOG_HCL_DEBUG(HCL, "comm={}, outerRanks={}", comm, outerRanks);
 
     // loop over all outer ranks
     for (auto& rank : outerRanks)
@@ -386,7 +434,7 @@ void HclDeviceGaudi3::openScaleOutMigrationQps(const HCL_Comm comm, const uint16
 
     UniqueSortedVector outerRanks;
     getOuterRanks(comm, outerRanks);
-    m_migrationQpManager->allocateMigrationQPDBStorage(comm, fromPort, getComm(comm).getCommSize());
+    getComm(comm).m_migrationQpManager.allocateMigrationQPDBStorage(comm, fromPort, getComm(comm).getCommSize());
     for (const auto rank : outerRanks)
     {
         QPManagerHints hints(comm, rank, fromPort, INVALID_QP, INVALID_QP, INVALID_QP);
@@ -400,13 +448,16 @@ void HclDeviceGaudi3::openScaleOutMigrationQps(const HCL_Comm comm, const uint16
                 qpnData[qpSet][qpi].oldNic = fromPort;
                 qpnData[qpSet][qpi].newNic = toPort;
                 hints.m_qpi                = qpi;
-                uint32_t inactiveQpn       = m_qpManagers[fromPort]->getQPn(hints);  // add offset after invalid check
+                uint32_t inactiveQpn =
+                    getComm(comm).m_qpManagers[fromPort]->getQPn(hints);  // add offset after invalid check
                 if (inactiveQpn != INVALID_QP)
                 {
                     inactiveQpn += getNicToQpOffset(fromPort);
-                    const uint32_t qpn      = g_ibv.create_migration_qp(isSender(qpi), toPort, fromPort, inactiveQpn);
-                    hints.m_qpn             = qpn;
+
+                    const uint32_t qpn = g_ibv.create_migration_qp(comm, isSender(qpi), toPort, fromPort, inactiveQpn);
+                    hints.m_qpn        = qpn;
                     qpnData[qpSet][qpi].qpn = qpn;
+
                     getComm(comm).m_rankInfo.remoteInfo[rank].gaudiNicQPs[toPort].qp[qpSet][qpi] = qpn;
                     LOG_HCL_TRACE(HCL,
                                   "New migration QP: comm {}, from nic {} to nic {} (base {}) rank {},"
@@ -427,7 +478,7 @@ void HclDeviceGaudi3::openScaleOutMigrationQps(const HCL_Comm comm, const uint16
                 }
             }
         }
-        m_migrationQpManager->addMigrationQpsToQPManagerDB(hints, qpnData);
+        getComm(comm).m_migrationQpManager.addMigrationQpsToQPManagerDB(hints, qpnData);
     }
 }
 
@@ -440,7 +491,7 @@ hcclResult_t HclDeviceGaudi3::openQpsLoopback(HCL_Comm comm)
         return hcclInvalidArgument;
     }
 
-    LOG_HCL_TRACE(HCL, "");
+    LOG_HCL_DEBUG(HCL, "comm={}", comm);
 
     // initialize nic-index mapping
     initRemoteNicsLoopback(comm);
@@ -520,16 +571,16 @@ void HclDeviceGaudi3::setInitialQpConfiguration(const HCL_Comm comm, const bool 
     hcl::SchedulersIndex sched        = isSend ? hcl::SchedulersIndex::sendScaleUp : hcl::SchedulersIndex::recvScaleUp;
     uint64_t             soAddressLSB = g3ScalManager->getInitCgNextSo();
 
-    hcl::ScalStream& stream = g3ScalManager->getScalStream(qpArchStreamIdx, (unsigned)sched, 2);
+    hcl::ScalStream& stream = m_deviceController.getScalArbUarchStream(qpArchStreamIdx, sched);
     stream.setTargetValue(0);
 
     hcl::Gen2ArchScalWrapper::CgComplex cgComplex = g3ScalManager->getCgInfo("network_scaleup_init_completion_queue");
     // Alloc Barrier
     for (auto scheduler : initCgSchedList)
     {
-        unsigned&        cgIdx    = cgComplex.cgInfo.cgIdx[(int)scheduler];
-        hcl::ScalStream& abStream = g3ScalManager->getScalStream(qpArchStreamIdx, (unsigned)scheduler, 2);
-        gaudi3Commands.serializeAllocBarrierCommand(abStream, (int)scheduler, cgIdx, 1);
+        unsigned&        cgIdx     = cgComplex.cgInfo.cgIdx[(int)scheduler];
+        hcl::ScalStream& arbStream = m_deviceController.getScalArbUarchStream(qpArchStreamIdx, scheduler);
+        gaudi3Commands.serializeAllocBarrierCommand(arbStream, (int)scheduler, cgIdx, 1);
     }
 
     // set the SO to the correct value 0x400-0x1
@@ -687,7 +738,7 @@ void HclDeviceGaudi3::openWQs()
 
 void HclDeviceGaudi3::deleteMigrationQPs(const HCL_Comm comm)
 {
-    m_migrationQpManager->releaseQpsResource(*this, comm, getComm(comm).getOuterRanksExclusive());
+    getComm(comm).m_migrationQpManager.releaseQpsResource(*this, comm, getComm(comm).getOuterRanksExclusive());
 }
 
 void HclDeviceGaudi3::setMigrationQPsRTR(const HCL_Comm comm)
@@ -695,7 +746,7 @@ void HclDeviceGaudi3::setMigrationQPsRTR(const HCL_Comm comm)
     QPManagerHints hints(comm, 0, 0, 0, 0, 0);
     QPManagerHints migratedQPhints(comm, 0, 0, 0, 0, 0);
 
-    for (unsigned nic = 0; nic < m_migrationQpManager->getNumMigrationNics(comm); nic++)
+    for (unsigned nic = 0; nic < getComm(comm).m_migrationQpManager.getNumMigrationNics(); nic++)
     {
         migratedQPhints.m_nic = nic;
         for (unsigned rank = 0; rank < getComm(comm).getCommSize(); rank++)
@@ -706,18 +757,18 @@ void HclDeviceGaudi3::setMigrationQPsRTR(const HCL_Comm comm)
             {
                 hints.m_qpSet           = qpSet;
                 migratedQPhints.m_qpSet = qpSet;
-                for (unsigned qpi = 0; qpi < m_migrationQpManager->getMaxQpsPerConnection(); qpi++)
+                for (unsigned qpi = 0; qpi < getComm(comm).m_migrationQpManager.getMaxQpsPerConnection(); qpi++)
                 {
                     hints.m_qpi           = qpi;
                     migratedQPhints.m_qpi = qpi;
-                    const unsigned qpn    = m_migrationQpManager->getQPn(migratedQPhints);
+                    const unsigned qpn    = getComm(comm).m_migrationQpManager.getQPn(migratedQPhints);
                     if (qpn != INVALID_QP)
                     {
-                        const unsigned         oldNic = m_migrationQpManager->getOldNic(migratedQPhints);
-                        const unsigned         newNic = m_migrationQpManager->getNewNic(migratedQPhints);
+                        const unsigned         oldNic = getComm(comm).m_migrationQpManager.getOldNic(migratedQPhints);
+                        const unsigned         newNic = getComm(comm).m_migrationQpManager.getNewNic(migratedQPhints);
                         const GaudiNicAddress& srcNewNic =
                             getComm(comm).m_rankInfo.device.gaudiNicAddresses.nics[newNic];
-                        unsigned migratedQpn = m_qpManagers[oldNic]->getQPn(hints);
+                        unsigned migratedQpn = getComm(comm).m_qpManagers[oldNic]->getQPn(hints);
 
                         auto offs = getNicToQpOffset(oldNic);
                         migratedQpn += offs;
@@ -739,16 +790,19 @@ void HclDeviceGaudi3::setMigrationQPsRTR(const HCL_Comm comm)
                                       qpn,
                                       migratedQpn,
                                       peerNic,
-                                      remoteQPs.qp[qpSet][getDestQpi(qpi, nic)]);
-                        g_ibv.set_migration_qp_rtr(newNic,
-                                                   qpn,
-                                                   oldNic,
-                                                   migratedQpn,
-                                                   srcNewNic.ip,
-                                                   srcNewNic.mac.u64,
-                                                   remoteNicAddress.ip,
-                                                   remoteNicAddress.mac.u64,
-                                                   remoteQPs.qp[qpSet][getDestQpi(qpi, nic)]);
+                                      remoteQPs.qp[qpSet][getComm(comm).m_qpManagers.at(nic)->getDestQPi(qpi)]);
+
+                        g_ibv.set_migration_qp_rtr(
+                            comm,
+                            newNic,
+                            qpn,
+                            oldNic,
+                            migratedQpn,
+                            srcNewNic.ip,
+                            srcNewNic.mac.u64,
+                            remoteNicAddress.ip,
+                            remoteNicAddress.mac.u64,
+                            remoteQPs.qp[qpSet][getComm(comm).m_qpManagers.at(nic)->getDestQPi(qpi)]);
                     }
                 }
             }
@@ -761,7 +815,7 @@ void HclDeviceGaudi3::setMigrationQPsRTS(const HCL_Comm comm)
     QPManagerHints hints(comm, 0, 0, 0, 0, 0);
     QPManagerHints migratedQPhints(comm, 0, 0, 0, 0, 0);
 
-    for (unsigned nic = 0; nic < m_migrationQpManager->getNumMigrationNics(comm); nic++)
+    for (unsigned nic = 0; nic < getComm(comm).m_migrationQpManager.getNumMigrationNics(); nic++)
     {
         migratedQPhints.m_nic = nic;
         for (unsigned rank = 0; rank < getComm(comm).getCommSize(); rank++)
@@ -772,21 +826,21 @@ void HclDeviceGaudi3::setMigrationQPsRTS(const HCL_Comm comm)
             {
                 hints.m_qpSet           = qpSet;
                 migratedQPhints.m_qpSet = qpSet;
-                for (unsigned qpi = 0; qpi < m_migrationQpManager->getMaxQpsPerConnection(); qpi++)
+                for (unsigned qpi = 0; qpi < getComm(comm).m_migrationQpManager.getMaxQpsPerConnection(); qpi++)
                 {
                     hints.m_qpi           = qpi;
                     migratedQPhints.m_qpi = qpi;
-                    const unsigned qpn    = m_migrationQpManager->getQPn(migratedQPhints);
+                    const unsigned qpn    = getComm(comm).m_migrationQpManager.getQPn(migratedQPhints);
                     if (qpn != INVALID_QP)
                     {
-                        const unsigned oldNic      = m_migrationQpManager->getOldNic(migratedQPhints);
-                        const unsigned newNic      = m_migrationQpManager->getNewNic(migratedQPhints);
-                        unsigned       migratedQpn = m_qpManagers[oldNic]->getQPn(hints);
+                        const unsigned oldNic      = getComm(comm).m_migrationQpManager.getOldNic(migratedQPhints);
+                        const unsigned newNic      = getComm(comm).m_migrationQpManager.getNewNic(migratedQPhints);
+                        unsigned       migratedQpn = getComm(comm).m_qpManagers[oldNic]->getQPn(hints);
 
                         auto offs = getNicToQpOffset(oldNic);
                         migratedQpn += offs;
 
-                        g_ibv.set_migration_qp_rts(newNic, qpn, oldNic, migratedQpn);
+                        g_ibv.set_migration_qp_rts(comm, newNic, qpn, oldNic, migratedQpn);
                     }
                 }
             }
@@ -798,7 +852,7 @@ void HclDeviceGaudi3::migrateQPs(const HCL_Comm comm)
 {
     QPManagerHints migratedQPhints(comm, 0, 0, 0, 0, 0);
 
-    for (unsigned nic = 0; nic < m_migrationQpManager->getNumMigrationNics(comm); nic++)
+    for (unsigned nic = 0; nic < getComm(comm).m_migrationQpManager.getNumMigrationNics(); nic++)
     {
         migratedQPhints.m_nic = nic;
         for (unsigned rank = 0; rank < getComm(comm).getCommSize(); rank++)
@@ -807,15 +861,15 @@ void HclDeviceGaudi3::migrateQPs(const HCL_Comm comm)
             for (unsigned qpSet = 0; qpSet < MAX_QPS_SETS_PER_CONNECTION; qpSet++)
             {
                 migratedQPhints.m_qpSet = qpSet;
-                for (unsigned qpi = 0; qpi < m_migrationQpManager->getMaxQpsPerConnection(); qpi++)
+                for (unsigned qpi = 0; qpi < getComm(comm).m_migrationQpManager.getMaxQpsPerConnection(); qpi++)
                 {
                     migratedQPhints.m_qpi = qpi;
-                    const unsigned qpn    = m_migrationQpManager->getQPn(migratedQPhints);
+                    const unsigned qpn    = getComm(comm).m_migrationQpManager.getQPn(migratedQPhints);
                     if (qpn != INVALID_QP)
                     {
-                        const unsigned newNic = m_migrationQpManager->getNewNic(migratedQPhints);
+                        const unsigned newNic = getComm(comm).m_migrationQpManager.getNewNic(migratedQPhints);
 
-                        g_ibv.migrate_qp(newNic, qpn);
+                        g_ibv.migrate_qp(comm, newNic, qpn);
                     }
                 }
             }
@@ -825,27 +879,11 @@ void HclDeviceGaudi3::migrateQPs(const HCL_Comm comm)
 
 void HclDeviceGaudi3::reportCommNicStatus(const uint16_t port, const bool up)
 {
+    // if comm init rank in progress, wait until it is completed (new communicator added to
+    // m_faultToleranceScaleoutComms )
+    locker_t locker(hccl_ctx.comm_init_lock());
+
     HLFT_INF("port={} is {}", port, up ? "up" : "shutdown");
-
-    const bool isPortFailed = m_failedScaleOutPortsMask[port];
-    if (isPortFailed != up)  // Note: isPortFailed is set when failed, up is set when ok
-    {
-        // If we are here, then we already know about the new state. For shutdown (!up), we don't expect double
-        // notification, log an error. For "up", we can get multiple notifications, as up is sent also in case of a port
-        // down (not only for shutdown), and port toggling will cause it. In this case log an info message.
-        if (!up)
-        {
-            HLFT_ERR("port={} is already marked shutdown, not expected to get another notification", port);
-        }
-        else
-        {
-            HLFT_INF("port={} is already marked up. Another notification can happen because of port toggling", port);
-        }
-
-        // In both cases there is nothing to do
-        return;
-    }
-
     m_failedScaleOutPortsMask[port] = !up;
 
     for (auto& comm : hccl_ctx.comms())
@@ -853,8 +891,7 @@ void HclDeviceGaudi3::reportCommNicStatus(const uint16_t port, const bool up)
         hccl_communicator&      hcclCommunicator(*(comm.second.get()));
         HclDynamicCommunicator& dynamicComm(*(hcclCommunicator.getDynamicComm()));
         const HCL_Comm          commId = dynamicComm;
-
-        if (!dynamicComm.isCommunicatorMultiScaleupGroup())  // for scaleup, don't do failover
+        if (m_faultToleranceScaleoutComms.find(commId) == m_faultToleranceScaleoutComms.end())
         {
             HLFT_TRC("Skipping scaleup only comm {}, myRank={}", commId, dynamicComm.getMyRank());
             continue;
@@ -887,15 +924,209 @@ const eIbvNicPhysicalState HclDeviceGaudi3::getNicPhysicalState(const uint32_t n
 
 extern std::unordered_map<HCL_Comm, spHcclCoordinatorClient> g_hcclCordClient;
 
-void HclDeviceGaudi3::updateMigrationQpsToRts(HCL_Comm comm)
+void HclDeviceGaudi3::updateMigrationQpsToRts(const CommIds& commIds)
 {
-    HLFT_INF("---comm: {} move to RTR", comm);
-    setMigrationQPsRTR(comm);
-    HLFT_INF("---comm: {} mQP moved to RTR", comm);
-    setMigrationQPsRTS(comm);
-    HLFT_INF("---comm: {} moved mQP to RTS", comm);
-    g_hcclCordClient[comm]->rendezvous();
-    HLFT_INF("---comm: {} rendezvous done", comm);
-    migrateQPs(comm);
-    HLFT_INF("---comm: {} QP migration done", comm);
+    HLFT_COMM_HDR_INF("move to RTR", commIds);
+    setMigrationQPsRTR(commIds.commId);
+    HLFT_COMM_HDR_INF("mQP moved to RTR", commIds);
+    setMigrationQPsRTS(commIds.commId);
+    HLFT_COMM_HDR_INF("moved mQP to RTS", commIds);
+    g_hcclCordClient[commIds.commId]->rendezvous();
+    HLFT_COMM_HDR_INF("rendezvous done", commIds);
+    migrateQPs(commIds.commId);
+    HLFT_COMM_HDR_INF("QP migration done", commIds);
+}
+
+void HclDeviceGaudi3::faultToleranceCommInit(const HCL_Comm comm)
+{
+    LOG_HCL_TRACE(HCL, "---comm {}", comm);
+    HclDynamicCommunicator& dynamicComm = getComm(comm);
+    if (dynamicComm.isCommunicatorMultiScaleupGroup())
+    {
+        LOG_HCL_TRACE(HCL, "Adding scaleout comm {}", comm);
+        m_faultToleranceScaleoutComms.insert(comm);
+    }
+}
+
+hcclResult_t HclDeviceGaudi3::destroyComm(HCL_Comm comm, bool force)
+{
+    LOG_HCL_TRACE(HCL, "---comm {}", comm);
+    HclDeviceGen2Arch::destroyComm(comm, force);
+    {
+        LOG_HCL_TRACE(HCL, "Removing comm {}", comm);
+        m_faultToleranceScaleoutComms.erase(comm);
+        s_faultToleranceGroupScaleoutComms.erase(comm);
+    }
+
+    return hcclSuccess;
+}
+
+// Group API can continue (return true from here) if at least one scaleout comm counters are less than the targets
+// If at least one is less, we should unblock the group API's
+// We assume in the group we advance the counters for all the scaleout comms at the same time
+// Note this function can run on multiple aggregator threads
+//
+bool HclDeviceGaudi3::checkFaultToleranceGroupEndAllCommsUntil() const
+{
+    if (s_faultToleranceGroupScaleoutComms.size() == 0)
+    {
+        HLFT_TRC("No scaleout comms, return true");
+        return true;
+    }
+
+    HLFT_TRC("Checking group scaleout comms, size={}", s_faultToleranceGroupScaleoutComms.size());
+    bool     groupApiCanContinue = false;
+    unsigned commsIgnored        = 0;
+    for (const HCL_Comm commId : s_faultToleranceGroupScaleoutComms)
+    {
+        const HclDynamicCommunicator& dynamicComm = getComm(commId);
+        const hccl_communicator&      hcclCommunicator(*(hccl_ctx.communicator(dynamicComm.getCommHandle())));
+
+        const TargetCountersCheckResult targetCountersCheckResult =
+            hcclCommunicator.checkFaultToleranceStopCommSendRecvApiUntil();
+
+        if (targetCountersCheckResult == TargetCountersCheckResult::FT_TARGET_COUNTERS_CHECK_RESULT_IGNORE)
+        {
+            commsIgnored++;
+            continue;  // Ignore this comm
+        }
+        else
+        {
+            const bool thisCommShouldContinue =
+                (targetCountersCheckResult == TargetCountersCheckResult::FT_TARGET_COUNTERS_CHECK_RESULT_LESS_THAN);
+            groupApiCanContinue |= thisCommShouldContinue;
+            HLFT_TRC("commId={}, thisCommShouldContinue={}, groupApiCanContinue={}, commsIgnored={}",
+                     commId,
+                     thisCommShouldContinue,
+                     groupApiCanContinue,
+                     commsIgnored);
+            if (thisCommShouldContinue)  // If at least one comm should continue, we should continue
+            {
+                HLFT_TRC("commId={}, return true", commId);
+                return true;
+            }
+        }
+    }
+    if (commsIgnored == s_faultToleranceGroupScaleoutComms.size())
+    {
+        HLFT_TRC("All comms ignored, return true");
+        return true;  // All comms ignored, we can continue
+    }
+    HLFT_TRC("At least one comm has reached target, commsIgnored={}, return false", commsIgnored);
+    return groupApiCanContinue;  // Group API should block (return false)
+}
+
+void HclDeviceGaudi3::faultToleranceContinueGroupEndApiUntil()
+{
+    HLFT_TRC("Stop API check");
+
+    std::unique_lock<std::mutex> lk(m_faultsStopGroupEndApiMutex);
+    HLFT_DBG("Before CV wait, s_faultToleranceGroupScaleoutComms.size={}", s_faultToleranceGroupScaleoutComms.size());
+
+    m_faultsStopGroupEndApiCv.wait(lk, [this] {
+        return (checkFaultToleranceGroupEndAllCommsUntil());
+    }); /* The condition inside wait() must be true in order for unblock.
+           Unblock if any of the current scaleout comms group s/r counters did not reach yet their target.
+           Assumes all comms in the group advance with same API's.
+           If any comm target is 0 we will block forever */
+
+    HLFT_INF("After CV wait, User API thread is unblocked");
+}
+
+void HclDeviceGaudi3::handleFaultToleranceGroupEndApi()
+{
+    LOG_HCL_TRACE(HCL,
+                  "Started, s_faultToleranceGroupScaleoutComms.size={}",
+                  s_faultToleranceGroupScaleoutComms.size());
+
+    if (g_faultsCheckStopApi.load())
+    {
+        faultToleranceContinueGroupEndApiUntil();  // If no scaleout comms, will not block
+    }
+
+    // Increment s/r counters for entire group of scaleout comms
+    for (const auto comm : s_faultToleranceGroupScaleoutComms)  // Iterate over all group scaleout comms and increment
+                                                                // their S/R group API counters
+    {
+        HclDynamicCommunicator& dynamicComm = getComm(comm);
+        dynamicComm.updateApiSendRecvCounters();
+        LOG_HCL_TRACE(HCL, "Increase group s/r counters for comm={}", comm);
+    }
+}
+
+void HclDeviceGaudi3::faultToleranceNotifyGroupApis()
+{
+    HLFT_API_INF("--- Performing notify group APIs");
+    // Notify user API thread to resume
+    {
+        std::lock_guard<std::mutex> lk(m_faultsStopGroupEndApiMutex);  // Remove ???
+    }
+    m_faultsStopGroupEndApiCv.notify_all();
+    HLFT_DBG("After notify");
+}
+
+void HclDeviceGaudi3::clearScaleoutCommsCurrentGroup()
+{
+    LOG_HCL_DEBUG(HCL, "Clearing scaleout comms current group");
+    s_faultToleranceGroupScaleoutComms.clear();
+}
+
+void HclDeviceGaudi3::addScaleoutCommsCurrentGroup(const HCL_Comm hclCommId)
+{
+    LOG_HCL_DEBUG(HCL, "Adding scaleout comm {} to current group", hclCommId);
+    s_faultToleranceGroupScaleoutComms.insert(hclCommId);
+}
+
+void HclDeviceGaudi3::destroy()
+{
+    for (auto& report : m_delayedReports)
+    {
+        report.cancel();
+    }
+
+    HclDeviceGen2Arch::destroy();
+}
+
+void HclDeviceGaudi3::setQpManagersForComm(const HCL_Comm comm, const size_t commSize)
+{
+    std::shared_ptr<QPManagerGaudi3ScaleUp>  qpManagerScaleUp  = std::make_shared<QPManagerGaudi3ScaleUp>(*this);
+    std::shared_ptr<QPManagerGaudi3ScaleOut> qpManagerScaleOut = std::make_shared<QPManagerGaudi3ScaleOut>(*this);
+
+    if (!m_scaleoutProvider || !m_scaleoutProvider->isHostNic())
+    {
+        qpManagerScaleOut->resizeDBPerComm(commSize);
+    }
+
+    for (unsigned nic = 0; nic < MAX_NICS_GEN2ARCH; nic++)
+    {
+        if (isScaleOutPort(nic /*, HCL_Comm comm*/))
+        {
+            getComm(comm).m_qpManagers.at(nic) = qpManagerScaleOut;
+        }
+        else
+        {
+            getComm(comm).m_qpManagers.at(nic) = qpManagerScaleUp;
+        }
+    }
+}
+
+uint32_t HclDeviceGaudi3::getCollectiveQpi(const HCL_CollectiveOp collectiveOp, const bool isSend)
+{
+    switch (collectiveOp)
+    {
+        case eHCLReduceScatter:
+            return isSend ? G3::QP_e::QPE_RS_SEND : G3::QP_e::QPE_RS_RECV;
+            break;
+        case eHCLAllGather:
+            return isSend ? G3::QP_e::QPE_AG_SEND : G3::QP_e::QPE_AG_RECV;
+            break;
+        case eHCLAll2All:
+            return isSend ? G3::QP_e::QPE_A2A_SEND : G3::QP_e::QPE_A2A_RECV;
+            break;
+        default:
+            VERIFY(false, "invalid op({})", collectiveOp);
+    }
+
+    VERIFY(false, "unreachable code");
+    return 0;
 }

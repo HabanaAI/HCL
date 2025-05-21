@@ -26,6 +26,9 @@ protected:
     };
 
 protected:
+    HCL_Comm comm_id_ = HCL_INVALID_COMM;
+
+protected:
     asio_t     asio_;
     acceptor_t srv_;
 
@@ -57,3 +60,10 @@ public:
 
     bool stop();
 };
+
+#define HCL_COORD_LOG(FMT, ...) COORD_LOG("[comm:{:2}] " FMT, comm_id_, ##__VA_ARGS__)
+#define HCL_COORD_DBG(FMT, ...) COORD_DBG("[comm:{:2}] " FMT, comm_id_, ##__VA_ARGS__)
+#define HCL_COORD_INF(FMT, ...) COORD_INF("[comm:{:2}] " FMT, comm_id_, ##__VA_ARGS__)
+#define HCL_COORD_WRN(FMT, ...) COORD_WRN("[comm:{:2}] " FMT, comm_id_, ##__VA_ARGS__)
+#define HCL_COORD_ERR(FMT, ...) COORD_ERR("[comm:{:2}] " FMT, comm_id_, ##__VA_ARGS__)
+#define HCL_COORD_CRT(FMT, ...) COORD_CRT("[comm:{:2}] " FMT, comm_id_, ##__VA_ARGS__)

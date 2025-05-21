@@ -15,10 +15,12 @@ public:
 
     bool listen(const sockaddr_t& addr);
 
+    virtual std::string str() const override;
+
 protected:
     bool accept();
 
 private:
-    virtual bool send([[maybe_unused]] void* data, [[maybe_unused]] size_t size) override { return false; }
-    virtual bool recv([[maybe_unused]] void* data, [[maybe_unused]] size_t size) override { return false; }
+    virtual bool send(void*, size_t) override { return false; }
+    virtual bool recv(void*, size_t) override { return false; }
 };

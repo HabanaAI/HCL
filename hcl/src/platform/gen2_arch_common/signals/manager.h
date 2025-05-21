@@ -81,7 +81,7 @@ private:
     };
 
 public:
-    SignalsManager(HclGraphSyncGen2Arch& graphSync, Gen2ArchScalUtils* utils, unsigned cgSize, unsigned archStream);
+    SignalsManager(HclGraphSyncGen2Arch& graphSync, Gen2ArchScalUtils* utils, unsigned cgSize);
     virtual ~SignalsManager() = default;
 
     void initialize(CommonState* commonState, uint64_t cuid);
@@ -102,7 +102,7 @@ public:
     void enqueueInternalCompletion(SignalEvent signalEvent);
 
     void allocateResources();
-    void updateCompletionTracker(uint64_t targetValue, uint64_t cuid);
+    void updateCompletionTracker(uint64_t targetValue);
     void printGraph();
     bool isGraphLoaded() { return !m_graph->m_firstUse && !m_graph->m_firstCollective; }
     void invalidateCommCache(const HCL_Comm comm);
@@ -120,7 +120,7 @@ public:
     bool isEventRegistered(SignalEvent signalEvent);
 
     void                                                           markMethodForCleanup(WaitMethod waitMethod);
-    const std::array<bool, (unsigned)WaitMethod::WAIT_METHOD_MAX>& getMethodsToClean() const;
+    const std::array<bool, (unsigned)WaitMethod::WAIT_METHOD_MAX>& getWaitMethodsToClean() const;
 
     void DFA(uint64_t deviceTargetValue);
 
@@ -132,11 +132,11 @@ private:
         std::array<SignalWaitEvent, (unsigned)WaitEvent::WAIT_EVENT_MAX> m_events;
         std::array<llvm_vecsmall::SmallVector<SignalDescription*, 8>, (unsigned)SignalEvent::SIGNAL_EVENT_MAX>
                                                                                                       m_signals;
-        std::array<std::array<WaitPhaseEntry, WAIT_PHASE_MAX>, (unsigned)WaitMethod::WAIT_METHOD_MAX> m_methods {};
+        std::array<std::array<WaitPhaseEntry, WAIT_PHASE_MAX>, (unsigned)WaitMethod::WAIT_METHOD_MAX> m_waitMethods {};
 
         uint32_t m_requestedEventsBitmap = 0;
 
-        std::array<bool, (unsigned)WaitMethod::WAIT_METHOD_MAX> m_methodsToClean {};
+        std::array<bool, (unsigned)WaitMethod::WAIT_METHOD_MAX> m_waitMethodsToClean {};
 
         bool m_firstUse        = true;
         bool m_firstCollective = true;
@@ -172,7 +172,6 @@ private:
             };
             llvm_vecsmall::SmallVector<Signal, 8> signals;
         };
-        uint64_t                                                           cuid;
         std::array<CompletionEntry, (unsigned)WaitMethod::WAIT_METHOD_MAX> entries;
     };
     std::vector<CompletionTracker> m_completionTracker;
@@ -181,7 +180,6 @@ private:
     Gen2ArchScalUtils*    m_utils;
 
     const unsigned m_cgSize;
-    unsigned       m_archStream;
     bool           m_allowGraphCaching = false;
 
     CommonState* m_commonState   = nullptr;

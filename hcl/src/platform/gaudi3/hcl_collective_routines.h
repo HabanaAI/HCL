@@ -13,7 +13,7 @@
 class HclCommandsGaudi3;
 class HclDeviceGaudi3;
 class HclDynamicCommunicator;
-class DeviceBufferManager;
+class DeviceSimbPoolManagerBase;
 class ScaleoutProvider;
 
 namespace hcl
@@ -63,7 +63,7 @@ public:
 class HclCollectiveRoutinesGaudi3 : public HclCollectiveRoutinesGen2Arch
 {
 public:
-    HclCollectiveRoutinesGaudi3(HclDeviceGaudi3* device, int streamId, WqeTracker* wqeTracker);
+    HclCollectiveRoutinesGaudi3(HclDeviceGaudi3* device, int archStreamIdx, WqeTracker* wqeTracker);
     virtual ~HclCollectiveRoutinesGaudi3();
 
     virtual void createScaleUpSendRecvOp(hcl::ScalStreamBase& scalStream,
@@ -100,7 +100,7 @@ public:
                                     [[maybe_unused]] SliceState&      recvSliceState,
                                     [[maybe_unused]] unsigned int     sizeInBytes,
                                     [[maybe_unused]] hcclDataType_t   dataType,
-                                    [[maybe_unused]] hcl::ScalStream* garbageStream) override {};
+                                    [[maybe_unused]] hcl::ScalStream& garbageStream) override {};
 
     HclDeviceGaudi3& getDevice() { return *(reinterpret_cast<HclDeviceGaudi3*>(m_device)); }
 

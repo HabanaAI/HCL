@@ -1,12 +1,12 @@
 #include "hcl_address_generator.h"
 
 #include <cstdint>                                            // for uint64_t
-#include "device_buffer_manager.h"                            // for BUFFER POOLS
+#include "device_simb_pool_manager.h"                         // for BUFFER POOLS
 #include "platform/gen2_arch_common/commands/hcl_commands.h"  // for HclCommandsGen2Arch
 #include "hcl_dynamic_communicator.h"                         // for HclDyna...
 #include "platform/gen2_arch_common/collective_states.h"
 #include "hcl_api_types.h"
-#include "platform/gen2_arch_common/device_buffer_manager.h"
+#include "platform/gen2_arch_common/device_simb_pool_manager.h"
 #include "hcl_math_utils.h"
 #include "explicit_addr_container.h"
 
@@ -19,8 +19,8 @@ HclAddressGenerator::HclAddressGenerator()
 
 uint64_t HclAddressGenerator::generateScaleUpRecvIndices(CommonState& commonState, uint32_t streamId)
 {
-    return commonState.m_intermediateBufferManager.getSliceId(SCALEUP_AND_ALL2ALL_POOL,
-                                                              streamId);  // Accu buffer
+    return commonState.m_deviceSimbPoolManager.getSliceId(SCALEUP_AND_ALL2ALL_POOL,
+                                                          streamId);  // Accu buffer
 }
 
 uint64_t HclAddressGenerator::generateScaleUpRecvAddress(CommonState&     commonState,
@@ -494,7 +494,7 @@ uint64_t HclAddressGenerator::generateMemcpyDstAddress(CommonState& commonState,
                     uint64_t sizeOfSlice =
                         (commonState.calcScaleoutBufferPool() == SCALEOUT_POOL)
                             ? 0
-                            : commonState.m_intermediateBufferManager.getSingleBufferSize(SCALEOUT_ACC_POOL);
+                            : commonState.m_deviceSimbPoolManager.getSingleBufferSize(SCALEOUT_ACC_POOL);
                     addr = intermediateBufferBaseAddress + sizeOfSlice;
                 }
                 else if (commonState.m_collectiveOp == eHCLReduce && !commonState.isRoot())
@@ -569,9 +569,9 @@ uint64_t HclAddressGenerator::generateIntermediateAddress(CommonState&   commonS
                                                           unsigned       bufferOffset)
 {
     // Use stream 0 anyway, as the offset to the current stream will be added with the base
-    unsigned indexOfSubBuffer = commonState.m_intermediateBufferManager.getSliceId(poolIdx, 0) + bufferOffset;
-    uint64_t intermediateBufferBaseAddress = commonState.m_intermediateBufferManager.getBufferBaseAddr(poolIdx);
-    uint64_t sizeOfSlice                   = commonState.m_intermediateBufferManager.getSingleBufferSize(poolIdx);
+    unsigned indexOfSubBuffer              = commonState.m_deviceSimbPoolManager.getSliceId(poolIdx, 0) + bufferOffset;
+    uint64_t intermediateBufferBaseAddress = commonState.m_deviceSimbPoolManager.getBufferBaseAddr(poolIdx);
+    uint64_t sizeOfSlice                   = commonState.m_deviceSimbPoolManager.getSingleBufferSize(poolIdx);
 
     // BASE_ADDRESS + SLICE * INDEX + SLICE*MY_RANK
     uint64_t calculatedAddress = intermediateBufferBaseAddress + sizeOfSlice * indexOfSubBuffer;

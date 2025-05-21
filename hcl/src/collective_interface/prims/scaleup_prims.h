@@ -8,6 +8,14 @@
 class IHcclGraphEngine;
 class HcclGraph;
 
+struct ScaleupPrimArgs
+{
+    uint64_t    sendAddr;
+    uint64_t    recvAddr;
+    BufferToken recvHandle;
+    uint64_t    inCnt;
+};
+
 /**
  * @class HcclScaleupPrim
  * @brief A pure virtual interface for scale-up operation
@@ -18,6 +26,8 @@ class HcclGraph;
 class HcclScaleupPrim : public HcclPrim
 {
 public:
+    HcclScaleupPrim(ScaleupPrimArgs& args);
+    HcclScaleupPrim(ScaleupPrimArgs&& args);
     HcclScaleupPrim(uint64_t sendAddr, uint64_t recvAddr, uint64_t inCnt);
     HcclScaleupPrim(uint64_t sendAddr, BufferToken recvHandle, uint64_t inCnt);
 
@@ -88,26 +98,22 @@ private:
     const bool m_isRoot;
 };
 
+struct ReduceScatterPrimArgs
+{
+    ScaleupPrimArgs scaleupArg;
+    bool            castUp = false;
+};
+
 class HcclPrimReduceScatter : public HcclScaleupPrim
 {
 public:
     /**
      * @brief Constructs reduce-scatter scaleup operation primitive.
      *
-     * @param sendAddr address of input data to gather.
-     * @param recvAddr address of output data.
-     * @param inCnt number of elements to apply.
+     * @param args set of params for scaleup reduce-scatter operation.
      */
-    HcclPrimReduceScatter(uint64_t sendAddr, uint64_t recvAddr, uint64_t inCnt);
-
-    /**
-     * @brief Constructs reduce-scatter scaleup operation primitive.
-     *
-     * @param sendAddr address of input data to gather.
-     * @param recvHandle token for memory buffer of output data.
-     * @param inCnt number of elements to apply.
-     */
-    HcclPrimReduceScatter(uint64_t sendAddr, BufferToken recvHandle, uint64_t inCnt);
+    HcclPrimReduceScatter(ReduceScatterPrimArgs& args);
+    HcclPrimReduceScatter(ReduceScatterPrimArgs&& args);
 
     virtual hcclResult_t   process(IHcclGraphEngine* engine) override;
     virtual void           init(HcclGraph* graph, int idx) override;
@@ -115,7 +121,9 @@ public:
     virtual signalEvents_t getSignalEvents() override;
 
     inline uint64_t getCountPerRank() { return m_scaleupCountPerRank; }
+    inline bool     castUp() const { return m_castUp; }
 
 private:
     uint64_t m_scaleupCountPerRank = 0;
+    bool     m_castUp              = false;
 };

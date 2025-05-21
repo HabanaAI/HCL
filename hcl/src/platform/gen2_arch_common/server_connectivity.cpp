@@ -4,8 +4,7 @@
 #include <cstdint>  // for uint*_t
 #include <memory>   // for allocator_traits<>::value_type
 
-#include "platform/gen2_arch_common/types.h"                      // for GEN2ARCH_HLS_BOX_SIZE
-#include "platform/gen2_arch_common/server_connectivity_types.h"  // for Gen2ArchNicsDeviceSingleConfig, ServerNicsConnectivityArray
+#include "platform/gen2_arch_common/server_connectivity_types.h"  // for Gen2ArchNicsDeviceSingleConfig, ServerNicsConnectivityVector
 #include "platform/gen2_arch_common/server_connectivity_user_config.h"  // for ServerConnectivityUserConfig
 #include "platform/gen2_arch_common/runtime_connectivity.h"             // for Gen2ArchRuntimeConnectivity
 #include "platform/gen2_arch_common/hcl_device_config.h"                // for HclDeviceConfig
@@ -43,30 +42,32 @@ static const Gen2ArchNicsDeviceSingleConfig s_dummyTestDeviceSingleConfig = {
     std::make_tuple(SCALEOUT_DEVICE_ID, 23, 2),       // NIC=23
 };
 
-const ServerNicsConnectivityArray g_dummyTestDeviceServerNicsConnectivity = {s_dummyTestDeviceSingleConfig,
-                                                                             s_dummyTestDeviceSingleConfig,
-                                                                             s_dummyTestDeviceSingleConfig,
-                                                                             s_dummyTestDeviceSingleConfig,
-                                                                             s_dummyTestDeviceSingleConfig,
-                                                                             s_dummyTestDeviceSingleConfig,
-                                                                             s_dummyTestDeviceSingleConfig,
-                                                                             s_dummyTestDeviceSingleConfig};
+const ServerNicsConnectivityVector g_dummyTestDeviceServerNicsConnectivity = {s_dummyTestDeviceSingleConfig,
+                                                                              s_dummyTestDeviceSingleConfig,
+                                                                              s_dummyTestDeviceSingleConfig,
+                                                                              s_dummyTestDeviceSingleConfig,
+                                                                              s_dummyTestDeviceSingleConfig,
+                                                                              s_dummyTestDeviceSingleConfig,
+                                                                              s_dummyTestDeviceSingleConfig,
+                                                                              s_dummyTestDeviceSingleConfig};
 
-Gen2ArchServerConnectivity::Gen2ArchServerConnectivity(const int                          fd,
-                                                       const int                          moduleId,
-                                                       const bool                         useDummyConnectivity,
-                                                       const ServerNicsConnectivityArray& serverNicsConnectivityArray,
-                                                       HclDeviceConfig&                   deviceConfig)
+Gen2ArchServerConnectivity::Gen2ArchServerConnectivity(const int                           fd,
+                                                       const int                           moduleId,
+                                                       const bool                          useDummyConnectivity,
+                                                       const ServerNicsConnectivityVector& serverNicsConnectivityVector,
+                                                       HclDeviceConfig&                    deviceConfig)
 : m_fd(fd),
   m_moduleId(moduleId),
   m_useDummyConnectivity(useDummyConnectivity),
-  m_serverNicsConnectivityArray(serverNicsConnectivityArray),
-  m_deviceConfig(deviceConfig)
+  m_serverNicsConnectivityVector(serverNicsConnectivityVector),
+  m_deviceConfig(deviceConfig),
+  m_numberOfDevicesPerHost(serverNicsConnectivityVector.size()),
+  m_usersConnectivityConfig(serverNicsConnectivityVector.size())
 {
     LOG_HCL_DEBUG(HCL, "ctor, fd={}, moduleId={}, useDummyConnectivity={}", fd, moduleId, useDummyConnectivity);
     if (fd >= 0)
     {
-        VERIFY(moduleId < GEN2ARCH_HLS_BOX_SIZE, "Unexpected module id {}", moduleId);
+        VERIFY(moduleId < (int)getNumberOfDevicesPerHost(), "Unexpected module id {}", moduleId);
     }
 }
 
@@ -102,7 +103,7 @@ void Gen2ArchServerConnectivity::init(const bool readLkdPortsMask)
     m_commsRuntimeConnectivity[DEFAULT_COMM_ID].reset(createRuntimeConnectivityFactory(m_moduleId,
                                                                                        DEFAULT_COMM_ID,  // hclCommId,
                                                                                        *this));
-    m_commsRuntimeConnectivity[DEFAULT_COMM_ID]->init(m_serverNicsConnectivityArray,
+    m_commsRuntimeConnectivity[DEFAULT_COMM_ID]->init(m_serverNicsConnectivityVector,
                                                       m_usersConnectivityConfig,
                                                       readLkdPortsMask);
 }

@@ -36,5 +36,10 @@ constexpr uint32_t MAX_HNIC_CONNECTIONS         = HOST_MICRO_ARCH_STREAMS;
 constexpr uint32_t MAX_HNIC_CONNECTION_SETS     = 16;  // Limited by qpSetIndex size (4 bits)
 constexpr uint32_t MAX_COMPACT_RANK_BACKUP_NICS = 2;
 
+// Maximum number of devices per host
+constexpr uint32_t MAX_MODULES_IDS_PER_SERVER = 16;
+
 constexpr int SINGLE_QP_SET_INDEX = 0;
 constexpr int SINGLE_QP_SET       = 1;
+
+constexpr uint32_t INVALID_SCHED = (uint32_t)-1;

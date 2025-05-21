@@ -22,7 +22,13 @@ HLS2PCIEServerDef::HLS2PCIEServerDef(const int        fd,
                                      const bool       isUnitTest)
 : Gen2ArchServerDef(fd, moduleId, HLS2PCIE_NUM_DEVICES, HLS2PCIE_SCALEUP_GROUP_SIZE, deviceConfig, isUnitTest)
 {
-    LOG_HCL_DEBUG(HCL, "ctor, fd={}, moduleId={}, isUnitTest={}", fd, moduleId, isUnitTest);
+    fillModuleIds();  // Overwrite parent class defaults
+    LOG_HCL_DEBUG(HCL,
+                  "ctor, fd={}, moduleId={}, isUnitTest={}, m_hwModuleIds={}",
+                  fd,
+                  moduleId,
+                  isUnitTest,
+                  m_hwModuleIds);
 }
 
 void HLS2PCIEServerDef::init()
@@ -33,7 +39,17 @@ void HLS2PCIEServerDef::init()
     m_serverConnectivity->init(true);
 
     m_halShared        = std::make_shared<hcl::Gaudi2Hal>();
-    m_deviceController = std::make_unique<HclDeviceControllerGaudi2>(m_fd, m_halShared->getMaxStreams());
+    m_deviceController = std::make_unique<HclDeviceControllerGaudi2>(m_fd, m_halShared->getMaxArchStreams());
     m_device = m_fd >= 0 ? std::make_unique<HclDeviceGaudi2>(*m_deviceController, m_deviceConfig, m_halShared, *this)
                          : nullptr;
+}
+
+void HLS2PCIEServerDef::fillModuleIds()
+{
+    m_hwModuleIds.clear();
+    const HCL_HwModuleId moduleIdForFill = m_moduleId >= 0 ? (HCL_HwModuleId)m_moduleId : 0;
+    HCL_HwModuleId       n((moduleIdForFill >= HLS2PCIE_SCALEUP_GROUP_SIZE) ? HLS2PCIE_SCALEUP_GROUP_SIZE : 0);
+    std::generate_n(std::inserter(m_hwModuleIds, m_hwModuleIds.begin()), HLS2PCIE_SCALEUP_GROUP_SIZE, [n]() mutable {
+        return n++;
+    });
 }

@@ -90,10 +90,24 @@ HCCL_API_CALL const char* hcclGetErrorString_impl(hcclResult_t result)
     
 }
 
+HCCL_API_CALL const char* hcclGetLastErrorMessage_impl()
+{
+    
+        return (HclGen2::hcclGetLastErrorMessage_impl());
+    
+}
+
 hcclResult_t HCCL_API_CALL hcclCommGetAsyncError_impl(hcclComm_t comm, hcclResult_t* asyncError)
 {
     
         return (HclGen2::hcclCommGetAsyncError_impl(comm, asyncError));
+    
+}
+
+HCCL_API_CALL const char* hcclCommGetAsyncErrorMessage_impl(hcclComm_t comm)
+{
+    
+        return (HclGen2::hcclCommGetAsyncErrorMessage_impl(comm));
     
 }
 

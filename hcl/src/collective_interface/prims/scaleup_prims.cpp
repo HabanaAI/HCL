@@ -2,6 +2,16 @@
 #include "collective_interface/hccl_graph.h"
 #include "hcl_math_utils.h"
 
+HcclScaleupPrim::HcclScaleupPrim(ScaleupPrimArgs& args)
+: m_sendAddr(args.sendAddr), m_recvAddr(args.recvAddr), m_recvBufferToken(args.recvHandle), m_inCnt(args.inCnt)
+{
+}
+
+HcclScaleupPrim::HcclScaleupPrim(ScaleupPrimArgs&& args)
+: m_sendAddr(args.sendAddr), m_recvAddr(args.recvAddr), m_recvBufferToken(args.recvHandle), m_inCnt(args.inCnt)
+{
+}
+
 HcclScaleupPrim::HcclScaleupPrim(uint64_t sendAddr, uint64_t recvAddr, uint64_t inCnt)
 : m_sendAddr(sendAddr), m_recvAddr(recvAddr), m_inCnt(inCnt)
 {
@@ -98,13 +108,13 @@ void HcclPrimBroadcast::updateCounts()
     m_graph->sendSlice().m_boxCount = m_graph->recvSlice().m_boxCount = (inputCount() * m_scaleupGroupSize);
 }
 
-HcclPrimReduceScatter::HcclPrimReduceScatter(uint64_t sendAddr, uint64_t recvAddr, uint64_t inCnt)
-: HcclScaleupPrim(sendAddr, recvAddr, inCnt)
+HcclPrimReduceScatter::HcclPrimReduceScatter(ReduceScatterPrimArgs& args)
+: HcclScaleupPrim(args.scaleupArg), m_castUp(args.castUp)
 {
 }
 
-HcclPrimReduceScatter::HcclPrimReduceScatter(uint64_t sendAddr, BufferToken recvHandle, uint64_t inCnt)
-: HcclScaleupPrim(sendAddr, recvHandle, inCnt)
+HcclPrimReduceScatter::HcclPrimReduceScatter(ReduceScatterPrimArgs&& args)
+: HcclScaleupPrim(args.scaleupArg), m_castUp(args.castUp)
 {
 }
 

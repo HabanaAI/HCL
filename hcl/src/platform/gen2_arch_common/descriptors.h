@@ -46,24 +46,27 @@ protected:
 class BarrierArbitratorDescriptor : public Descriptor
 {
 public:
-    explicit BarrierArbitratorDescriptor(HclCollectiveRoutinesGen2Arch& collectiveRoutines,
-                                         ScaleoutProvider&              scaleoutProvider,
-                                         hcl::ScalStream&               currentStream,
-                                         hcl::ScalStream&               arbitratorStream,
-                                         int                            archStreamIdx,
-                                         unsigned                       uarchstreamIdx,
-                                         unsigned                       schedIdx,
-                                         unsigned                       requiredCredits,
-                                         hcl::syncInfo&                 longSo);
+    explicit BarrierArbitratorDescriptor(
+        HclCollectiveRoutinesGen2Arch&                                    collectiveRoutines,
+        ScaleoutProvider&                                                 scaleoutProvider,
+        hcl::ScalStream&                                                  currentStream,
+        hcl::ScalStream&                                                  arbitratorStream,
+        int                                                               archStreamIdx,
+        unsigned                                                          uarchstreamIdx,
+        unsigned                                                          schedIdx,
+        unsigned                                                          requiredCredits,
+        hcl::syncInfo&                                                    longSo,
+        const llvm_vecsmall::SmallVector<unsigned, MAX_STREAM_PER_SCHED>& activeStreams);
     virtual ~BarrierArbitratorDescriptor() = default;
 
     virtual void run(SliceState& sliceState) override;
     virtual void run(NonCollectiveState& nonCollectiveState) override;
 
 protected:
-    hcl::ScalStream& m_arbitratorStream;
-    unsigned         m_requiredCredits;
-    hcl::syncInfo&   m_longSo;
+    hcl::ScalStream&                                           m_arbitratorStream;
+    unsigned                                                   m_requiredCredits;
+    hcl::syncInfo&                                             m_longSo;
+    llvm_vecsmall::SmallVector<unsigned, MAX_STREAM_PER_SCHED> m_activeStreams;
 };
 
 class NativeScaleoutDescriptor : public Descriptor

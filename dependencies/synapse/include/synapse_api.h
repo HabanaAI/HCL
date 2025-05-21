@@ -2915,6 +2915,51 @@ synStatus SYN_API_CALL synDumpStateAndTerminate(const char* msg, uint64_t flags)
  */
 synStatus SYN_API_CALL synUpdateMemoryConsumption(uint64_t usedMem, uint64_t timestampSec);
 
+/*!
+ ***************************************************************************************************
+ * @brief Returns the last error from the last synapse API call
+ *
+ * Returns the last error from a runtime call in the host thread.
+ * The function is thread-safe. The error code resides in the host thread.
+ *
+ * @return             The error code of last synapse API function
+ ***************************************************************************************************
+ */
+synStatus SYN_API_CALL synGetLastError();
+
+/*!
+ ****************************************************************************************************
+ * @brief Returns a string representing the synapse error code
+ *
+ * The function is thread-safe. The returned string is valid till the end of the program. No need to free it.
+ *
+ * @param status  [in] synapse error code
+ *
+ * @return             string describing synapse error code
+ ***************************************************************************************************
+ */
+const char* SYN_API_CALL synGetErrorString(synStatus status);
+
+/*!
+ ***************************************************************************************************
+ * @brief Returns a detailed error message (if available) from the last synapse API call
+ *
+ * The function is thread-safe (error message resides in the host thread).
+ * The returned pointer is valid until the next call to any synapse API function in the current thread.
+ *
+ * @code
+ * synApiCall();
+ * const char * messagePtr = synGetLastErrorMessage();
+ * printf("error: %s\n", messagePtr);
+ * synApiCall(); // invalidates internal error message buffer
+ * // now messagePtr contains an invalid pointer
+ * @endcode
+ *
+ * @return             An error message of the last synapse API function or nullptr if there is no error message
+ ***************************************************************************************************
+ */
+const char* SYN_API_CALL synGetLastErrorMessage();
+
 //!
 /*!
  * @brief Destroys the current error instance
@@ -2971,7 +3016,6 @@ synStatus SYN_API_CALL synErrorGetMessage(synErrorHandle errorHandle, char* mess
 
 #ifdef __cplusplus
 }
-
 #endif
 
 #endif //SYNAPSE_API_H

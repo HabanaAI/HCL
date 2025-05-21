@@ -2,7 +2,7 @@
 #include <string_view>
 #include <hl_logger/hllog_core.hpp>
 #include <hl_logger/impl/hllog_macros.hpp>
-#include <hl_logger/impl/hllog_fmt_headers.hpp>
+#include <hl_logger/hllog_fmt_headers.hpp>
 
 #include "../hlgcfg_defs.hpp"
 

@@ -7,7 +7,7 @@
 #include "platform/gaudi2/hls2pcie_runtime_connectivity.h"   // for HLS2PCIERuntimeConnectivity
 #include "platform/gen2_arch_common/runtime_connectivity.h"  // for Gen2ArchRuntimeConnectivity
 #include "platform/gen2_arch_common/server_connectivity.h"   // for Gen2ArchServerConnectivity
-#include "platform/gaudi2/connectivity_autogen_HLS2PCIE.h"   // for g_HLS2PCIEServerConnectivityArray
+#include "platform/gaudi2/connectivity_autogen_HLS2PCIE.h"   // for g_HLS2PCIEServerConnectivityVector
 
 #include "hcl_utils.h"        // for LOG_HCL_*
 #include "hcl_log_manager.h"  // for LOG_*
@@ -20,7 +20,7 @@ HLS2PCIEServerConnectivity::HLS2PCIEServerConnectivity(const int        fd,
                              moduleId,
                              useDummyConnectivity,
                              useDummyConnectivity ? g_dummyTestDeviceServerNicsConnectivity
-                                                  : g_HLS2PCIEServerConnectivityArray,
+                                                  : g_HLS2PCIEServerConnectivityVector,
                              deviceConfig)
 {
 }

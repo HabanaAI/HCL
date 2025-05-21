@@ -71,7 +71,7 @@ private:
 private:
     std::vector<fi_cq_tagged_entry> m_cqe_tagged_buffers;
 
-    FutexLock      m_tagLock;
+    lock_t         m_tagLock;
     uint64_t       m_tag;
     const uint64_t m_max_tag;
 

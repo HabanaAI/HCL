@@ -13,6 +13,8 @@
 #define HCL_API_CALL __attribute__((visibility("default")))
 #endif
 
+#define SIZE_IN_DWORDS(type) (sizeof(type) >> 2)
+
 struct DfaStatus;
 struct DfaLoggersV3;
 
@@ -200,11 +202,25 @@ private:
                                         void*                 send_wait_outer_queue,
                                         hl_logger::LoggerSPtr logger,
                                         const std::string     stream_name);
-    static void printQueueDFALog(unsigned              archStream,
-                                 size_t                uarchStream,
-                                 void*                 queue,
-                                 hl_logger::LoggerSPtr logger,
-                                 const std::string     stream_name);
+    struct CmdHandler
+    {
+        std::function<std::string(const void*)> function;
+        size_t                                  cmdSizeInDwords;
+    };
+
+    static void
+    printQueueDFALog(const hl_logger::LoggerSPtr logger, const void* queue, const std::vector<CmdHandler>& handlers);
+    static std::string getRawQueueEntry(const void* address, const size_t size);
+    static bool
+    LogQueueEntry(const hl_logger::LoggerSPtr logger, const CmdHandler& handler, const size_t idx, const void* address);
+
+    static std::string handleInnerQueueMsg(const void* address);
+    static std::string handleOfiCompCallbackParams(const void* address);
+    static std::string handle_host_sched_cmd_scale_out_nic_op(const void* address);
+    static std::string handle_host_sched_cmd_scale_out_with_fence_nic_op(const void* address);
+    static std::string handle_host_sched_cmd_wait_for_completion(const void* address);
+    static std::string handle_host_sched_cmd_fence_wait(const void* address);
+    static std::string handle_host_sched_cmd_signal_so(const void* address);
 
     bool logDfaMain(DfaStatus& dfaStatus, void (*logFunc)(int, const char*), DfaLoggersV3& dfaLoggers);
 

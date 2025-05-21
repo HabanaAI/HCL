@@ -14,7 +14,7 @@
 class HclCommandsGaudi2;
 class HclDeviceGaudi2;
 class HclDynamicCommunicator;
-class DeviceBufferManager;
+class DeviceSimbPoolManagerBase;
 class ScaleoutProvider;
 namespace hcl
 {
@@ -62,7 +62,7 @@ public:
 class HclCollectiveRoutinesGaudi2 : public HclCollectiveRoutinesGen2Arch
 {
 public:
-    HclCollectiveRoutinesGaudi2(HclDeviceGaudi2* device, int streamId, WqeTracker* wqeTracker);
+    HclCollectiveRoutinesGaudi2(HclDeviceGaudi2* device, int archStreamIdx, WqeTracker* wqeTracker);
     virtual ~HclCollectiveRoutinesGaudi2();
 
     virtual void createScaleUpSendRecvOp(hcl::ScalStreamBase& scalStream,
@@ -99,7 +99,7 @@ public:
                                     SliceState&      recvSliceState,
                                     unsigned int     sizeInBytes,
                                     hcclDataType_t   dataType,
-                                    hcl::ScalStream* garbageStream) override;
+                                    hcl::ScalStream& garbageStream) override;
 
     virtual void enqueueInternalCompletionSignals() override;
 

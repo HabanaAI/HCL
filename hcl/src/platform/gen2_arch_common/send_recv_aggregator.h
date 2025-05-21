@@ -5,9 +5,9 @@
 #include <ostream>  // for ostream
 #include <vector>   // for vector
 
-#include "platform/gen2_arch_common/types.h"  // for GEN2ARCH_HLS_BOX_SIZE
-#include "hccl_types.h"                       // for hcclDataType_t
-#include "hcl_log_manager.h"                  // for hl_logger macros
+#include "hccl_types.h"       // for hcclDataType_t
+#include "hcl_consts.h"       // for MAX_MODULES_IDS_PER_SERVER
+#include "hcl_log_manager.h"  // for hl_logger macros
 
 struct SendRecvEntry
 {
@@ -18,8 +18,8 @@ struct SendRecvEntry
     uint16_t       remoteRank = 0;
 };
 
-typedef std::array<SendRecvEntry, GEN2ARCH_HLS_BOX_SIZE> SendRecvArray;
-typedef std::vector<SendRecvEntry>                       SendRecvVector;
+typedef std::array<SendRecvEntry, MAX_MODULES_IDS_PER_SERVER> SendRecvArray;
+typedef std::vector<SendRecvEntry>                            SendRecvVector;
 
 std::ostream& operator<<(std::ostream& os, const SendRecvEntry& entry);
 HLLOG_DEFINE_OSTREAM_FORMATTER(SendRecvEntry);
@@ -37,7 +37,7 @@ struct AggregatedEntry
     bool          isLast;
 };
 
-typedef std::array<AggregatedEntry, GEN2ARCH_HLS_BOX_SIZE> AggregatedEntryArray;
+typedef std::array<AggregatedEntry, MAX_MODULES_IDS_PER_SERVER> AggregatedEntryArray;
 
 class SendRecvAggregatorBase
 {
@@ -52,5 +52,5 @@ public:
     virtual bool willFlush();
 
 protected:
-    std::vector<AggregatedEntryArray> m_arrays;
+    std::vector<AggregatedEntryArray> m_aggEntryArrays;
 };

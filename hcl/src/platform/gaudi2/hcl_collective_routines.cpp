@@ -22,8 +22,10 @@
 #include "platform/gen2_arch_common/server_connectivity.h"  // for Gen2ArchServerConnectivity
 #include "platform/gen2_arch_common/server_def.h"           // for Gen2ArchServerDef
 
-HclCollectiveRoutinesGaudi2::HclCollectiveRoutinesGaudi2(HclDeviceGaudi2* device, int streamId, WqeTracker* wqeTracker)
-: HclCollectiveRoutinesGen2Arch(device, streamId, wqeTracker),
+HclCollectiveRoutinesGaudi2::HclCollectiveRoutinesGaudi2(HclDeviceGaudi2* device,
+                                                         int              archStreamIdx,
+                                                         WqeTracker*      wqeTracker)
+: HclCollectiveRoutinesGen2Arch(device, archStreamIdx, wqeTracker),
   m_sendRecvAggr(m_deviceController.getGen2ArchScalManager().getNicsScaleUpEngines(),
                  m_device->getServerConnectivity(),
                  m_commands),
@@ -33,7 +35,7 @@ HclCollectiveRoutinesGaudi2::HclCollectiveRoutinesGaudi2(HclDeviceGaudi2* device
     m_addressGenerator    = std::make_unique<HclAddressGeneratorGaudi2>();
     m_memHandler          = std::make_unique<HclCollectiveMemHandlerGaudi2>(m_streamId,
                                                                    *m_addressGenerator,
-                                                                   m_intermediateBufferManager,
+                                                                   m_deviceSimbPoolManager,
                                                                    m_commands,
                                                                    m_graphSync);
     m_utils               = new hcl::Gaudi2HclScalUtils();
@@ -78,7 +80,8 @@ void HclCollectiveRoutinesGaudi2::createScaleUpSendRecvOp(hcl::ScalStreamBase& s
 void HclCollectiveRoutinesGaudi2::createScaleUpCollectiveOp(hcl::ScalStreamBase& scalStream,
                                                             ScaleUpCollectiveOp& scaleUpCollectiveOp)
 {
-    ScaleUpCollectiveOpG2 scaleUpOpG2 {scaleUpCollectiveOp, ((HclDeviceGaudi2*)m_device)->getContextManager()};
+    HclDeviceGaudi2*      deviceGaudi2 = (HclDeviceGaudi2*)m_device;
+    ScaleUpCollectiveOpG2 scaleUpOpG2 {scaleUpCollectiveOp, deviceGaudi2->getContextManager()};
     scaleUpOpG2.m_currentRank = scaleUpOpG2.m_dynamicComm.getMyRank();
     scaleUpOpG2.m_comm        = scaleUpOpG2.m_dynamicComm;
     scaleUpOpG2.m_numOfRanks  = (scaleUpOpG2.m_isReductionInIMB &&
@@ -87,7 +90,7 @@ void HclCollectiveRoutinesGaudi2::createScaleUpCollectiveOp(hcl::ScalStreamBase&
                                     ? 2
                                     : 0;
     scaleUpOpG2.m_poolId      = !scaleUpOpG2.m_isSend && scaleUpOpG2.m_isReduction
-                                    ? DeviceBufferManager::getPoolSizeIndex(SCALEUP_AND_ALL2ALL_POOL)
+                                    ? deviceGaudi2->m_sibContainerManager->getPoolContainerIndex(SCALEUP_AND_ALL2ALL_POOL)
                                     : 0;
     m_gaudi2Commands.serializeScaleUpCollectiveOp(scalStream, scaleUpOpG2);
 }
@@ -108,8 +111,8 @@ unsigned HclCollectiveRoutinesGaudi2::countScaleUpSignalsSendRecv(CommonState&  
 {
     const unsigned numScaleupPortsPerConnection =
         getDevice()->getServerConnectivity().getMaxNumScaleUpPortsPerConnection(comm);
-    const unsigned boxSize    = getDevice()->getServerDef().getDefaultBoxSize();
-    unsigned       numSignals = numScaleupPortsPerConnection * (boxSize - 1);
+    const unsigned defaultScaleupGroupSize = getDevice()->getServerDef().getDefaultScaleupGroupSize();
+    unsigned       numSignals              = numScaleupPortsPerConnection * (defaultScaleupGroupSize - 1);
     if (commonState.m_dynamicComm.getScaleupGroupSize() == 1)
     {
         numSignals = 0;
@@ -145,18 +148,18 @@ void HclCollectiveRoutinesGaudi2::memsetIMBsIfNeeded(SliceState&      sendSliceS
                                                      SliceState&      recvSliceState,
                                                      unsigned int     sizeInBytes,
                                                      hcclDataType_t   dataType,
-                                                     hcl::ScalStream* garbageStream)
+                                                     hcl::ScalStream& garbageStream)
 {
     for (auto buffer_pool : m_memset_buffers)
     {
-        m_memHandler->memsetIMBs(m_device->m_sibContainer.get(),
+        m_memHandler->memsetIMBs(m_device->m_sibContainerManager.get(),
                                  m_signalsManager,
                                  sendSliceState,
                                  recvSliceState,
                                  sizeInBytes,
                                  m_longSo,
-                                 garbageStream->getSchedIdx(),
-                                 *garbageStream,
+                                 garbageStream.getSchedIdx(),
+                                 garbageStream,
                                  m_streamId,
                                  buffer_pool,
                                  getEdmaStreamCtxtId(sendSliceState.m_apiId, m_streamId),
@@ -170,7 +173,7 @@ void HclCollectiveRoutinesGaudi2::enqueueInternalCompletionSignals()
 
     for (auto buffer_pool : m_memset_buffers)
     {
-        if (!m_intermediateBufferManager.isPoolAllocated(buffer_pool)) continue;
+        if (!m_deviceSimbPoolManager.isPoolAllocated(buffer_pool)) continue;
         m_memHandler->enqueueInternalCompletionMemsetSignals(m_signalsManager, buffer_pool);
     }
 }

@@ -21,6 +21,16 @@ Gaudi3BaseRuntimeConnectivity::Gaudi3BaseRuntimeConnectivity(const int          
                                                              Gen2ArchServerConnectivity& serverConnectivity)
 : Gen2ArchRuntimeConnectivity(moduleId, hclCommId, serverConnectivity)
 {
+    adjustSizesToNumberOfDevices();
+}
+
+void Gaudi3BaseRuntimeConnectivity::adjustSizesToNumberOfDevices()
+{
+    const uint32_t numberOfDevices = m_serverConnectivity.getNumberOfDevicesPerHost();
+
+    m_remoteDevicePortMasks.resize(numberOfDevices);
+    m_nicsMacrosDupMask.resize(numberOfDevices);
+    m_nicMacrosDevices.resize(numberOfDevices);
 }
 
 void Gaudi3BaseRuntimeConnectivity::initServerSpecifics()
@@ -39,7 +49,7 @@ const uint32_t Gaudi3BaseRuntimeConnectivity::getRemoteDevicePortMask(const uint
         for (uint16_t portIndex = 0; portIndex < MAX_NICS_GEN2ARCH; ++portIndex)
         {
             const uint32_t remoteDevice = static_cast<uint32_t>(getRemoteDevice(portIndex));
-            if (remoteDevice < GEN2ARCH_HLS_BOX_SIZE)
+            if (remoteDevice < m_serverConnectivity.getNumberOfDevicesPerHost())
             {
                 m_remoteDevicePortMasks[remoteDevice] |= (1u << portIndex);
             }
@@ -320,7 +330,7 @@ void Gaudi3BaseRuntimeConnectivity::initDeviceSetsAndDupMasks()
 void Gaudi3BaseRuntimeConnectivity::initNicMacrosForAllDevices()
 {
     LOG_HCL_DEBUG(HCL, "Started");
-    for (size_t deviceId = 0; deviceId < m_nicMacrosDevices.size(); deviceId++)
+    for (size_t deviceId = 0; deviceId < m_serverConnectivity.getNumberOfDevicesPerHost(); deviceId++)
     {
         // Each device belongs to 2 or more NIC macros, find out which
         const uint16_t               mask = m_nicsMacrosDupMask[deviceId];

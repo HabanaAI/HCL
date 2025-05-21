@@ -52,3 +52,9 @@ struct InternalHostFenceInfo
     scal_host_fence_counter_handle_t hostFenceCounterHandle;
 };
 }  // namespace hcl
+
+enum CgType
+{
+    eInternal = 0,
+    eExternal = 1
+};

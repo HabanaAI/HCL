@@ -1,15 +1,16 @@
 #pragma once
 
-#include <array>               // for array
-#include <cstdint>             // for uint64_t, uint32_t
-#include <cstddef>             // for size_t
-#include <memory>              // for shared_ptr
-#include <vector>              // for vector
-#include "completion_group.h"  // for CompletionGroup
-#include "scal.h"              // for scal_comp_group_handle_t
-#include "scal_names.h"        // for ScalJsonNames, ScalJsonNames::numberOf...
-#include "scal_types.h"        // for CgInfo, SmInfo
-#include "factory_types.h"     // for CyclicBufferType
+#include <array>                                        // for array
+#include <cstdint>                                      // for uint64_t, uint32_t
+#include <cstddef>                                      // for size_t
+#include <memory>                                       // for shared_ptr
+#include <vector>                                       // for vector
+#include "completion_group.h"                           // for CompletionGroup
+#include "scal.h"                                       // for scal_comp_group_handle_t
+#include "scal_names.h"                                 // for ScalJsonNames, ScalJsonNames::numberOf...
+#include "scal_types.h"                                 // for CgInfo, SmInfo
+#include "factory_types.h"                              // for CyclicBufferType
+#include "infra/scal/gen2_arch_common/stream_layout.h"  // for Gen2ArchStreamLayout
 
 class HclCommandsGen2Arch;
 namespace hcl
@@ -27,13 +28,14 @@ namespace hcl
 class ArchStream
 {
 public:
-    ArchStream(unsigned                 streamIdx,
-               Gen2ArchScalWrapper&     scalWrapper,
-               scal_comp_group_handle_t externalCgHandle,
-               scal_comp_group_handle_t internalCgHandle,
-               ScalJsonNames&           scalNames,
-               HclCommandsGen2Arch&     commands,
-               CyclicBufferType         type);
+    ArchStream(unsigned                    archStreamIdx,
+               Gen2ArchScalWrapper&        scalWrapper,
+               scal_comp_group_handle_t    externalCgHandle,
+               scal_comp_group_handle_t    internalCgHandle,
+               ScalJsonNames&              scalNames,
+               HclCommandsGen2Arch&        commands,
+               CyclicBufferType            type,
+               const Gen2ArchStreamLayout& streamLayout);
 
     ArchStream(ArchStream&&)                 = delete;
     ArchStream(const ArchStream&)            = delete;
@@ -57,7 +59,7 @@ public:
     void dfaLog(hl_logger::LoggerSPtr synDevFailLog);
 
 protected:
-    unsigned            m_streamIdx;
+    unsigned            m_archStreamIdx;
     std::vector<CgInfo> m_cgInfo;
     SmInfo              m_smInfo;
 

@@ -11,7 +11,7 @@
 #include "g2_sched_pkts.h"  // for g2fw
 #include "platform/gen2_arch_common/host_stream.h"
 #include "hcl_api_types.h"
-#include "platform/gen2_arch_common/device_buffer_manager.h"
+#include "platform/gen2_arch_common/device_simb_pool_manager.h"
 #include "platform/gen2_arch_common/commands/hcl_commands_types.h"
 #include "platform/gaudi2/nic_passthrough_handler.h"  // for pRecordWithMetadata
 #include "platform/gaudi2/context_manager.h"
@@ -26,12 +26,12 @@ namespace SchedArcCommandsGaudi2
 {
 void serializeNopCommand(hcl::ScalStreamBase& scalStream, unsigned schedIdx, uint32_t padding);
 
-void serializeAllocBarrierCommand(hcl::ScalStreamBase&                                     scalStream,
-                                  unsigned                                                 schedIdx,
-                                  uint32_t                                                 completionGroupIndex,
-                                  uint32_t                                                 requiredSobs,
-                                  llvm_vecsmall::SmallVector<uint32_t, MAX_STREAM_TO_INC>* fences        = nullptr,
-                                  const LBWBurstData_t*                                    destBurstData = nullptr);
+void serializeAllocBarrierCommand(hcl::ScalStreamBase&                                        scalStream,
+                                  unsigned                                                    schedIdx,
+                                  uint32_t                                                    completionGroupIndex,
+                                  uint32_t                                                    requiredSobs,
+                                  llvm_vecsmall::SmallVector<uint32_t, MAX_STREAM_PER_SCHED>* fences        = nullptr,
+                                  const LBWBurstData_t*                                       destBurstData = nullptr);
 
 void serializeFenceDecCommand(hcl::ScalStreamBase& scalStream,
                               unsigned             schedIdx,
@@ -90,12 +90,13 @@ void serializePdmaCommand(hcl::ScalStreamBase& scalStream,
                           hcclDataType_t       dataType,
                           uint32_t             sobAddr = 0);
 
-void serializeGlobalDmaCommand(hcl::ScalStreamBase&                  scalStream,
-                               uint32_t                              soAddressLSB,
-                               const std::vector<sibAddressAndSize>& sibAddressesAndSizes,
-                               uint32_t                              fwStrideSize,
-                               uint64_t                              fwBaseAddress,
-                               uint32_t                              engineType);
+void serializeGlobalDmaCommand(hcl::ScalStreamBase&                                 scalStream,
+                               unsigned                                             schedIdx,
+                               uint32_t                                             soAddressLSB,
+                               const std::vector<SimbPoolContainerParamsPerStream>& containerParamsPerStreamVec,
+                               uint32_t                                             fwStrideSize,
+                               uint64_t                                             fwBaseAddress,
+                               uint32_t                                             engineType);
 
 void serializeUpdateGlobalContextCommandHeader(g2fw::sched_arc_cmd_update_nic_glbl_ctxt_t& command,
                                                uint32_t                                    soAddressLSB,

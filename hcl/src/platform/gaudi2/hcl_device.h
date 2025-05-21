@@ -58,6 +58,10 @@ public:
 
     virtual spHclNic allocateNic(uint32_t nic, uint32_t max_qps) override;
 
+    virtual void setQpManagersForComm(const HCL_Comm comm, const size_t commSize) override;
+
+    virtual uint32_t getCollectiveQpi(const HCL_CollectiveOp collectiveOp, const bool isSend) override;
+
 protected:
     std::unique_ptr<ContextManager> m_contextManager;
 

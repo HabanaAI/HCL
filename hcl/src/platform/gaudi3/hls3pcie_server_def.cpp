@@ -42,7 +42,7 @@ void HLS3PCIEServerDef::init()
     m_serverConnectivity->init(true);
 
     m_halShared        = std::make_shared<hcl::Gaudi3Hal>();
-    m_deviceController = std::make_unique<HclDeviceControllerGaudi3>(m_fd, m_halShared->getMaxStreams());
+    m_deviceController = std::make_unique<HclDeviceControllerGaudi3>(m_fd, m_halShared->getMaxArchStreams());
     m_device = m_fd >= 0 ? std::make_unique<HclDeviceGaudi3>(*m_deviceController, m_deviceConfig, m_halShared, *this)
                          : nullptr;
 }

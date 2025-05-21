@@ -7,23 +7,24 @@
 
 #include "platform/gen2_arch_common/hcl_device_config.h"  // for HclDeviceConfig
 #include "hcl_device.h"
-#include "hcl_dynamic_communicator.h"                             // for HclDyna...
-#include "hcl_global_conf.h"                                      // for GCFG_BO...
-#include "interfaces/hcl_remote_device.h"                         // for HclRemo...
-#include "hcl_types.h"                                            // for HclConf...
-#include "hcl_utils.h"                                            // for LOG_HCL...
-#include "infra/scal/gaudi2/scal_manager.h"                       // for Gaudi2S...
-#include "interfaces/hcl_unique_sorted_vector.h"                  // for UniqueS...
-#include "platform/gaudi2/commands/hcl_commands.h"                // for HclComm...
-#include "interfaces/hcl_hal.h"                                   // for HalPtr
-#include "platform/gen2_arch_common/commands/hcl_commands.h"      // for HclComm...
-#include "platform/gen2_arch_common/eq_handler.h"                 // for IEventQ...
-#include "hcl_log_manager.h"                                      // for LOG_ERR
-#include "hcl_nic.h"                                              // for HclNic
-#include "platform/gaudi_common/intermediate_buffer_container.h"  // for IntermediateBufferContainerGaudiCommon
-#include "platform/gen2_arch_common/scaleout_provider.h"          // for ScaleoutProvider
-#include "platform/gen2_arch_common/hcl_device_controller.h"      //
-#include "hcl_log_manager.h"                                      // for LOG_ERR
+#include "hcl_dynamic_communicator.h"                         // for HclDyna...
+#include "hcl_global_conf.h"                                  // for GCFG_BO...
+#include "interfaces/hcl_remote_device.h"                     // for HclRemo...
+#include "hcl_types.h"                                        // for HclConf...
+#include "hcl_utils.h"                                        // for LOG_HCL...
+#include "infra/scal/gaudi2/scal_manager.h"                   // for Gaudi2S...
+#include "interfaces/hcl_unique_sorted_vector.h"              // for UniqueS...
+#include "platform/gaudi2/commands/hcl_commands.h"            // for HclComm...
+#include "interfaces/hcl_hal.h"                               // for HalPtr
+#include "platform/gen2_arch_common/commands/hcl_commands.h"  // for HclComm...
+#include "platform/gen2_arch_common/eq_handler.h"             // for IEventQ...
+#include "hcl_log_manager.h"                                  // for LOG_ERR
+#include "hcl_nic.h"                                          // for HclNic
+#include "platform/gaudi2/simb_pool_container_allocator.h"    // for SimbP...
+#include "platform/gen2_arch_common/scaleout_provider.h"      // for ScaleoutProvider
+#include "platform/gen2_arch_common/hcl_device_controller.h"  //
+#include "platform/gaudi2/hcl_device_controller.h"            // for HclDeviceControllerGaudi2
+#include "hcl_log_manager.h"                                  // for LOG_ERR
 #include "hccl_communicator.h"
 #include "hccl_helpers.h"
 #include "hccl_internal_defs.h"
@@ -76,27 +77,10 @@ HclDeviceGaudi2::HclDeviceGaudi2(HclDeviceControllerGen2Arch& controller,
     // regardless of communicator setup.
     setScaleoutMode(getServerConnectivity().getNumScaleOutPortsGlbl());
     createOfiPlugin();
-    m_sibContainer = std::make_unique<IntermediateBufferContainerGaudiCommon>(m_hal->getMaxStreams());
-    m_sibContainer->init();
+    m_sibContainerManager = std::make_unique<SimbPoolContainerAllocatorGaudi2>(m_hal->getMaxArchStreams());
+    m_sibContainerManager->init();
 
-    std::shared_ptr<QPManager> qpManagerScaleUp  = std::make_shared<QPManagerGaudi2ScaleUp>(*this);
-    std::shared_ptr<QPManager> qpManagerScaleOut = std::make_shared<QPManagerGaudi2ScaleOut>(*this);
-    for (unsigned nic = 0; nic < MAX_NICS_GEN2ARCH; nic++)
-    {
-        if (isScaleOutPort(nic /*, HCL_Comm comm*/))
-        {
-            m_qpManagers.at(nic) = qpManagerScaleOut;
-        }
-        else
-        {
-            m_qpManagers.at(nic) = qpManagerScaleUp;
-        }
-    }
-
-    m_contextManager = std::make_unique<ContextManager>(m_scalManager.getNicsScaleUpEngines(),
-                                                        *qpManagerScaleUp,
-                                                        *qpManagerScaleOut,
-                                                        *this);
+    m_contextManager = std::make_unique<ContextManager>(m_scalManager.getNicsScaleUpEngines(), *this);
     m_contextManager->createCollectiveContexts(controller.getGen2ArchCommands() /*, HCL_Comm comm */);
     registerOpenQpCallback(LOOPBACK, [&](HCL_Comm comm) { return openQpsLoopback(comm); });
     registerOpenQpCallback(HLS2, [&](HCL_Comm comm) { return openQpsHLS(comm); });
@@ -157,7 +141,7 @@ void HclDeviceGaudi2::addQPsToQPManagerDB(const HCL_Comm   comm,
 
     const QPManagerHints hints(comm, remoteRank, nic);
 
-    m_qpManagers.at(nic)->addQPsToQPManagerDB(hints, qps);
+    getComm(comm).m_qpManagers.at(nic)->addQPsToQPManagerDB(hints, qps);
 }
 
 bool HclDeviceGaudi2::isSender(unsigned _qpi)
@@ -170,7 +154,7 @@ HclDeviceGaudi2::getQpi(HCL_Comm comm, uint8_t nic, HCL_Rank remoteRank, uint32_
 {
     const QPManagerHints hints(comm, remoteRank, nic, INVALID_QP, qpn);
 
-    return m_qpManagers.at(nic)->getQPi(hints);
+    return getComm(comm).m_qpManagers.at(nic)->getQPi(hints);
 }
 
 hcclResult_t HclDeviceGaudi2::openQpsLoopback(HCL_Comm comm)
@@ -233,8 +217,6 @@ hcclResult_t HclDeviceGaudi2::openQpToRemoteRanks(const HCL_Comm comm, const Uni
     // in null-submit mode don't open QPs
     if (GCFG_HCL_NULL_SUBMIT.value())
     {
-        // we need to allocate storage
-        allocateQPDBStorage(comm);
         return hcclSuccess;
     }
 
@@ -326,4 +308,45 @@ void HclDeviceGaudi2::setEdmaEngineGroupSizes()
 {
     edmaEngineGroupSizes[0] = m_scalManager.getNumberOfEdmaEngines(0);
     LOG_HCL_TRACE(HCL, "EDMA group0 has {} engines", edmaEngineGroupSizes[0]);
+}
+
+void HclDeviceGaudi2::setQpManagersForComm(const HCL_Comm comm, const size_t commSize)
+{
+    std::shared_ptr<QPManagerGaudi2ScaleOut> scaleOutQpManager = std::make_shared<QPManagerGaudi2ScaleOut>(*this);
+    std::shared_ptr<QPManagerGaudi2ScaleUp>  scaleupQpManager  = std::make_shared<QPManagerGaudi2ScaleUp>(*this);
+
+    if (!m_scaleoutProvider || !m_scaleoutProvider->isHostNic())
+    {
+        scaleOutQpManager->resizeDBPerComm(commSize);
+    }
+
+    for (unsigned nic = 0; nic < MAX_NICS_GEN2ARCH; nic++)
+    {
+        if (isScaleOutPort(nic /*, HCL_Comm comm*/))
+        {
+            getComm(comm).m_qpManagers.at(nic) = scaleOutQpManager;
+        }
+        else
+        {
+            getComm(comm).m_qpManagers.at(nic) = scaleupQpManager;
+        }
+    }
+}
+
+uint32_t HclDeviceGaudi2::getCollectiveQpi(const HCL_CollectiveOp collectiveOp, const bool isSend)
+{
+    switch (collectiveOp)
+    {
+        case eHCLReduceScatter:
+            return isSend ? G2::QP_e::QPE_RS_SEND : G2::QP_e::QPE_RS_RECV;
+            break;
+        case eHCLAllGather:
+            return isSend ? G2::QP_e::QPE_AG_SEND : G2::QP_e::QPE_AG_RECV;
+            break;
+        default:
+            VERIFY(false, "invalid op({})", collectiveOp);
+    }
+
+    VERIFY(false, "unreachable code");
+    return 0;
 }

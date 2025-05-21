@@ -20,7 +20,6 @@ public:
     virtual ~GcfgDefaultItem() = default;
 
     GcfgDefaultItem& operator<<(std::pair<uint32_t, T> const & value);
-    GcfgDefaultItem& operator<<(std::tuple<uint32_t, NNExecutionMode, T> const & value);
 
     // Get default value for device
     const T& value(uint32_t device) const;
@@ -29,7 +28,7 @@ public:
 
 private:
     std::optional<T>  m_default;
-    std::array<std::array<std::optional<T>, 2>, maxDeviceType> m_defaultsPerDevice;
+    std::array<std::optional<T>, maxDeviceType> m_defaultsPerDevice;
 };
 
 using DfltInt64  = GcfgDefaultItem<int64_t>;
@@ -43,18 +42,6 @@ template <class T>
 std::pair<uint32_t, T> deviceValue(uint32_t deviceType, T value)
 {
     return std::pair(deviceType, std::move(value));
-}
-
-template <class T>
-std::tuple<uint32_t, NNExecutionMode, T> deviceTrainingValue(uint32_t deviceType, T value)
-{
-    return std::tuple(deviceType, NNExecutionMode::training, std::move(value));
-}
-
-template <class T>
-std::tuple<uint32_t, NNExecutionMode, T> deviceInferenceValue(uint32_t deviceType, T value)
-{
-    return std::tuple(deviceType, NNExecutionMode::inference, std::move(value));
 }
 
 }}

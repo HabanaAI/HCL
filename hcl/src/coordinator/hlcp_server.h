@@ -36,7 +36,7 @@ private:
         uint32_t send_threads = 1;
     } gcfg_;
 
-    futex_t lock_;
+    lock_t lock_;
 
     uint32_t comm_size_ = 0;
 
@@ -63,13 +63,12 @@ private:
 
     } state_ = inactive;
 
-    HCL_Comm comm_id_ = HCL_INVALID_COMM;
-
     counter_t cnt_synched_ranks_ = 0;
 
-    nodes_map_t            nodes_;
-    ranks_headers_t        ranks_headers_;
-    remote_devices_array_t ranks_connections_;
+    nodes_map_t                     nodes_;
+    ranks_headers_t                 ranks_headers_;
+    remote_devices_array_t          ranks_connections_;
+    remote_devices_counters_cache_t ranks_counters_;
 
     CollectiveLogger collective_logger_;
 
@@ -82,7 +81,9 @@ private:
     void on_hlcp_sync(hlcp_cmd_sync_t& cmd);
     void on_hlcp_log_msg(hlcp_cmd_log_msg_t& cmd);
     void on_hlcp_nic_state(hlcp_cmd_nic_state_t& cmd);
+    void on_hlcp_counters(hlcp_cmd_counters_t& cmd);
 
+    bool check_counters();
     void validate_comm_data();
     void report_comm_error(const std::string& err);
 
@@ -91,6 +92,7 @@ private:
     using sp_hlcp_cmd_t = std::shared_ptr<hlcp_command_t>;
     void send_cmd(uint32_t start_index, uint32_t count, sp_hlcp_cmd_t sp_cmd);
     void send_qps_data(uint32_t start_index, uint32_t count, sp_hlcp_cmd_t sp_cmd);
+    void send_counters_data(uint32_t start_index, uint32_t count, sp_hlcp_cmd_t sp_cmd);
 
     using sender_func_t = void (hlcp_server_t::*)(uint32_t start_index, uint32_t count, sp_hlcp_cmd_t sp_cmd);
     void parallel_send_to_all(sp_hlcp_cmd_t sp_cmd, sender_func_t func = &hlcp_server_t::send_cmd);

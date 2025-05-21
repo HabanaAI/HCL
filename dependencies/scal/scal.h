@@ -420,6 +420,9 @@ int scal_debug_write_reg(const scal_handle_t scal, uint64_t reg_address, uint32_
 int scal_debug_memcpy(const scal_handle_t scal, uint64_t src, uint64_t dst, uint64_t size);
 unsigned scal_debug_stream_get_curr_ci(const scal_stream_handle_t stream);
 int scal_debug_background_work(const scal_handle_t scal);
+
+const char* scal_get_version_sha1();
+const char* scal_get_build_time();
 // clang-format on
 
 #ifdef __cplusplus

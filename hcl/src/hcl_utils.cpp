@@ -219,5 +219,32 @@ float getProcMemConsInGB()
 
     return KB2GB(procMem);
 }
-bool                  LogContext::s_logCtxtCfg = GCFG_HCL_LOG_CONTEXT.value();
-volatile hcclResult_t g_status                 = hcclSuccess;
+bool LogContext::s_logCtxtCfg = GCFG_HCL_LOG_CONTEXT.value();
+
+// Async error variables
+static std::atomic<hcclResult_t> g_globalDfaStatus = hcclSuccess;
+static std::string               g_globalAsyncErrorMessage;
+static std::mutex                g_globalAsyncErrorMessageMutex;
+
+hcclResult_t getGlobalDfaStatus()
+{
+    return g_globalDfaStatus.load();
+}
+
+void setGlobalDfaStatus(hcclResult_t status)
+{
+    g_globalDfaStatus = status;
+}
+
+std::string getGlobalAsyncErrorStatusMessage()
+{
+    std::lock_guard lock(g_globalAsyncErrorMessageMutex);
+    std::string     msg = g_globalAsyncErrorMessage;
+    return msg;
+}
+
+void setGlobalAsyncErrorMessage(const std::string& errMessage)
+{
+    std::lock_guard lock(g_globalAsyncErrorMessageMutex);
+    g_globalAsyncErrorMessage = errMessage;
+}

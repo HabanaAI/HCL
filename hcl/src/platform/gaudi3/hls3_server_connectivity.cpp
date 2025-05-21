@@ -7,7 +7,7 @@
 #include "platform/gen2_arch_common/server_connectivity.h"   // for Gen2ArchServerConnectivity
 #include "platform/gen2_arch_common/runtime_connectivity.h"  // for Gen2ArchRuntimeConnectivity
 #include "platform/gaudi3/hls3_runtime_connectivity.h"       // for HLS3RuntimeConnectivity
-#include "platform/gaudi3/connectivity_autogen_HLS3.h"       // for g_HLS3ServerConnectivityArray
+#include "platform/gaudi3/connectivity_autogen_HLS3.h"       // for g_HLS3ServerConnectivityVector
 
 #include "hcl_utils.h"        // for LOG_HCL_*
 #include "hcl_log_manager.h"  // for LOG_*
@@ -20,7 +20,7 @@ HLS3ServerConnectivity::HLS3ServerConnectivity(const int        fd,
                                moduleId,
                                useDummyConnectivity,
                                useDummyConnectivity ? g_dummyTestDeviceServerNicsConnectivity
-                                                    : g_HLS3ServerConnectivityArray,
+                                                    : g_HLS3ServerConnectivityVector,
                                deviceConfig)
 {
 }

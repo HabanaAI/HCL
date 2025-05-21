@@ -104,7 +104,7 @@ public:
     template<class TFmtMsg, class ... TArgs>
     LazyLogItem(int logLevel, TFmtMsg fmtMsg, TArgs && ... args)
     : m_logLevel(logLevel)
-    , m_tid(internal::s_threadId)
+    , m_tid(internal::getThreadId())
 #ifndef HLLOG_USE_STD_TIMESTAMP
     , m_time(__rdtsc())
 #else
@@ -130,7 +130,7 @@ public:
     // 2. logger must erase queue type (provides addToRecentElemetsQueueFunc)
     LazyLogItem(int logLevel, internal::CreateFormatterFunc * createFormatter, void * argsAsTupleVoidPtr)
     : m_logLevel(logLevel)
-    , m_tid(internal::s_threadId)
+    , m_tid(internal::getThreadId())
 #ifndef HLLOG_USE_STD_TIMESTAMP
     , m_time(__rdtsc())
 #else
@@ -668,7 +668,11 @@ inline hl_logger::LoggerSPtr getLogger(TLoggerEnum loggerEnumItem)
     {
         if (moduleLoggerData<TLoggerEnum>.loggerOnDemandCreators[loggerIdx])
         {
-            moduleLoggerData<TLoggerEnum>.loggerOnDemandCreators[loggerIdx]();
+            std::lock_guard lock(moduleLoggerData<TLoggerEnum>.userLogsQueueCreateMtx);
+            if (moduleLoggerData<TLoggerEnum>.loggers[loggerIdx].logger == nullptr)
+            {
+                moduleLoggerData<TLoggerEnum>.loggerOnDemandCreators[loggerIdx]();
+            }
             logger = moduleLoggerData<TLoggerEnum>.loggers[loggerIdx].logger;
         }
     }
@@ -698,7 +702,7 @@ inline SinksSPtr getSinks(const TLoggerEnum loggerEnumItem)
 }
 
 template<class TLoggerEnum>
-HLLOG_API std::vector<std::string> getSinksFilenames(const TLoggerEnum loggerEnumItem)
+std::vector<std::string> getSinksFilenames(const TLoggerEnum loggerEnumItem)
 {
     return hl_logger::getSinksFilenames(getLogger(loggerEnumItem));
 }
@@ -710,11 +714,11 @@ inline SinksSPtr setSinks(const TLoggerEnum loggerEnumItem, SinksSPtr sinks/* = 
 }
 
 template<class TLoggerEnum>
-inline HLLOG_API void addFileSink(const TLoggerEnum loggerEnumItem,
-                           std::string_view  logFileName,
-                           size_t            logFileSize,
-                           size_t            logFileAmount,
-                           int               loggingLevel)
+inline void addFileSink(const TLoggerEnum loggerEnumItem,
+                        std::string_view  logFileName,
+                        size_t            logFileSize,
+                        size_t            logFileAmount,
+                        int               loggingLevel)
 {
     hl_logger::addFileSink(getLogger(loggerEnumItem), logFileName, logFileSize, logFileAmount, loggingLevel);
 }
@@ -738,6 +742,32 @@ inline void flush(const TLoggerEnum loggerEnumItem)
     {
         hl_logger::flush(moduleLoggerData<TLoggerEnum>.loggers[unsigned(loggerEnumItem)].logger);
     }
+}
+
+template<class TLoggerEnum, typename>
+void logLazyLogs(std::initializer_list<TLoggerEnum> loggerEnumItems, std::string_view filename)
+{
+    std::vector<std::string_view> loggerNames;
+    loggerNames.reserve(loggerEnumItems.size());
+    for (auto loggerEnumItem : loggerEnumItems)
+    {
+        loggerNames.push_back(hl_logger::getLoggerEnumItemName(loggerEnumItem));
+    }
+
+    hl_logger::logLazyLogs(loggerNames, filename);
+}
+
+template<class TLoggerEnum, typename>
+void logLazyLogs(std::initializer_list<TLoggerEnum> loggerEnumItems, LoggerSPtr logger)
+{
+    std::vector<std::string_view> loggerNames;
+    loggerNames.reserve(loggerEnumItems.size());
+    for (auto loggerEnumItem : loggerEnumItems)
+    {
+        loggerNames.push_back(hl_logger::getLoggerEnumItemName(loggerEnumItem));
+    }
+
+    hl_logger::logLazyLogs(loggerNames, logger);
 }
 
 template <class TLoggerEnum>

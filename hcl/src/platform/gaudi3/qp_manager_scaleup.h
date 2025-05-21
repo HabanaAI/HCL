@@ -31,15 +31,14 @@ protected:
                                  const bool              isSend) const;
 
 private:
-    void resizeDBForNewComms(const HCL_Comm comm);
-    void resizeOffsetDBs(const HCL_Comm comm);
+    void resizeOffsetDBs();
 
     std::array<uint16_t, MAX_NICS_GEN2ARCH>&
     getRemoteRankIndices(HCL_Comm comm, HCL_CollectiveOp collectiveOp, bool isSend);
 
-    // m_qpInfoScaleUp[comm][qpi] -> qpn
-    std::vector<std::array<QPn, MAX_QPS_PER_CONNECTION_G3>> m_qpInfoScaleUp;
+    // m_qpInfoScaleUp[qpi] -> qpn
+    std::array<QPn, MAX_QPS_PER_CONNECTION_G3> m_qpInfoScaleUp;
 
-    std::vector<std::array<uint16_t, MAX_NICS_GEN2ARCH>> m_remoteRankOffsets;
-    std::vector<std::array<uint16_t, MAX_NICS_GEN2ARCH>> m_myRankOffsets;
+    std::array<uint16_t, MAX_NICS_GEN2ARCH> m_remoteRankOffsets;
+    std::array<uint16_t, MAX_NICS_GEN2ARCH> m_myRankOffsets;
 };

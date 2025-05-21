@@ -7,13 +7,13 @@
 #include "llvm/small_vector.h"      // for SmallVector
 #include "platform/gen2_arch_common/signals/calculator.h"
 #include "platform/gen2_arch_common/types.h"
-#include "infra/scal/gen2_arch_common/scal_types.h"           // for HOST_FENCES_NR
-#include "hcl_types.h"                                        // for HclConfigType
-#include "platform/gen2_arch_common/device_buffer_manager.h"  // for e_devicePoolID
+#include "infra/scal/gen2_arch_common/scal_types.h"              // for HOST_FENCES_NR
+#include "hcl_types.h"                                           // for HclConfigType
+#include "platform/gen2_arch_common/device_simb_pool_manager.h"  // for e_devicePoolID
 
 // fwd decl
 class HclAddressGenerator;
-class DeviceBufferManager;
+class DeviceSimbPoolManagerBase;
 
 class BoxNumInfo
 {
@@ -80,25 +80,29 @@ struct cuid_t
     {
         struct
         {
-            uint64_t collectiveOp : 4;         // 0..3
-            uint64_t currentOp : 4;            // 4..7
-            uint64_t inPlace : 1;              // 8
-            uint64_t isRoot : 1;               // 9
-            uint64_t isRootPeer : 1;           // 10
-            uint64_t isRootBox : 1;            // 11
-            uint64_t isMultiScaleupGroup : 1;  // 12
-            uint64_t isPeersOnly : 1;          // 13
-            uint64_t isHostNic : 1;            // 14
-            uint64_t isGaudiDirect : 1;        // 15
-            uint64_t isFloat : 1;              // 16
-            uint64_t isBf16 : 1;               // 17
-            uint64_t all2allIter : 4;          // 18..21
-            uint64_t boxIterPhase : 3;         // 22..24
-            uint64_t firstBox : 1;             // 25
-            uint64_t lastBox : 1;              // 26
-            uint64_t edgeIteration : 1;        // 27
-            uint64_t firstScaleOut : 1;        // 28
-            uint64_t reserved : 35;            // 29..63
+            uint64_t collectiveOp : 4;               // 0..3
+            uint64_t currentOp : 4;                  // 4..7
+            uint64_t inPlace : 1;                    // 8
+            uint64_t isRoot : 1;                     // 9
+            uint64_t isRootPeer : 1;                 // 10
+            uint64_t isRootBox : 1;                  // 11
+            uint64_t isMultiScaleupGroup : 1;        // 12
+            uint64_t isPeersOnly : 1;                // 13
+            uint64_t isHostNic : 1;                  // 14
+            uint64_t isGaudiDirect : 1;              // 15
+            uint64_t isFloat : 1;                    // 16
+            uint64_t is16BitDatatype : 1;            // 17
+            uint64_t all2allIter : 4;                // 18..21
+            uint64_t boxIterPhase : 3;               // 22..24
+            uint64_t firstBox : 1;                   // 25
+            uint64_t lastBox : 1;                    // 26
+            uint64_t edgeIteration : 1;              // 27
+            uint64_t firstScaleOut : 1;              // 28
+            uint64_t isBufferReductionIter : 1;      // 29
+            uint64_t isLastBufferReductionIter : 1;  // 30
+            uint64_t isFirstSOBufferUse : 1;         // 31
+            uint64_t soBufferNum : 1;                // 32
+            uint64_t reserved : 31;                  // 33..63
         };
         uint64_t raw;
     };
@@ -111,24 +115,24 @@ HLLOG_DEFINE_OSTREAM_FORMATTER(cuid_t);
 class CommonState : public HclCollectiveParams
 {
 public:
-    explicit CommonState(HclCollectiveParams& other,
-                         DeviceBufferManager& intermediateBufferManager,
-                         bool                 isHostNic,
-                         bool                 isGdr,
-                         unsigned             workDistributionGroupSize,
-                         const unsigned       maxNumScaleUpPortsPerConnection,
-                         unsigned             numScaleOutPorts,
-                         SignalsCalculator&   signalsCalculator,
-                         RemainderCalculator* remainderCalculator);
+    explicit CommonState(HclCollectiveParams&       other,
+                         DeviceSimbPoolManagerBase& deviceSimbPoolManager,
+                         bool                       isHostNic,
+                         bool                       isGdr,
+                         unsigned                   workDistributionGroupSize,
+                         const unsigned             maxNumScaleUpPortsPerConnection,
+                         unsigned                   numScaleOutPorts,
+                         SignalsCalculator&         signalsCalculator,
+                         RemainderCalculator*       remainderCalculator);
 
-    explicit CommonState(HclCollectiveParams& other,
-                         DeviceBufferManager& intermediateBufferManager,
-                         bool                 isGdr,
-                         unsigned             workDistributionGroupSize,
-                         const unsigned       maxNumScaleUpPortsPerConnection,
-                         unsigned             numScaleOutPorts,
-                         SignalsCalculator&   signalsCalculator,
-                         RemainderCalculator* remainderCalculator);
+    explicit CommonState(HclCollectiveParams&       other,
+                         DeviceSimbPoolManagerBase& deviceSimbPoolManager,
+                         bool                       isGdr,
+                         unsigned                   workDistributionGroupSize,
+                         const unsigned             maxNumScaleUpPortsPerConnection,
+                         unsigned                   numScaleOutPorts,
+                         SignalsCalculator&         signalsCalculator,
+                         RemainderCalculator*       remainderCalculator);
 
     void     calcMaxSliceCounts();
     void     calcSliceCounts(unsigned sliceIter);
@@ -196,8 +200,8 @@ public:
     bool     m_isGdr                  = false;
     bool     m_isRSContReduction      = false;
     size_t   m_sliceIterations        = 0;
-    unsigned m_scaleoutBuffersAmount  = DeviceBufferManager::getFactor(SCALEOUT_POOL);
-    unsigned m_scaleoutLongtermAmount = DeviceBufferManager::getFactor(SCALEOUT_POOL) + 1;
+    unsigned m_scaleoutBuffersAmount  = DeviceSimbPoolManagerBase::getFactor(SCALEOUT_POOL);
+    unsigned m_scaleoutLongtermAmount = DeviceSimbPoolManagerBase::getFactor(SCALEOUT_POOL) + 1;
 
     unsigned m_boxIter                   = 0;
     unsigned m_all2allIter               = 0;
@@ -209,8 +213,8 @@ public:
 
     uint8_t m_qpSet = 0;
 
-    DeviceBufferManager& m_intermediateBufferManager;
-    RemainderCalculator* m_remainderCalculator;
+    DeviceSimbPoolManagerBase& m_deviceSimbPoolManager;
+    RemainderCalculator*       m_remainderCalculator;
 
     // for hnics scaleout send/recv only - needs somehow to be moved down cast class
     uint64_t m_scaleoutNonCollectiveSend = 0;
@@ -293,6 +297,21 @@ private:
     SignalsCalculator* m_signalsCalculator;
 };
 
+union castFlag
+{
+    struct
+    {
+        uint8_t scaleupSendCastUp : 1;
+        uint8_t scaleoutRecvCastUp : 1;
+        uint8_t aggregatedResultCastDown : 1;
+        uint8_t rsvd : 5;
+    };
+
+    uint8_t bitmask;
+
+    castFlag() : bitmask(0) {}
+};
+
 struct SliceExecutionOutput
 {
     uint64_t m_deviceCount   = 0;
@@ -317,7 +336,11 @@ struct SliceExecutionOutput
     // describe slice execution usage of device memory buffer pool
     e_devicePoolID m_usedPool = NO_POOL;
 
+    // flag requests reduction execution of data within slice
     bool m_doReduction = false;
+
+    // flag requests casts operation of slice data
+    castFlag casts;
 };
 
 struct SliceSetupOutput
@@ -353,9 +376,13 @@ public:
     void calcBoxAndScaleOutCounts();
     bool gatherOpsWaitForRS(bool isScaleup);
     void setScaleoutAddresses(HclAddressGenerator& addressGenerator, uint64_t offset);
-    void initSlice(bool calcScaleout = true);
+    void initSlice();
     void updateScaleoutCounts(HCL_Rank remoteRank, uint64_t inputCount, uint8_t requiredInternalFences);
     bool doReduction();
+    void initCastFlags();
+    bool suSendCastUp();
+    bool soRecvCastUp();
+    bool aggResCastDown();
 
     bool       m_isSend;
     unsigned   m_sliceIter;

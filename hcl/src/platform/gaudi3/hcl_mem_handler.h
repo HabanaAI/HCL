@@ -5,11 +5,11 @@
 class HclCollectiveMemHandlerGaudi3 : public HclCollectiveMemHandlerGen2Arch
 {
 public:
-    HclCollectiveMemHandlerGaudi3(int                   archStreamId,
-                                  HclAddressGenerator&  addressGenerator,
-                                  DeviceBufferManager&  intermediateBufferManager,
-                                  HclCommandsGen2Arch&  commands,
-                                  HclGraphSyncGen2Arch& graphSync);
+    HclCollectiveMemHandlerGaudi3(int                        archStreamId,
+                                  HclAddressGenerator&       addressGenerator,
+                                  DeviceSimbPoolManagerBase& deviceSimbPoolManager,
+                                  HclCommandsGen2Arch&       commands,
+                                  HclGraphSyncGen2Arch&      graphSync);
 
     virtual void generateBaseAddressOrSubBuffIdx(SliceState&       sliceState,
                                                  unsigned int&     sliceIter,

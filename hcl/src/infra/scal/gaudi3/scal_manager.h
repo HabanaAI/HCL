@@ -6,6 +6,8 @@
 #include "infra/scal/gen2_arch_common/scal_manager.h"  // for Gen2ArchScalMa...
 #include "scal.h"                                      // for scal_handle_t
 #include "platform/gaudi3/hcl_device.h"
+#include "infra/scal/gen2_arch_common/stream_layout.h"
+
 class HclCommandsGen2Arch;
 class HclDeviceGen2Arch;
 namespace hcl
@@ -15,7 +17,7 @@ class ScalStreamBase;
 
 constexpr hcl::SchedulersIndex initCgSchedList[] = {hcl::SchedulersIndex::sendScaleUp,
                                                     hcl::SchedulersIndex::recvScaleUp,
-                                                    hcl::SchedulersIndex::dma};
+                                                    hcl::SchedulersIndex::gp};
 
 namespace hcl
 {
@@ -31,18 +33,17 @@ namespace hcl
 class Gaudi3ScalManager : public Gen2ArchScalManager
 {
 public:
-    Gaudi3ScalManager(int fd, HclCommandsGen2Arch& commands);
+    Gaudi3ScalManager(int fd, HclCommandsGen2Arch& commands, const Gen2ArchStreamLayout& streamLayout);
     Gaudi3ScalManager(Gaudi3ScalManager&&)                 = delete;
     Gaudi3ScalManager(const Gaudi3ScalManager&)            = delete;
     Gaudi3ScalManager& operator=(Gaudi3ScalManager&&)      = delete;
     Gaudi3ScalManager& operator=(const Gaudi3ScalManager&) = delete;
     virtual ~Gaudi3ScalManager();
 
-    virtual void     initSimb(HclDeviceGen2Arch* device, uint8_t apiID) override;
     virtual uint32_t getCMaxTargetValue() override;
 
-    uint64_t getInitCgNextSo();
-    int      getConfigurationCount() const { return m_configurationCount; };
+    virtual uint64_t getInitCgNextSo() override;
+    int              getConfigurationCount() const { return m_configurationCount; };
 
 private:
     int m_configurationCount = -1;

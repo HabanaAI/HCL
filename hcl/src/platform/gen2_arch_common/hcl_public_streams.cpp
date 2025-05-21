@@ -26,7 +26,8 @@
 
 // #define HCL_API_CALL __attribute__((visibility("default")))
 
-bool HCL_API_CALL tdrDetectionFlag = false;  // Timeout Detection and Recovery
+bool HCL_API_CALL       tdrDetectionFlag              = false;  // Timeout Detection and Recovery
+static constexpr size_t DEFAULT_STRUCT_SIZE_IN_DWORDS = 10;
 
 class hccl_communicator;
 
@@ -206,8 +207,7 @@ bool HclPublicStreams::logDfaMain(DfaStatus& dfaStatus,
 
         for (auto inst : hccl_device().collectives)
         {
-            inst->getSignalsManager()->DFA(
-                hccl_device()->getScalManager().getCurrentLongSoValue(inst->getArchStream()));
+            inst->DFA(hccl_device()->getScalManager().getCurrentLongSoValue(inst->getArchStream()));
         }
 
         if (hccl_device()->getDeviceTypeStr() == "synDeviceGaudi2")
@@ -434,6 +434,20 @@ void HclPublicStreams::printStreamQueuesDFALog(unsigned              archStream,
     spHostStreamFifo inner_queue_obj      = *reinterpret_cast<spHostStreamFifo*>(inner_queue);
     spHostStreamFifo outer_queue_obj      = *reinterpret_cast<spHostStreamFifo*>(outer_queue);
     spHostStreamFifo wait_outer_queue_obj = *reinterpret_cast<spHostStreamFifo*>(wait_outer_queue);
+
+    std::vector<CmdHandler> inner_queue_commands = {
+        {handleInnerQueueMsg, SIZE_IN_DWORDS(innerQueueMsg)},
+    };
+    std::vector<CmdHandler> outer_queue_commands = {
+        {handle_host_sched_cmd_fence_wait, SIZE_IN_DWORDS(host_sched_cmd_fence_wait)},
+        {handle_host_sched_cmd_scale_out_with_fence_nic_op, SIZE_IN_DWORDS(host_sched_cmd_scale_out_with_fence_nic_op)},
+        {handle_host_sched_cmd_scale_out_nic_op, SIZE_IN_DWORDS(host_sched_cmd_scale_out_nic_op)},
+        {handle_host_sched_cmd_signal_so, SIZE_IN_DWORDS(host_sched_cmd_signal_so)},
+    };
+    std::vector<CmdHandler> waiter_outer_queue_commands = {
+        {handle_host_sched_cmd_wait_for_completion, SIZE_IN_DWORDS(host_sched_cmd_wait_for_completion)},
+    };
+
     HLLOG_UNTYPED(logger,
                   HLLOG_LEVEL_INFO,
                   "archStream: {} uarchStream: {} HOST_STREAM_{} Inner Buffer ci: {} pi: {} next_pi: {} watermark: {}",
@@ -444,8 +458,8 @@ void HclPublicStreams::printStreamQueuesDFALog(unsigned              archStream,
                   inner_queue_obj->getPi(),
                   inner_queue_obj->getNextPi(),
                   inner_queue_obj->getWatermark());
+    printQueueDFALog(logger, inner_queue, inner_queue_commands);
 
-    printQueueDFALog(archStream, uarchStream, inner_queue, logger, stream_name);
     HLLOG_UNTYPED(logger,
                   HLLOG_LEVEL_INFO,
                   "archStream: {} uarchStream: {} HOST_STREAM_{} Outer Buffer ci: {} pi: {} next_pi: {} watermark: {}",
@@ -456,8 +470,7 @@ void HclPublicStreams::printStreamQueuesDFALog(unsigned              archStream,
                   outer_queue_obj->getPi(),
                   outer_queue_obj->getNextPi(),
                   outer_queue_obj->getWatermark());
-
-    printQueueDFALog(archStream, uarchStream, outer_queue, logger, stream_name);
+    printQueueDFALog(logger, outer_queue, outer_queue_commands);
 
     HLLOG_UNTYPED(logger,
                   HLLOG_LEVEL_INFO,
@@ -470,85 +483,207 @@ void HclPublicStreams::printStreamQueuesDFALog(unsigned              archStream,
                   wait_outer_queue_obj->getPi(),
                   wait_outer_queue_obj->getNextPi(),
                   wait_outer_queue_obj->getWatermark());
-    printQueueDFALog(archStream, uarchStream, wait_outer_queue, logger, stream_name);
+    printQueueDFALog(logger, wait_outer_queue, waiter_outer_queue_commands);
 }
 
-void HclPublicStreams::printQueueDFALog([[maybe_unused]] unsigned          archStream,
-                                        [[maybe_unused]] size_t            uarchStream,
-                                        void*                              queue,
-                                        hl_logger::LoggerSPtr              logger,
-                                        [[maybe_unused]] const std::string stream_name)
+void HclPublicStreams::printQueueDFALog(const hl_logger::LoggerSPtr    logger,
+                                        const void*                    queue,
+                                        const std::vector<CmdHandler>& handlers)
 {
-    const unsigned   margin          = 8;
-    spHostStreamFifo queue_obj       = *reinterpret_cast<spHostStreamFifo*>(queue);
-    auto&            queue_buff      = queue_obj->getBuf();
-    int              start_index     = (size_t)queue_obj->getCi() - margin;
-    size_t           end_index       = (size_t)queue_obj->getPi() + margin;
-    size_t           buffer_idx_diff = 0;
-    const size_t     step            = 4;
+    const spHostStreamFifo queue_obj    = *reinterpret_cast<const spHostStreamFifo*>(queue);
+    auto&                  queue_buff   = queue_obj->getBuf();
+    size_t                 index        = (size_t)queue_obj->getCi();
+    size_t                 end_index    = (size_t)queue_obj->getPi();
+    size_t                 watermark    = (size_t)queue_obj->getWatermark();
+    bool                   isSuccessful = false;
 
-    if (start_index < 0)
+    if (index == 0 && end_index == 0)
     {
-        for (size_t idx = (size_t)queue_obj->getCapacity() + start_index; idx < queue_obj->getCapacity(); idx += step)
+        HLLOG_UNTYPED(logger, HLLOG_LEVEL_INFO, "Queue is empty.");
+    }
+
+    if (index > 0 || watermark > 0)
+    {
+        // Log the queue entry before ci
+        for (const auto& handler : handlers)
         {
-            std::string out = fmt::format(FMT_COMPILE("[{:8},{:8}]:{:10x}|{:10x}|{:10x}|{:10x}"),
-                                          idx,
-                                          idx + 3,
-                                          queue_buff[idx],
-                                          queue_buff[idx + 1],
-                                          queue_buff[idx + 2],
-                                          queue_buff[idx + 3]);
-
-            HLLOG_UNTYPED(logger, HLLOG_LEVEL_INFO, "{}", out);
+            size_t previousIndex = index > 0 ? index - handler.cmdSizeInDwords : watermark - handler.cmdSizeInDwords;
+            isSuccessful         = LogQueueEntry(logger, handler, previousIndex, (void*)&queue_buff[previousIndex]);
+            if (isSuccessful)
+            {
+                break;
+            }
         }
-        start_index = 0;
-    }
-    else if (queue_obj->getCi() > queue_obj->getPi())
-    {
-        for (size_t idx = start_index; idx < (size_t)queue_obj->getCapacity(); idx += step)
+        if (unlikely(!isSuccessful))
         {
-            std::string out = fmt::format(FMT_COMPILE("[{:8},{:8}]:{:10x}|{:10x}|{:10x}|{:10x}"),
-                                          idx,
-                                          idx + 3,
-                                          queue_buff[idx],
-                                          queue_buff[idx + 1],
-                                          queue_buff[idx + 2],
-                                          queue_buff[idx + 3]);
-
-            HLLOG_UNTYPED(logger, HLLOG_LEVEL_INFO, "{}", out);
+            HLLOG_UNTYPED(logger,
+                          HLLOG_LEVEL_INFO,
+                          "No handler found for last queue entry this is the raw data: {}",
+                          getRawQueueEntry((void*)&queue_buff[index - DEFAULT_STRUCT_SIZE_IN_DWORDS],
+                                           DEFAULT_STRUCT_SIZE_IN_DWORDS));
         }
-        start_index = 0;
-    }
-    if (end_index > queue_obj->getCapacity())
-    {
-        buffer_idx_diff = end_index - queue_obj->getCapacity();
-        end_index       = queue_obj->getCapacity();
     }
 
-    for (size_t idx = start_index; (size_t)start_index < end_index; start_index += step)
+    // Log the queue entries between ci and pi, wrap around if needed
+    while (index != end_index)
     {
-        std::string out = fmt::format(FMT_COMPILE("[{:8},{:8}]:{:10x}|{:10x}|{:10x}|{:10x}"),
-                                      idx,
-                                      idx + 3,
-                                      queue_buff[idx],
-                                      queue_buff[idx + 1],
-                                      queue_buff[idx + 2],
-                                      queue_buff[idx + 3]);
+        size_t next_index = 0;
+        for (const auto& handler : handlers)
+        {
+            if (watermark > 0 && index + handler.cmdSizeInDwords > watermark) break;
+            if (watermark > 0 && index + handler.cmdSizeInDwords == watermark)
+            {
+                // Wrap around
+                index = 0;
+            }
+            isSuccessful = LogQueueEntry(logger, handler, index, (void*)&queue_buff[index]);
+            if (isSuccessful)
+            {
+                next_index = index + handler.cmdSizeInDwords;
+                break;
+            }
+        }
+        if (unlikely(!isSuccessful))
+        {
+            // No handler found for this entry. It is not recoverable.
+            HLLOG_UNTYPED(logger,
+                          HLLOG_LEVEL_INFO,
+                          "No handler found for queue entry start at index {}, this is the raw data: {}",
+                          index,
+                          getRawQueueEntry((void*)&queue_buff[index], DEFAULT_STRUCT_SIZE_IN_DWORDS));
+            break;
+        }
+        if (unlikely(index < end_index && next_index > end_index))
+        {
+            // We went over PI, which means that there was a parsing error somewhere before. It is not recoverable.
+            HLLOG_UNTYPED(logger,
+                          HLLOG_LEVEL_INFO,
+                          "Previous parsed entry is probably wrong this is the raw data: {}",
+                          getRawQueueEntry((void*)&queue_buff[index], DEFAULT_STRUCT_SIZE_IN_DWORDS));
+            break;
+        }
+        index = next_index;
+    }
+}
+
+std::string HclPublicStreams::getRawQueueEntry(const void* address, const size_t size)
+{
+    std::string raw;
+    for (size_t i = 0; i < size << 2; i += sizeof(uint32_t))
+    {
+        raw += fmt::format(FMT_COMPILE("0x{:08x} "), *((uint32_t*)address + i));
+    }
+    return raw;
+}
+
+bool HclPublicStreams::LogQueueEntry(const hl_logger::LoggerSPtr logger,
+                                     const CmdHandler&           handler,
+                                     const size_t                idx,
+                                     const void*                 address)
+{
+    std::string result = handler.function(address);
+    if (!result.empty())
+    {
+        std::string out = fmt::format(FMT_COMPILE("[{:8},{:8}]: {}"), idx, idx + handler.cmdSizeInDwords, result);
 
         HLLOG_UNTYPED(logger, HLLOG_LEVEL_INFO, "{}", out);
+        return true;
     }
-    for (size_t idx = 0; idx < buffer_idx_diff; idx += step)
-    {
-        std::string out = fmt::format(FMT_COMPILE("[{:8},{:8}]:{:10x}|{:10x}|{:10x}|{:10x}"),
-                                      idx,
-                                      idx + 3,
-                                      queue_buff[idx],
-                                      queue_buff[idx + 1],
-                                      queue_buff[idx + 2],
-                                      queue_buff[idx + 3]);
+    return false;
+}
 
-        HLLOG_UNTYPED(logger, HLLOG_LEVEL_INFO, "{}", out);
-    }
+std::string HclPublicStreams::handleInnerQueueMsg(const void* address)
+{
+    const innerQueueMsg* cmd = reinterpret_cast<const innerQueueMsg*>(address);
+
+    return fmt::format(FMT_COMPILE("recvBuffer: 0x{:016x} size: {} submitTime: {} srCount: {}"),
+                       (uint64_t)cmd->handle.recvBuffer,
+                       cmd->handle.size,
+                       cmd->submitTime,
+                       cmd->srCount);
+}
+
+std::string HclPublicStreams::handleOfiCompCallbackParams(const void* address)
+{
+    const OfiCompCallbackParams* cmd = reinterpret_cast<const OfiCompCallbackParams*>(address);
+    return fmt::format(FMT_COMPILE(" smIdx: 0x{:08x} soIdx: 0x{:08x} value: 0x{:08x}"),
+                       cmd->smIdx,
+                       cmd->soIdx,
+                       cmd->value);
+}
+
+std::string HclPublicStreams::handle_host_sched_cmd_scale_out_nic_op(const void* address)
+{
+    const std::map<int, std::string> opcodes = {
+        {HOST_SCHED_CMD_SEND, "HOST_SCHED_CMD_SEND"},
+        {HOST_SCHED_CMD_RECV, "HOST_SCHED_CMD_RECV"},
+    };
+
+    const host_sched_cmd_scale_out_nic_op* cmd = reinterpret_cast<const host_sched_cmd_scale_out_nic_op*>(address);
+    if (opcodes.find(cmd->opcode) == opcodes.end()) return {};
+
+    return fmt::format(FMT_COMPILE("opcode: {} comm: {} rank: {} address: 0x{:016x} size: {} srCount: {} {}"),
+                       opcodes.at(cmd->opcode),
+                       cmd->comm,
+                       cmd->rank,
+                       cmd->address,
+                       cmd->size,
+                       cmd->srCount,
+                       handleOfiCompCallbackParams((void*)&cmd->compParams));
+}
+
+std::string HclPublicStreams::handle_host_sched_cmd_scale_out_with_fence_nic_op(const void* address)
+{
+    const std::map<int, std::string> opcodes = {
+        {HOST_SCHED_CMD_SEND_WITH_FENCE, "HOST_SCHED_CMD_SEND_WITH_FENCE"},
+        {HOST_SCHED_CMD_RECV_WITH_FENCE, "HOST_SCHED_CMD_RECV_WITH_FENCE"},
+    };
+
+    const host_sched_cmd_scale_out_with_fence_nic_op* cmd =
+        reinterpret_cast<const host_sched_cmd_scale_out_with_fence_nic_op*>(address);
+    if (opcodes.find(cmd->opcode) == opcodes.end()) return {};
+
+    return fmt::format(FMT_COMPILE("opcode: {} comm: {} rank: {} address: 0x{:016x} size: {} srCount: {} {}"),
+                       opcodes.at(cmd->opcode),
+                       cmd->comm,
+                       cmd->rank,
+                       cmd->address,
+                       cmd->size,
+                       cmd->srCount,
+                       handleOfiCompCallbackParams((void*)&cmd->compParams));
+}
+
+std::string HclPublicStreams::handle_host_sched_cmd_wait_for_completion(const void* address)
+{
+    const host_sched_cmd_wait_for_completion* cmd =
+        reinterpret_cast<const host_sched_cmd_wait_for_completion*>(address);
+
+    return fmt::format(FMT_COMPILE("opcode: {} comm: {} isSend: {} srCount: {}"),
+                       "HOST_SCHED_CMD_WAIT_FOR_COMP",
+                       cmd->comm,
+                       cmd->isSend,
+                       cmd->srCount);
+}
+
+std::string HclPublicStreams::handle_host_sched_cmd_fence_wait(const void* address)
+{
+    const host_sched_cmd_fence_wait* cmd = reinterpret_cast<const host_sched_cmd_fence_wait*>(address);
+    if (cmd->opcode != HOST_SCHED_CMD_FENCE_WAIT) return {};
+
+    return fmt::format(FMT_COMPILE("opcode: {} fenceIdx: 0x{:08x} srCount: {}"),
+                       "HOST_SCHED_CMD_FENCE_WAIT",
+                       cmd->fenceIdx,
+                       cmd->srCount);
+}
+
+std::string HclPublicStreams::handle_host_sched_cmd_signal_so(const void* address)
+{
+    const host_sched_cmd_signal_so* cmd = reinterpret_cast<const host_sched_cmd_signal_so*>(address);
+    if (cmd->opcode != HOST_SCHED_CMD_SIGNAL_SO) return {};
+
+    return fmt::format(FMT_COMPILE("opcode: {} {}"),
+                       "HOST_SCHED_CMD_SIGNAL_SO",
+                       handleOfiCompCallbackParams((void*)&cmd->compParams));
 }
 
 static void dumpQpWqes(IHclDevice* device, int nic, uint32_t qp, hl_logger::LoggerSPtr logger)

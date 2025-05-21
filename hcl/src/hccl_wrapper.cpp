@@ -68,6 +68,7 @@ hcclResult_t hcclCommInitAll_Wrapper([[maybe_unused]] hcclComm_t* comm,
 {
     HCCL_TRY
     LOG_ERR(HCL_API, "hcclCommInitAll not implemented!");
+    setLastErrorMessage("hcclCommInitAll not implemented!");
     hcclResult_t status = hcclInvalidUsage;
     HCCL_API_EXIT(status)
 }
@@ -110,6 +111,25 @@ const char* hcclGetErrorString_Wrapper(hcclResult_t result)
     return get_error_string(result);
 }
 
+const unsigned           lastErrorMessageSize                     = 1024;
+static thread_local char g_lastErrorMessage[lastErrorMessageSize] = {0};
+
+void setLastErrorMessage(const std::string& message)
+{
+    strncpy(g_lastErrorMessage, message.c_str(), lastErrorMessageSize);
+    g_lastErrorMessage[lastErrorMessageSize - 1] = 0;
+}
+
+void resetLastErrorMessage()
+{
+    g_lastErrorMessage[0] = 0;
+}
+
+const char* hcclGetLastErrorMessage_Wrapper()
+{
+    return g_lastErrorMessage[0] == 0 ? nullptr : g_lastErrorMessage;
+}
+
 hcclResult_t hcclCommGetAsyncError_Wrapper(hcclComm_t comm, hcclResult_t* asyncError)
 {
     HCCL_TRY
@@ -119,6 +139,53 @@ hcclResult_t hcclCommGetAsyncError_Wrapper(hcclComm_t comm, hcclResult_t* asyncE
 
     hcclResult_t status = hccl_comm->get_async_error(asyncError);
     HCCL_API_EXIT(status)
+}
+
+const char* hcclCommGetAsyncErrorMessage_Wrapper(hcclComm_t comm)
+{
+    waitForDfaFinish();
+    if (comm == nullptr)
+    {
+        std::string globalAsyncStatusMessage = getGlobalAsyncErrorStatusMessage();
+        if (!globalAsyncStatusMessage.empty())
+        {
+            const unsigned    bufferSize = 1024;
+            thread_local char globalStatusMessageTL[bufferSize];
+            strncpy(globalStatusMessageTL, globalAsyncStatusMessage.c_str(), bufferSize);
+            globalStatusMessageTL[bufferSize - 1] = '\0';
+            return globalStatusMessageTL;
+        }
+        else
+        {
+            return nullptr;
+        }
+    }
+
+    try
+    {
+        auto* hccl_comm = hccl_ctx.communicator(comm);
+        if (hccl_comm == nullptr)
+        {
+            setLastErrorMessage("Invalid HCCL communicator handle.");
+            return nullptr;
+        }
+
+        return hccl_comm->get_async_error_message();
+    }
+    catch (hcl::VerifyException& e)
+    {
+        waitForDfaFinish();
+        auto status = getGlobalDfaStatus();
+        LOG_CRITICAL(HCL, "{} returned {} with exception: {}", HLLOG_FUNC, status, e.what());
+        setLastErrorMessage("exception occurred: " + std::string(e.what()));
+        return nullptr;
+    }
+    catch (...)
+    {
+        LOG_CRITICAL(HCL, "{} returned with unknown exception", HLLOG_FUNC);
+        setLastErrorMessage("unknown exception");
+        return nullptr;
+    }
 }
 
 hcclResult_t hcclCommCount_Wrapper(hcclComm_t comm, int* count)
@@ -168,6 +235,7 @@ hcclResult_t hcclReduceScatter_Wrapper(const void*    sendbuff,
     HCCL_TRY
     auto* hccl_comm = hccl_ctx.communicator(comm);
     // Data validation
+    RETURN_ON_INVALID_HCCL_COMM(hccl_comm);
     RETURN_ON_INVALID_ADDR(sendbuff);
     RETURN_ON_INVALID_ADDR(recvbuff);
     RETURN_ON_INVALID_DATA_TYPE(datatype);
@@ -196,6 +264,7 @@ hcclResult_t hcclReduce_Wrapper(const void*    sendbuff,
 {
     HCCL_TRY
     auto* hccl_comm = hccl_ctx.communicator(comm);
+    RETURN_ON_INVALID_HCCL_COMM(hccl_comm);
     RETURN_ON_INVALID_ADDR(sendbuff);
     if (hccl_comm->user_rank() == root)  // recvbuff may be NULL on all calls except for root device
     {
@@ -226,6 +295,7 @@ hcclResult_t hcclAllReduce_Wrapper(const void*    sendbuff,
 {
     HCCL_TRY
     auto* hccl_comm = hccl_ctx.communicator(comm);
+    RETURN_ON_INVALID_HCCL_COMM(hccl_comm);
     RETURN_ON_INVALID_ADDR(sendbuff);
     RETURN_ON_INVALID_ADDR(recvbuff);
     RETURN_ON_INVALID_DATA_TYPE(datatype);
@@ -252,6 +322,7 @@ hcclResult_t hcclBroadcast_Wrapper(const void*    sendbuff,
 {
     HCCL_TRY
     auto* hccl_comm = hccl_ctx.communicator(comm);
+    RETURN_ON_INVALID_HCCL_COMM(hccl_comm);
     RETURN_ON_INVALID_ADDR(sendbuff);
     RETURN_ON_INVALID_ADDR(recvbuff);
     RETURN_ON_INVALID_DATA_TYPE(datatype);
@@ -278,6 +349,7 @@ hcclResult_t hcclAllGather_Wrapper(const void*    sendbuff,
     HCCL_TRY
 
     auto* hccl_comm = hccl_ctx.communicator(comm);
+    RETURN_ON_INVALID_HCCL_COMM(hccl_comm);
     RETURN_ON_INVALID_ADDR(sendbuff);
     RETURN_ON_INVALID_ADDR(recvbuff);
     RETURN_ON_INVALID_DATA_TYPE(datatype);
@@ -315,6 +387,7 @@ hcclResult_t hcclAlltoAll_Wrapper(const void*    sendbuff,
 {
     HCCL_TRY
     auto* hccl_comm = hccl_ctx.communicator(comm);
+    RETURN_ON_INVALID_HCCL_COMM(hccl_comm);
     RETURN_ON_INVALID_ADDR(sendbuff);
     RETURN_ON_INVALID_ADDR(recvbuff);
     RETURN_ON_INVALID_DATA_TYPE(datatype);
@@ -351,11 +424,13 @@ hcclResult_t hcclSend_Wrapper(const void*    sendbuff,
 {
     HCCL_TRY
     auto* hccl_comm = hccl_ctx.communicator(comm);
+    RETURN_ON_INVALID_HCCL_COMM(hccl_comm);
     RETURN_ON_INVALID_ADDR(sendbuff);
     RETURN_ON_INVALID_DATA_TYPE(datatype);
-    RETURN_ON_INVALID_HCCL_COMM(hccl_comm);
     RETURN_ON_INVALID_STREAM(stream_handle);
     RETURN_ON_RANK_CHECK(peer, hccl_comm);
+
+    hccl_comm->getDynamicComm()->incApiPreGroupEndSendCounter(peer);
 
     // report collective log
     HCL_COLLECTIVE_LOG(eHCLNoCollective, count, datatype, hcclOpNone, peer, 0);
@@ -370,11 +445,13 @@ hcclRecv_Wrapper(void* recvbuff, size_t count, hcclDataType_t datatype, int peer
 {
     HCCL_TRY
     auto* hccl_comm = hccl_ctx.communicator(comm);
+    RETURN_ON_INVALID_HCCL_COMM(hccl_comm);
     RETURN_ON_INVALID_ADDR(recvbuff);
     RETURN_ON_INVALID_DATA_TYPE(datatype);
-    RETURN_ON_INVALID_HCCL_COMM(hccl_comm);
     RETURN_ON_INVALID_STREAM(stream_handle);
     RETURN_ON_RANK_CHECK(peer, hccl_comm);
+
+    hccl_comm->getDynamicComm()->incApiPreGroupEndRecvCounter(peer);
 
     // report collective log
     HCL_COLLECTIVE_LOG(eHCLNoCollective, count, datatype, hcclOpNone, peer, -1);

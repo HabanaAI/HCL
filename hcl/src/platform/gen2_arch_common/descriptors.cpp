@@ -11,12 +11,12 @@
 #include "infra/scal/gen2_arch_common/scal_manager.h"
 #include "hcl_utils.h"  // for LOG_HCL_DEBUG, UNUSED
 #include "platform/gen2_arch_common/collective_states.h"
-#include "platform/gen2_arch_common/host_buffer_manager.h"  // for HostBufferManager
-#include "hcl_dynamic_communicator.h"                       // for HclDynamicCommunicator
-#include "infra/scal/gen2_arch_common/scal_stream.h"        // for hcl::ScalStream
-#include "llvm/small_vector.h"                              // for SmallVector
-#include "platform/gen2_arch_common/types.h"                // for sob_info
-#include "hcl_public_streams.h"                             // for syncInfo
+#include "platform/gen2_arch_common/host_simb_pool_manager.h"  // for HostSimbPoolManager
+#include "hcl_dynamic_communicator.h"                          // for HclDynamicCommunicator
+#include "infra/scal/gen2_arch_common/scal_stream.h"           // for hcl::ScalStream
+#include "llvm/small_vector.h"                                 // for SmallVector
+#include "platform/gen2_arch_common/types.h"                   // for sob_info
+#include "hcl_public_streams.h"                                // for syncInfo
 #include "hcl_math_utils.h"
 #include "platform/gen2_arch_common/signals/manager.h"
 #include "platform/gen2_arch_common/hcl_device.h"  // for HclDeviceGen2Arch
@@ -36,30 +36,32 @@ Descriptor::Descriptor(HclCollectiveRoutinesGen2Arch& collectiveRoutines,
 {
 }
 
-BarrierArbitratorDescriptor::BarrierArbitratorDescriptor(HclCollectiveRoutinesGen2Arch& collectiveRoutines,
-                                                         ScaleoutProvider&              scaleoutProvider,
-                                                         hcl::ScalStream&               currentStream,
-                                                         hcl::ScalStream&               arbitratorStream,
-                                                         int                            archStreamIdx,
-                                                         unsigned                       uarchStreamIdx,
-                                                         unsigned                       schedIdx,
-                                                         unsigned                       requiredCredits,
-                                                         hcl::syncInfo&                 longSo)
+BarrierArbitratorDescriptor::BarrierArbitratorDescriptor(
+    HclCollectiveRoutinesGen2Arch&                                    collectiveRoutines,
+    ScaleoutProvider&                                                 scaleoutProvider,
+    hcl::ScalStream&                                                  currentStream,
+    hcl::ScalStream&                                                  arbitratorStream,
+    int                                                               archStreamIdx,
+    unsigned                                                          uarchStreamIdx,
+    unsigned                                                          schedIdx,
+    unsigned                                                          requiredCredits,
+    hcl::syncInfo&                                                    longSo,
+    const llvm_vecsmall::SmallVector<unsigned, MAX_STREAM_PER_SCHED>& activeStreams)
 : Descriptor(collectiveRoutines, scaleoutProvider, currentStream, archStreamIdx, uarchStreamIdx, schedIdx),
   m_arbitratorStream(arbitratorStream),
   m_requiredCredits(requiredCredits),
-  m_longSo(longSo)
+  m_longSo(longSo),
+  m_activeStreams(activeStreams)
 {
 }
 
 void BarrierArbitratorDescriptor::run([[maybe_unused]] SliceState& sliceState)
 {
-    m_collectiveRoutines.m_deviceController.waitForExecutionConditions(m_currentStream);
-
-    llvm_vecsmall::SmallVector<unsigned, MAX_STREAM_TO_INC> activeStreams = {m_uarchStreamIdx};
     m_collectiveRoutines.m_deviceController.setOpExecutionConditions(m_arbitratorStream,
                                                                      m_requiredCredits,
-                                                                     activeStreams);
+                                                                     m_activeStreams);
+
+    m_collectiveRoutines.m_deviceController.waitForExecutionConditions(m_currentStream);
 }
 
 void BarrierArbitratorDescriptor::run(NonCollectiveState& nonCollectiveState)
@@ -71,12 +73,11 @@ void BarrierArbitratorDescriptor::run(NonCollectiveState& nonCollectiveState)
                   nonCollectiveState.m_remoteRank,
                   nonCollectiveState.m_isSend);
 
-    m_collectiveRoutines.m_deviceController.waitForExecutionConditions(m_currentStream);
-
-    llvm_vecsmall::SmallVector<unsigned, MAX_STREAM_TO_INC> activeStreams = {m_uarchStreamIdx};
     m_collectiveRoutines.m_deviceController.setOpExecutionConditions(m_arbitratorStream,
                                                                      m_requiredCredits,
-                                                                     activeStreams);
+                                                                     m_activeStreams);
+
+    m_collectiveRoutines.m_deviceController.waitForExecutionConditions(m_currentStream);
 }
 
 NativeScaleoutDescriptor::NativeScaleoutDescriptor(HclCollectiveRoutinesGen2Arch& collectiveRoutines,
@@ -100,10 +101,7 @@ void NativeScaleoutDescriptor::run(SliceState& sliceState)
     int      remoteRankToRsi =
         m_collectiveRoutines.getRemoteRankToRsi(sliceState, sliceState.m_isSend, remoteRank, m_uarchStreamIdx == 1);
 
-    hcclDataType_t dataType = (!sliceState.m_isSend && sliceState.m_currentOp != eHCLAllGather &&
-                               sliceState.m_currentOp != eHCLGather && sliceState.m_16BitReduction)
-                                  ? hcclFloat32
-                                  : sliceState.m_dataType;
+    hcclDataType_t dataType = sliceState.soRecvCastUp() ? hcclFloat32 : sliceState.m_dataType;
 
     WqeWraparoundBits wraparoundBits = {false, false};
     bool              doReduction    = false;
@@ -158,7 +156,8 @@ void NativeScaleoutDescriptor::run(SliceState& sliceState)
                              wraparoundBits.notify_rndv_ack,
                              wraparoundBits.wait_for_rndv_acks,
                              doReduction,
-                             sliceState.getQpSet()};
+                             sliceState.getQpSet(),
+                             sliceState.isRSContReduction() && sliceState.m_currentOp == eHCLReduceScatter};
 
     m_collectiveRoutines.createScaleOutCollectiveOp(m_currentStream, op);
 }
@@ -251,9 +250,9 @@ unsigned LibfabricScaleoutDescriptor::getHostUarchStreamIdx()
 void LibfabricScaleoutDescriptor::run(SliceState& sliceState)
 {
     LibfabricScaleoutProvider& provider          = dynamic_cast<LibfabricScaleoutProvider&>(m_scaleoutProvider);
-    uint64_t                   hostMappedAddress = provider.getHostBufferManager(m_archStreamIdx)
+    uint64_t                   hostMappedAddress = provider.getHostSimbPoolManager(m_archStreamIdx)
                                      ->getCurrentMappedBuffer(sliceState.m_isSend ? HNIC_SEND_POOL : HNIC_RECV_POOL);
-    uint64_t hostAddress = provider.getHostBufferManager(m_archStreamIdx)
+    uint64_t hostAddress = provider.getHostSimbPoolManager(m_archStreamIdx)
                                ->getCurrentBuffer(sliceState.m_isSend ? HNIC_SEND_POOL : HNIC_RECV_POOL);
     HCL_Rank remoteRank         = sliceState.m_remoteRank > HCL_INVALID_RANK
                                       ? sliceState.m_remoteRank
@@ -396,14 +395,13 @@ void LibfabricScaleoutDescriptor::run(SliceState& sliceState)
                                         sliceState.m_isReductionCollective && sliceState.m_currentOp != eHCLAllGather &&
                                             sliceState.m_currentOp != eHCLGather,
                                         sliceState.m_reduceOp,
-                                        sliceState.m_16BitReduction && sliceState.m_currentOp != eHCLAllGather &&
-                                            sliceState.m_currentOp != eHCLGather,
+                                        sliceState.soRecvCastUp(),
                                         sliceState.m_apiId,
                                         m_archStreamIdx,
                                         sliceState.m_dataType,
                                         soAddr,
                                         sliceState.m_boxIter <
-                                            DeviceBufferManager::getFactor(sliceState.m_execution.m_usedPool));
+                                            DeviceSimbPoolManagerBase::getFactor(sliceState.m_execution.m_usedPool));
     }
 
     provider.notifyHostScheduler(m_archStreamIdx);

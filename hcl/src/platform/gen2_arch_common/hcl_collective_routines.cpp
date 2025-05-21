@@ -16,18 +16,18 @@
 #include "platform/gen2_arch_common/hcl_device.h"             // for HclDevi...
 #include "platform/gen2_arch_common/collective_states.h"
 #include "hcl_utils.h"  // for VERIFY
-#include "platform/gen2_arch_common/device_buffer_manager.h"
+#include "platform/gen2_arch_common/device_simb_pool_manager.h"
 #include "platform/gen2_arch_common/scaleout_provider.h"  // for ScaleoutProvider
 #include "platform/gen2_arch_common/signals/calculator.h"
 #include "platform/gen2_arch_common/signals/manager.h"
-#include "intermediate_buffer_container.h"
+#include "simb_pool_container_allocator.h"
 #include "platform/gen2_arch_common/descriptors.h"
-#include "platform/gen2_arch_common/host_buffer_manager.h"  // for HostBufferManager
-#include "platform/gen2_arch_common/hcl_graph_sync.h"       // for HclGraphSyncGen2Arch
-#include "platform/gen2_arch_common/wqe_tracker.h"          // for QpType, WqeTracker
-#include "platform/gen2_arch_common/signals/manager.h"      // for SignalsManager
-#include "platform/gen2_arch_common/dependency_checker.h"   // for DependencyChecker
-#include "platform/gen2_arch_common/collective_utils.h"     // for getNextBox, getPrevBox
+#include "platform/gen2_arch_common/host_simb_pool_manager.h"  // for HostSimbPoolManager
+#include "platform/gen2_arch_common/hcl_graph_sync.h"          // for HclGraphSyncGen2Arch
+#include "platform/gen2_arch_common/wqe_tracker.h"             // for QpType, WqeTracker
+#include "platform/gen2_arch_common/signals/manager.h"         // for SignalsManager
+#include "platform/gen2_arch_common/dependency_checker.h"      // for DependencyChecker
+#include "platform/gen2_arch_common/collective_utils.h"        // for getNextBox, getPrevBox
 #include "platform/gen2_arch_common/active_stream_manager.h"
 #include "platform/gen2_arch_common/hcl_device_controller.h"
 #include "platform/gen2_arch_common/server_def.h"  // for Gen2ArchServerDef
@@ -40,14 +40,14 @@
 #include "collective_interface/prims/simple_prims.h"
 
 HclCollectiveRoutinesGen2Arch::HclCollectiveRoutinesGen2Arch(HclDeviceGen2Arch* device,
-                                                             int                streamId,
+                                                             int                archStreamIdx,
                                                              WqeTracker*        wqeTracker)
 : m_deviceController(HclControlDeviceFactory::getDeviceControl()),
   m_device(device),
-  m_streamId(streamId),
-  m_graphSync(m_deviceController.getGraphSync(streamId)),
+  m_streamId(archStreamIdx),
+  m_graphSync(m_deviceController.getGraphSync(archStreamIdx)),
   m_boxType((HclConfigType)GCFG_BOX_TYPE_ID.value()),
-  m_intermediateBufferManager(m_device->getSIB(streamId)),
+  m_deviceSimbPoolManager(m_device->getDeviceSimbPoolManager(archStreamIdx)),
   m_commands(m_deviceController.getGen2ArchCommands()),
   m_scaleoutProvider(device->getScaleOutProvider()),
   m_activeStreamManager(m_scaleoutProvider, m_deviceController, m_streamId, m_longSo),
@@ -117,42 +117,6 @@ int HclCollectiveRoutinesGen2Arch::getRemoteRankToRsi(CommonState& commonState,
     }
 
     return -1;
-}
-
-void HclCollectiveRoutinesGen2Arch::barrierArmSchedulers(unsigned requiredCredits)
-{
-    // Barrier Arm all Schedulers except DMA (which will come later)
-    for (unsigned schedIdx = (unsigned)hcl::SchedulersIndex::sendScaleUp;
-         schedIdx < (unsigned)hcl::SchedulersIndex::count;
-         schedIdx++)
-    {
-        hcl::ScalStream& currentStream =
-            m_activeStreamManager.getActiveCollectiveStream((hcl::SchedulersIndex)schedIdx);
-        currentStream.setTargetValue(m_longSo.targetValue);
-
-        hcl::ScalStream& arbitratorStream =
-            m_deviceController.getScalStream(m_streamId, currentStream.getSchedIdx(), ARB_STREAM_IDX);
-        arbitratorStream.setTargetValue(m_longSo.targetValue);
-
-        m_deviceController.setOpExecutionConditions(arbitratorStream,
-                                                    requiredCredits,
-                                                    {currentStream.getUarchStreamIndex()});
-        m_deviceController.waitForExecutionConditions(currentStream);
-    }
-
-    // DMA Scheduler Barrier Arm
-    hcl::ScalStream* arbitratorStream = m_activeStreamManager.getDmaScalStream(hcl::DMAStreams::arbitrator);
-    m_deviceController.setOpExecutionConditions(*arbitratorStream,
-                                                requiredCredits,
-                                                m_activeStreamManager.getActiveDmaStreams());
-
-    for (unsigned streamId : m_activeStreamManager.getActiveDmaStreams())
-    {
-        hcl::ScalStream* currentStream = m_activeStreamManager.getDmaScalStream((hcl::DMAStreams)streamId);
-        currentStream->setTargetValue(m_longSo.targetValue);
-
-        m_deviceController.waitForExecutionConditions(*currentStream);
-    }
 }
 
 void HclCollectiveRoutinesGen2Arch::configureExternalSoForCompletion(LBWBurstData_t& completionInfoArr)
@@ -251,7 +215,7 @@ void HclCollectiveRoutinesGen2Arch::armHFCMonitorIfNeeded(hcl::ScalStream&      
 
 void HclCollectiveRoutinesGen2Arch::syncWithLtuIfNeeded(SliceState& sliceState, hcl::ScalStream& scalStream)
 {
-    unsigned scaleupBufferIdx = m_intermediateBufferManager.getCurrentBufferIdx(SCALEUP_AND_ALL2ALL_POOL);
+    unsigned scaleupBufferIdx = m_deviceSimbPoolManager.getCurrentBufferIdx(SCALEUP_AND_ALL2ALL_POOL);
     if (sliceState.m_syncUpBufferWithLtu && m_graphSync.getLtuData()[scaleupBufferIdx].first)
     {
         SobInfo              sobInfo = m_utils->getSOBInfo(m_graphSync.getCurrentLtuGpsoAddr(scaleupBufferIdx));
@@ -574,7 +538,7 @@ hcclResult_t HclCollectiveRoutinesGen2Arch::sendRecv(hcl::GroupCallsBuckets&    
         // Fill collectiveParams with defaults
         HclCollectiveParams collectiveParams {m_device->getComm(comm)};
         CommonState         commonState {collectiveParams,
-                                 m_intermediateBufferManager,
+                                 m_deviceSimbPoolManager,
                                  isHnicsRequired,
                                  m_scaleoutProvider->isGaudiDirect(),
                                  m_device->getEdmaEngineWorkDistributionSize(),
@@ -584,7 +548,7 @@ hcclResult_t HclCollectiveRoutinesGen2Arch::sendRecv(hcl::GroupCallsBuckets&    
                                  this->m_remainderCalculator};
         commonState.initCurrentOp(eHCLNoCollective, 0, 0);
         m_signalsManager->initialize(&commonState, 0);
-        m_activeStreamManager.initializeDmaStreams(commonState, myBoxNumInfo.m_boxNum);
+        m_activeStreamManager.initializeActiveStreams(commonState, myBoxNumInfo.m_boxNum);
 
         commonState.m_scaleoutNonCollectiveSend = scaleoutSendIter.size();
         commonState.m_scaleoutNonCollectiveRecv = scaleoutRecvIter.size();
@@ -623,7 +587,9 @@ hcclResult_t HclCollectiveRoutinesGen2Arch::sendRecv(hcl::GroupCallsBuckets&    
                                              qpSetIterPerRecvPeerRank,
                                              commonState);
 
-        createDmaProgsNonCollective(0, requiredCredits);
+        createGeneralPurposeProgsNonCollective(0, requiredCredits);
+
+        createStreamRecipesNonCollective();
 
         m_deviceController.submitWork(m_streamId);
     }
@@ -649,9 +615,11 @@ void HclCollectiveRoutinesGen2Arch::initExec(HcclGraph* graph, int exec)
     commonState->initCurrentOp(commonState->m_currentOp, exec, 0);
     commonState->m_syncUpBufferWithLtu = false;
     graph->sendSlice().m_boxIter = graph->recvSlice().m_boxIter = exec;
+    graph->sendSlice().m_execution.casts.bitmask                = 0;
+    graph->recvSlice().m_execution.casts.bitmask                = 0;
 
     uint64_t cuid = 0;
-    m_activeStreamManager.initializeDmaStreams(*commonState, graph->sendSlice().m_boxNumInfo.m_boxNum);
+    m_activeStreamManager.initializeActiveStreams(*commonState, graph->sendSlice().m_boxNumInfo.m_boxNum);
 
     // New Api call -> inc the long SO
     advanceProg(false, cuid, commonState.get());
@@ -686,13 +654,11 @@ void HclCollectiveRoutinesGen2Arch::finalizeExec(HcclGraph* graph, int exec)
                                                               true);
     LOG_HCL_DEBUG(HCL, "Required credits: {}", requiredCredits);
 
-    uint64_t cuid = commonState->calculateCUID(false, false);
-
     graph->sendSlice().setScaleoutAddresses(*m_addressGenerator, 0);
     graph->recvSlice().setScaleoutAddresses(*m_addressGenerator, 0);
 
     m_signalsManager->allocateResources();
-    m_signalsManager->updateCompletionTracker(m_longSo.targetValue, cuid);
+    m_signalsManager->updateCompletionTracker(m_longSo.targetValue);
     m_signalsManager->printGraph();
 
     unsigned completionSignals = m_signalsManager->getNumSignalsForCompletion();
@@ -714,11 +680,12 @@ void HclCollectiveRoutinesGen2Arch::finalizeExec(HcclGraph* graph, int exec)
     createScaleOutSendProgs(graph->sendSlice(), requiredCredits);
     createScaleOutRecvProgs(graph->recvSlice(), requiredCredits);
 
-    createDmaProgs(graph->sendSlice(),
-                   graph->recvSlice(),
-                   graph->recvSlice().getChunkCountToClear() * dataTypeSizeInBytes(commonState->m_dataType),
-                   requiredCredits,
-                   commonState->m_dataType);
+    createGeneralPurposeProgs(requiredCredits);
+
+    createStreamRecipes(graph->sendSlice(),
+                        graph->recvSlice(),
+                        graph->recvSlice().getChunkCountToClear() * dataTypeSizeInBytes(commonState->m_dataType),
+                        commonState->m_dataType);
 
     commonState->m_dynamicComm.m_streamLatestLongSo[m_streamId] = m_longSo.targetValue;
 
@@ -733,7 +700,7 @@ uint64_t HclCollectiveRoutinesGen2Arch::initGraph(HcclGraph* graph)
 
     graph->context().m_state =
         std::make_shared<CommonState>(params,
-                                      m_intermediateBufferManager,
+                                      m_deviceSimbPoolManager,
                                       m_scaleoutProvider->isGaudiDirect(),
                                       m_device->getEdmaEngineWorkDistributionSize(),
                                       m_serverConnectivity.getMaxNumScaleUpPortsPerConnection(params.m_dynamicComm),
@@ -783,6 +750,7 @@ void HclCollectiveRoutinesGen2Arch::finalizeGraph(HcclGraph* graph, uint64_t sta
     commonState->m_dynamicComm.updateFaultToleranceCollectivesCounters((HCL_StreamId)m_streamId, m_longSo.targetValue);
 
     m_signalsManager->finalize(true);
+    m_deviceController.updateCompTargetForNextEventOnStream(m_streamId, graph->graphParams()->m_streamHandle, m_longSo);
     m_deviceController.getStreamLock(m_streamId).unlock();
 }
 
@@ -822,7 +790,7 @@ hcclResult_t HclCollectiveRoutinesGen2Arch::processReductionPrim(HcclGraph* grap
     if (reductionPrim->useBuffer())
     {
         m_addressGenerator->addressContainer().setScaleoutMemcpySrcPool(
-            DeviceBufferManager::fetchPool(reductionPrim->getSrcBuffer()));
+            DeviceSimbPoolManagerBase::fetchPool(reductionPrim->getSrcBuffer()));
     }
     else
     {
@@ -831,18 +799,22 @@ hcclResult_t HclCollectiveRoutinesGen2Arch::processReductionPrim(HcclGraph* grap
 
     m_addressGenerator->addressContainer().setScaleoutMemcpyDstAddr(reductionPrim->dstAddr());
 
-    m_activeStreamManager.fillDmaStream(hcl::DMAStreams::scaleoutReduction,
-                                        m_streamId,
-                                        (unsigned)hcl::SchedulersIndex::dma);
+    m_activeStreamManager.addStreamToActiveStreamList(HclStreamIndex::SO_REDUCTION);
 
     if (!m_signalsManager->isGraphLoaded())
     {
         m_signalsManager->enqueueCompletion({SignalEvent::EDMA_MEMCOPY_FOR_SCALEOUT});
     }
 
-    graph->recvSlice().m_rankScaleOutCount = reductionPrim->cnt();
+    graph->recvSlice().m_rankScaleOutCount                        = reductionPrim->cnt();
+    graph->recvSlice().m_execution.casts.aggregatedResultCastDown = reductionPrim->castDown();
 
     m_requestStrongOrderIter = true;
+
+    LOG_HCL_CONTEXT_INFO(HCL,
+                         "Processing reduction primitive destAddr=0x{:X}, castDown={}",
+                         reductionPrim->dstAddr(),
+                         reductionPrim->castDown());
 
     return hcclSuccess;
 }
@@ -853,7 +825,7 @@ hcclResult_t HclCollectiveRoutinesGen2Arch::processSendPrim(HcclGraph* graph, Hc
     if (sendPrim->useBuffer())
     {
         m_addressGenerator->addressContainer().setScaleoutSendPool(
-            DeviceBufferManager::fetchPool(sendPrim->getBuffer()));
+            DeviceSimbPoolManagerBase::fetchPool(sendPrim->getBuffer()));
     }
     else
     {
@@ -911,7 +883,7 @@ hcclResult_t HclCollectiveRoutinesGen2Arch::processRecvPrim(HcclGraph* graph, Hc
         m_addressGenerator->addressContainer().setGdrMemcpySrcPool(SCALEOUT_GDR_POOL);
         if (recvPrim->useBuffer())
         {
-            e_devicePoolID recvPool = DeviceBufferManager::fetchPool(recvPrim->getBuffer());
+            e_devicePoolID recvPool = DeviceSimbPoolManagerBase::fetchPool(recvPrim->getBuffer());
             m_addressGenerator->addressContainer().setGdrMemcpyDstPool(recvPool);
             graph->recvSlice().m_execution.m_usedPool = recvPool;
         }
@@ -922,7 +894,7 @@ hcclResult_t HclCollectiveRoutinesGen2Arch::processRecvPrim(HcclGraph* graph, Hc
     }
     else if (recvPrim->useBuffer())
     {
-        e_devicePoolID recvPool = DeviceBufferManager::fetchPool(recvPrim->getBuffer());
+        e_devicePoolID recvPool = DeviceSimbPoolManagerBase::fetchPool(recvPrim->getBuffer());
         m_addressGenerator->addressContainer().setScaleoutRecvPool(recvPool);
         graph->recvSlice().m_execution.m_usedPool = recvPool;
     }
@@ -931,14 +903,17 @@ hcclResult_t HclCollectiveRoutinesGen2Arch::processRecvPrim(HcclGraph* graph, Hc
         m_addressGenerator->addressContainer().setScaleoutRecvAddr(recvPrim->m_recvAddr);
     }
 
+    graph->recvSlice().m_execution.casts.scaleoutRecvCastUp = recvPrim->castUp();
+
     LOG_HCL_CONTEXT_INFO(HCL, "processing scaleout recv primitive, from rank {}", recvPrim->m_recvRank);
 
     if (m_scaleoutProvider->isGaudiDirect() && recvPrim->doReduction())
-        m_activeStreamManager.fillDmaStream(hcl::DMAStreams::gdr, m_streamId, (unsigned)hcl::SchedulersIndex::dma);
+        m_activeStreamManager.addStreamToActiveStreamList(HclStreamIndex::GDR);
 
     graph->recvSlice().updateScaleoutCounts(recvPrim->m_recvRank,
                                             recvPrim->recvCount(),
                                             m_scaleoutProvider->getInternalScaleoutFences());
+
     m_scaleoutProvider->validateSize(recvPrim->recvCount() * graph->recvSlice().m_dataTypeSizeInBytes);
 
     hcl::ScalStream& currentStream =
@@ -1036,12 +1011,14 @@ hcclResult_t HclCollectiveRoutinesGen2Arch::processRsPrim(HcclGraph* graph, Hccl
     if (rsPrim->useBuffer())
     {
         m_addressGenerator->addressContainer().setScaleupMemcpyDstPool(
-            DeviceBufferManager::fetchPool(rsPrim->getBuffer()));
+            DeviceSimbPoolManagerBase::fetchPool(rsPrim->getBuffer()));
     }
     else
     {
         m_addressGenerator->addressContainer().setScaleupMemcpyDstAddr(rsPrim->recvAddr());
     }
+
+    graph->sendSlice().m_execution.casts.scaleupSendCastUp = rsPrim->castUp();
 
     VERIFY(rsPrim->getCountPerRank() * commonState.m_dataTypeSizeInBytes <= m_device->getSIBBufferSize(),
            "Maximal size to be processed per rank by RS primitive is defined by HCL_IMB_SIZE ({}B), consider slicing",
@@ -1083,7 +1060,7 @@ hcclResult_t HclCollectiveRoutinesGen2Arch::hclCollectiveCall(HclCollectiveParam
     std::lock_guard<std::mutex> lock(m_deviceController.getStreamLock(m_streamId));
 
     CommonState commonState {params,
-                             m_intermediateBufferManager,
+                             m_deviceSimbPoolManager,
                              m_scaleoutProvider->isHostNic(),
                              m_scaleoutProvider->isGaudiDirect(),
                              m_device->getEdmaEngineWorkDistributionSize(),
@@ -1091,6 +1068,13 @@ hcclResult_t HclCollectiveRoutinesGen2Arch::hclCollectiveCall(HclCollectiveParam
                              params.m_dynamicComm.getCommConnectivity().getNumScaleOutPorts(),
                              m_device->getSignalsCalculator(),
                              this->m_remainderCalculator};
+
+    // LOG used addresses for dfa use
+    if (GCFG_HCL_DFA_DUMP_MEMORY.value())
+    {
+        dfaLogAddress(commonState.m_sendBufferAddr, commonState.calcSendAddrSize());
+        dfaLogAddress(commonState.m_recvBufferAddr, commonState.calcRecvAddrSize());
+    }
 
     // handle a portion of data that fits the relevant slice in each iteration
     // slice: [0, 1, ..., numSlices - 1]
@@ -1188,6 +1172,8 @@ hcclResult_t HclCollectiveRoutinesGen2Arch::hclCollectiveCall(HclCollectiveParam
 
     m_signalsManager->finalize(true);
 
+    m_deviceController.updateCompTargetForNextEventOnStream(m_streamId, commonState.m_streamHandle, m_longSo);
+
     LOG_TRACE(HCL_CG,
               SCAL_PROGRESS_HCL_FMT "#slices {} #boxes {} collective-op {} longSo before 0x{:x}",
               m_streamId,
@@ -1236,6 +1222,7 @@ void HclCollectiveRoutinesGen2Arch::hclCollectiveCall(CommonState&     commonSta
         (mod(boxNumInfo.m_boxNum + 1, commonState.m_boxIterations) == commonState.m_dynamicComm.getMyScaleupGroup());
 
     uint64_t cuid = commonState.calculateCUID(isFirstBox, isLastBox);
+    m_dfaLastCuid = cuid;
 
     uint64_t dependencyTargetVal = 0;
 
@@ -1337,7 +1324,7 @@ void HclCollectiveRoutinesGen2Arch::hclCollectiveCall(CommonState&     commonSta
                                sliceIter,
                                prevBoxNumInfo};
 
-    m_activeStreamManager.initializeDmaStreams(commonState, sendSliceState.m_boxNumInfo.m_boxNum);
+    m_activeStreamManager.initializeActiveStreams(commonState, sendSliceState.m_boxNumInfo.m_boxNum);
 
     if (!m_signalsManager->isGraphLoaded())
     {
@@ -1352,7 +1339,7 @@ void HclCollectiveRoutinesGen2Arch::hclCollectiveCall(CommonState&     commonSta
     }
 
     m_signalsManager->allocateResources();
-    m_signalsManager->updateCompletionTracker(m_longSo.targetValue, cuid);
+    m_signalsManager->updateCompletionTracker(m_longSo.targetValue);
     m_signalsManager->printGraph();
 
     unsigned completionSignals = m_signalsManager->getNumSignalsForCompletion();
@@ -1377,11 +1364,12 @@ void HclCollectiveRoutinesGen2Arch::hclCollectiveCall(CommonState&     commonSta
     createScaleOutSendProgs(sendSliceState, requiredCredits);
     createScaleOutRecvProgs(recvSliceState, requiredCredits);
 
-    createDmaProgs(sendSliceState,
-                   recvSliceState,
-                   recvSliceState.getChunkCountToClear() * dataTypeSizeInBytes(commonState.m_dataType),
-                   requiredCredits,
-                   commonState.m_dataType);
+    createGeneralPurposeProgs(requiredCredits);
+
+    createStreamRecipes(sendSliceState,
+                        recvSliceState,
+                        recvSliceState.getChunkCountToClear() * dataTypeSizeInBytes(commonState.m_dataType),
+                        commonState.m_dataType);
 
     bool submitToHw = true;
 
@@ -1494,4 +1482,85 @@ uint64_t HclCollectiveRoutinesGen2Arch::checkCollectiveDependency(CommonState& c
 void HclCollectiveRoutinesGen2Arch::invalidateCommCache(const HCL_Comm comm)
 {
     m_signalsManager->invalidateCommCache(comm);
+}
+
+void HclCollectiveRoutinesGen2Arch::DFA(uint64_t deviceTargetValue)
+{
+    if (deviceTargetValue == getCurrentTargetValue())
+    {
+        LOG_HCL_INFO(HCL, "Nothing inflight, not dumping extra info for archStream {}", m_streamId);
+        return;
+    }
+
+    LOG_HCL_CRITICAL(HCL,
+                     "ArchStream {} is stuck on Long So value {} (0x{:x}), {}",
+                     m_streamId,
+                     deviceTargetValue,
+                     deviceTargetValue,
+                     cuid_t(m_dfaLastCuid));
+
+    // Log memory usage
+    if (GCFG_HCL_DFA_DUMP_MEMORY.value())
+    {
+        LOG_HCL_CRITICAL(HCL, "Dumping most recently used HBM addresses");
+        for (DfaAddressEntry entry : m_dfaUsedAddresses)
+        {
+            if (entry.size == 0) break;
+
+            std::stringstream addressStr;
+            addressStr << "0x" << std::hex << std::setw(16) << entry.address;
+
+            size_t                printedSize = std::min(entry.size, MAX_BYTES_PER_ENTRY);
+            std::vector<uint32_t> buff(std::ceil(printedSize) / sizeof(uint32_t));
+            int                   rc = hlthunk_device_memory_read_block_experimental(m_device->getFd(),
+                                                                   buff.data(),
+                                                                   entry.address,
+                                                                   printedSize,
+                                                                   0);
+            if (rc < 0)
+            {
+                LOG_HCL_CRITICAL(HCL,
+                                 "Failed in reading address: {} with return code: {}, errno {} {}",
+                                 addressStr.str(),
+                                 rc,
+                                 errno,
+                                 strerror(errno));
+                continue;
+            }
+
+            std::stringstream dataStr;
+            for (uint32_t val : buff)
+            {
+                dataStr << "0x" << std::hex << std::setw(8) << std::setfill('0') << val << " ";
+            }
+            if (printedSize < entry.size)
+            {
+                dataStr << "...";
+            }
+
+            LOG_HCL_CRITICAL(HCL, "address={}, size={}: {}", addressStr.str(), entry.size, dataStr.str());
+        }
+    }
+
+    // Log signals manager DFA
+    m_signalsManager->DFA(deviceTargetValue);
+}
+
+void HclCollectiveRoutinesGen2Arch::dfaLogAddress(uint64_t address, uint64_t size)
+{
+    // Check if the address is already in the used addresses list
+    auto it = std::find_if(m_dfaUsedAddresses.begin(),
+                           m_dfaUsedAddresses.end(),
+                           [address](const DfaAddressEntry& entry) { return entry.address == address; });
+
+    if (it != m_dfaUsedAddresses.end())
+    {
+        it->size = std::max(it->size, size);
+    }
+    else
+    {
+        m_dfaUsedAddresses[m_dfaUsedAddressesHead].address = address;
+        m_dfaUsedAddresses[m_dfaUsedAddressesHead].size    = size;
+        m_dfaUsedAddressesHead                             = (m_dfaUsedAddressesHead + 1) % m_dfaUsedAddresses.size();
+    }
 }

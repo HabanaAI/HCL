@@ -15,8 +15,8 @@
 // we have a multithreaded IO server (asio_t) and IO clients (asio_client_t).
 // IO client is represented with file descriptor ( virtual int io_fd() ) and
 // registers events of interest with server, ( virtual uint32_t events() ).
-// when event (or error) occurs, worker thread is awoken and calls client's callback. ( virtual int io_event(uint32_t
-// events) )
+// when event (or error) occurs, worker thread is awoken and calls client's callback
+//   virtual int io_event(uint32_t events)
 //
 // f.e. IO client is a tcp socket and we want to receive data, so the event of interest is "IN", and we register it with
 // the server. when data is arrived, thread is awoken and we shall successfully read() data from the socket.

@@ -17,6 +17,7 @@ extern GlobalConfUint64 GCFG_HCL_SCALEUP_SIMB_COUNT;
 extern GlobalConfSize   GCFG_FW_IMB_SIZE;
 extern GlobalConfUint64 GCFG_HCL_MIN_IMB_SIZE_FACTOR;
 extern GlobalConfUint64 GCFG_HCL_SCALEOUT_BUFFER_FACTOR;
+extern GlobalConfBool   GCFG_HCL_OPT_SLICE_SIZE;
 extern GlobalConfSize   GCFG_HCL_SLICE_SIZE;
 extern GlobalConfSize   GCFG_HCL_GDR_SLICE_SIZE;
 extern GlobalConfUint64 GCFG_HCL_DEBUG_STATS_LEVEL;
@@ -103,6 +104,7 @@ extern GlobalConfUint64 GCFG_HCL_HLCP_OPS_TIMEOUT;
 extern GlobalConfBool   GCFG_HCL_SINGLE_QP_PER_SET;
 extern GlobalConfBool   GCFG_HCL_PROFILER_DEBUG_MODE;
 extern GlobalConfString GCFG_HCL_HNIC_TCP_EXCLUDE_IF;
+extern GlobalConfString GCFG_HCL_HNIC_VERBS_EXCLUDE_IF;
 extern GlobalConfBool   GCFG_HCL_DFA_DUMP_WQE;
 extern GlobalConfBool   GCFG_HCL_USE_NET_DETECT;
 extern GlobalConfUint64 GCFG_HCL_IBV_RETRY_TIMEOUT_SEC;
@@ -121,3 +123,6 @@ extern GlobalConfUint64 GCFG_HCL_FAULT_TOLERANCE_COMM_POLL_INTERVAL;
 extern GlobalConfBool   GCFG_HCL_FAULT_TOLERANCE_ENABLE;
 extern GlobalConfUint64 GCFG_HCL_FAULT_TOLERANCE_LOGICAL_PORTS_SHUTDOWN_MASK;
 extern GlobalConfUint64 GCFG_HCL_FAULT_TOLERANCE_FAILBACK_DELAY;
+
+// DFA related definitions
+extern GlobalConfBool GCFG_HCL_DFA_DUMP_MEMORY;

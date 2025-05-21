@@ -3,6 +3,9 @@
 #include <string>
 #include <string.h>
 
+#define ASIO_LOG(FMT, ...) COORD_LOG("[epoll_fd: 0x{:x}] " FMT, epoll_fd_, ##__VA_ARGS__)
+#define ASIO_CRT(FMT, ...) COORD_CRT("[epoll_fd: 0x{:x}] " FMT, epoll_fd_, ##__VA_ARGS__)
+
 std::string events_to_str(uint32_t events)
 {
     std::string result;
@@ -79,7 +82,7 @@ bool asio_t::setup()
         return false;
     }
 
-    HLCP_LOG("epoll_fd:{} {}", epoll_fd_, this);
+    ASIO_LOG("");
 
     // create pipe to control thread loop (now for exit only)
     RET_ON_ERR(pipe(control_));
@@ -109,7 +112,7 @@ bool asio_t::start(uint32_t io_threads)
 
 bool asio_t::add_workers(uint32_t io_threads)
 {
-    HLCP_LOG("{} workers", io_threads);
+    ASIO_LOG("{} workers", io_threads);
 
     FOR_I(io_threads)
     {
@@ -121,22 +124,22 @@ bool asio_t::add_workers(uint32_t io_threads)
 
 bool asio_t::stop()
 {
-    HLCP_LOG("{}", this);
+    ASIO_LOG();
     constexpr uint32_t SIG_STOP = 0xC0DE0FF;
     // Send a stop signal through the pipe
     // it will wake all the threads and instruct them to stop
     return write(control_[1], &SIG_STOP, sizeof(SIG_STOP)) == sizeof(SIG_STOP);
 }
 
-int asio_t::io_event([[maybe_unused]] uint32_t events)
+int asio_t::io_event(uint32_t)
 {
-    HLCP_LOG("asio. exit received");
+    ASIO_LOG("exit received");
     return IO_EXIT;
 }
 
 bool asio_t::close()
 {
-    HLCP_LOG("running threads: {}", running_.load());
+    ASIO_LOG("running threads: {}", running_.load());
 
     if (running_ > 0)
     {
@@ -149,20 +152,19 @@ bool asio_t::close()
 
     epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, control_[0], nullptr);
 
+    ASIO_LOG("deleted");
+
     ::close(control_[1]);  // Close the write end of the pipe
     ::close(epoll_fd_);
     ::close(control_[0]);  // Close the read end of the pipe
 
     control_[0] = control_[1] = epoll_fd_ = -1;
-
-    HLCP_LOG("closed");
-
     return true;
 }
 
 bool asio_t::remove(asio_client_t& ioc)
 {
-    HLCP_LOG("epoll_fd:{}, fd:{}", epoll_fd_, ioc.io_fd());
+    ASIO_LOG("io_fd: 0x{:x}", ioc.io_fd());
     ioc.asio = nullptr;
 
     epoll_event event = {};
@@ -203,12 +205,7 @@ bool asio_t::arm_monitor(asio_client_t& ioc)
     event.events   = ioc.events();
     event.data.ptr = ioc;
 
-    HLCP_LOG("[{}], op:{}. epoll_fd:{}, fd:{}  [{}]",
-             event.data.ptr,
-             op,
-             epoll_fd_,
-             ioc.io_fd(),
-             events_to_str(event.events));
+    ASIO_LOG("[{}], op: {} io_fd: 0x{:x} [{}]", event.data.ptr, op, ioc.io_fd(), events_to_str(event.events));
 
     ioc.mode_[armed] = true;
     return epoll_ctl(epoll_fd_, op, ioc, &event) != -1;
@@ -216,8 +213,6 @@ bool asio_t::arm_monitor(asio_client_t& ioc)
 
 void asio_t::epoll_thread()
 {
-    HLCP_LOG("worker");
-
     epoll_event event = {};
     bool        stop  = false;
 
@@ -236,13 +231,13 @@ void asio_t::epoll_thread()
         // The call was interrupted by a signal handler before either any of the requested events occurred or the
         // timeout expired.
         //
-        HLCP_LOG("epoll_wait({})", epoll_fd_);
+        ASIO_LOG("--> epoll_wait()");
         auto nfds = epoll_wait(epoll_fd_, &event, 1, -1);
         if (nfds == -1)
         {
             if (errno == EINTR) continue;
 
-            HLCP_LOG("epoll_wait() failed: ({}) {}", errno, strerror(errno));
+            ASIO_CRT("epoll_wait() failed: ({}) {}", errno, strerror(errno));
             break;
         }
 
@@ -250,7 +245,11 @@ void asio_t::epoll_thread()
 
         ioc.mode_[armed] = false;
 
-        HLCP_LOG("[{}] fd:{} events:{}", event.data.ptr, ioc.io_fd(), events_to_str(event.events));
+        ASIO_LOG("epoll_wait()--> [{}] io_fd: 0x{:x} events: 0x{:x} {}",
+                 event.data.ptr,
+                 ioc.io_fd(),
+                 event.events,
+                 events_to_str(event.events));
 
         int rc = ioc.io_event(event.events);
         switch (rc)

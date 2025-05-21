@@ -42,7 +42,7 @@ void Gen2ArchServerDef::fillModuleIds()
 {
     m_hwModuleIds.clear();
     HCL_HwModuleId n(0);
-    std::generate_n(std::inserter(m_hwModuleIds, m_hwModuleIds.begin()), GEN2ARCH_HLS_BOX_SIZE, [n]() mutable {
+    std::generate_n(std::inserter(m_hwModuleIds, m_hwModuleIds.begin()), m_defaultBoxSize, [n]() mutable {
         return n++;
     });
 }

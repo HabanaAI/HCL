@@ -23,16 +23,22 @@ hcclResult_t ar_runPairwise(IHcclGraphEngine* engine, HclCollectiveParams& param
 
         if (boxesCount > 1)
         {
-            graph.createPrim<HcclPrimReduceScatter>(params.m_sendBufferAddr + myBox * scaleupGroupSize * rankAddrOffset,
-                                                    scaleoutBuff,
-                                                    countPerRank * scaleupGroupSize);
+            bool castUp = isDataTypeTwoBytes(params.m_dataType);
+            graph.createPrim<HcclPrimReduceScatter>(
+                ReduceScatterPrimArgs {{params.m_sendBufferAddr + myBox * scaleupGroupSize * rankAddrOffset,
+                                        0,
+                                        scaleoutBuff,
+                                        countPerRank * scaleupGroupSize},
+                                       castUp});
         }
         else
         {
-            graph.createPrim<HcclPrimReduceScatter>(params.m_sendBufferAddr + myBox * scaleupGroupSize * rankAddrOffset,
-                                                    params.m_recvBufferAddr +
-                                                        params.m_dynamicComm.getRankInScaleupGroup() * rankAddrOffset,
-                                                    countPerRank * scaleupGroupSize);
+            graph.createPrim<HcclPrimReduceScatter>(ReduceScatterPrimArgs {
+                {params.m_sendBufferAddr + myBox * scaleupGroupSize * rankAddrOffset,
+                 params.m_recvBufferAddr + params.m_dynamicComm.getRankInScaleupGroup() * rankAddrOffset,
+                 {},
+                 countPerRank * scaleupGroupSize},
+                false});
         }
 
         for (uint32_t i = 1; i < boxesCount; i++)
@@ -46,22 +52,26 @@ hcclResult_t ar_runPairwise(IHcclGraphEngine* engine, HclCollectiveParams& param
 
             BufferToken scaleupBuff = graph.generateBufferToken(TEMP_BUFFER);
 
-            auto rs =
-                graph.createPrim<HcclPrimReduceScatter>(rsInputAddr, scaleupBuff, countPerRank * scaleupGroupSize);
+            auto rs = graph.createPrim<HcclPrimReduceScatter>(
+                ReduceScatterPrimArgs {{rsInputAddr, 0, scaleupBuff, countPerRank * scaleupGroupSize}});
 
             const bool doReduction = true;
 
-            auto send = graph.createPrim<HcclPrimSend>(sendRank, scaleupBuff, countPerRank, doReduction);
+            auto send =
+                graph.createPrim<HcclPrimSend>(SendPrimArgs {sendRank, 0, scaleupBuff, countPerRank, doReduction});
 
             graph.addWait(rs, send);
 
-            auto recv = graph.createPrim<HcclPrimRecv>(recvRank, scaleoutBuff, countPerRank, doReduction);
+            bool cast = isDataTypeTwoBytes(params.m_dataType);
+            auto recv = graph.createPrim<HcclPrimRecv>(
+                RecvPrimArgs {recvRank, 0, scaleoutBuff, countPerRank, doReduction, cast});
 
             if (i == boxesCount - 1)
             {
                 uint64_t reductionDstAddr = params.m_recvBufferAddr + myBox * scaleupGroupSize * rankAddrOffset +
                                             params.m_dynamicComm.getRankInScaleupGroup() * rankAddrOffset;
-                auto reduction = graph.createPrim<HcclPrimReduction>(scaleoutBuff, reductionDstAddr, countPerRank);
+                auto reduction = graph.createPrim<HcclPrimReduction>(
+                    ReductionPrimArgs {0, scaleoutBuff, reductionDstAddr, countPerRank, cast});
                 graph.addWait(recv, reduction);
             }
         }
@@ -78,19 +88,20 @@ hcclResult_t ar_runPairwise(IHcclGraphEngine* engine, HclCollectiveParams& param
 
         for (uint32_t i = 1; i < boxesCount; i++)
         {
-            int sendRank = (myRank + i * scaleupGroupSize) % commSize;
-            int recvRank = (myRank - i * scaleupGroupSize + commSize) % commSize;
+            HCL_Rank sendRank = (myRank + i * scaleupGroupSize) % commSize;
+            HCL_Rank recvRank = (myRank - i * scaleupGroupSize + commSize) % commSize;
 
             uint64_t recvAddr    = params.m_recvBufferAddr + recvRank * rankAddrOffset;
             uint16_t recvBox     = params.m_dynamicComm.getRankToScaleupGroupMap()[recvRank];
             uint64_t boxOffset   = recvBox * scaleupGroupSize * rankAddrOffset;
             uint64_t agInOutAddr = params.m_recvBufferAddr + boxOffset;
 
-            auto recv = graph.createPrim<HcclPrimRecv>(recvRank, recvAddr, countPerRank);
+            auto recv = graph.createPrim<HcclPrimRecv>(RecvPrimArgs {recvRank, recvAddr, {}, countPerRank});
             auto ag   = graph.createPrim<HcclPrimAllGather>(agInOutAddr, agInOutAddr, countPerRank);
             graph.addWait(recv, ag);
 
-            graph.createPrim<HcclPrimSend>(sendRank, params.m_recvBufferAddr + myRank * rankAddrOffset, countPerRank);
+            graph.createPrim<HcclPrimSend>(
+                SendPrimArgs {sendRank, params.m_recvBufferAddr + myRank * rankAddrOffset, {}, countPerRank});
         }
         return graph.submit();
     }

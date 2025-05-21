@@ -18,4 +18,5 @@ public:
 
 protected:
 private:
+    void fillModuleIds() override;
 };

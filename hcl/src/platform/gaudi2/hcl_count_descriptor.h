@@ -39,7 +39,6 @@ inline CountDescriptor::CountDescriptor(uint64_t cellCount, unsigned numNicsInUs
 
 inline bool CountDescriptor::isShort() const
 {
-    static constexpr uint64_t MAX_CACHE_LINES_IN_SHORT_COMMAND =
-        ((1 << 13) - 1);  // 13 bits, all '1's.
+    static constexpr uint64_t MAX_CACHE_LINES_IN_SHORT_COMMAND = ((1 << 13) - 1);  // 13 bits, all '1's.
     return m_cacheLineCount <= MAX_CACHE_LINES_IN_SHORT_COMMAND;
 }

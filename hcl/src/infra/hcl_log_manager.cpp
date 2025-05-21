@@ -31,6 +31,7 @@ static void createModuleLoggers(LogManager::LogType)
         hclParams.logFileBufferSize   = 1024 * 1024;
         hclParams.printSpecialContext = true;
         hclParams.rotateLogfileOnOpen = true;
+        hclParams.defaultLoggingLevel = HLLOG_LEVEL_ERROR;
         hl_logger::createLoggers({LogManager::LogType::HCL,
                                   LogManager::LogType::HCL_OFI,
                                   LogManager::LogType::HCL_SCAL,
@@ -78,6 +79,7 @@ static void createModuleLoggersOnDemand(LogManager::LogType)
         hclParams.logFileAmount       = LOG_AMOUNT;
         hclParams.logFileBufferSize   = 1024 * 1024;
         hclParams.printSpecialContext = true;
+        hclParams.defaultLoggingLevel = HLLOG_LEVEL_ERROR;
         hl_logger::createLoggerOnDemand(LogManager::LogType::HCL_COORD, hclParams);
 
         hclParams.defaultLoggingLevel      = HLLOG_LEVEL_TRACE;
@@ -94,6 +96,7 @@ static void createModuleLoggersOnDemand(LogManager::LogType)
         hclParams.logFileBufferSize   = 1024 * 1024;
         hclParams.printSpecialContext = true;
         hclParams.separateLogFile     = HCL_TEST_SEPARATE_LOG_FILE;
+        hclParams.defaultLoggingLevel = HLLOG_LEVEL_ERROR;
         hl_logger::createLoggerOnDemand(LogManager::LogType::HCL_TEST, hclParams);
     }
 

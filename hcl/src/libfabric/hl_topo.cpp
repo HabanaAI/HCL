@@ -8,20 +8,65 @@
 #include <map>
 #include <optional>
 #include <hwloc.h>
-#include <lemon/lp.h>   // for Mip
 #include "hcl_utils.h"  // for VERIFY, LOG_HCL_DEBUG, LOG_H...
 #include "hcl_topology.h"
+#include <regex>
+#if !defined __GNUC__ || __GNUC__ >= 8
+#include <filesystem>
+namespace fs = std::filesystem;
+#else
+#include <experimental/filesystem>
+namespace fs = std::experimental::filesystem;
+#endif
 
 namespace hl_topo
 {
-using namespace lemon;
+
+static std::map<std::string, uint32_t>    pci_addr_to_module_id;
+static std::map<std::string, std::string> pci_addr_to_accel;
 
 static std::string getPCIAddress(const hwloc_obj_t device)
 {
-    return fmt::format("{:02x}:{:02x}.{:01x}",
+    return fmt::format("{:04x}:{:02x}:{:02x}.{:01x}",
+                       device->attr->pcidev.domain,
                        device->attr->pcidev.bus,
                        device->attr->pcidev.dev,
                        device->attr->pcidev.func);
+}
+
+static void mapPCIAddressToModuleIdAndAccel()
+{
+    const std::string path = "/sys/class/accel/";
+    std::regex        accelRegex(R"(accel\d+)");
+    for (const auto& entry : fs::directory_iterator(path))
+    {
+        if (fs::is_directory(entry.path()))
+        {
+            const auto  dirName = entry.path().filename().string();
+            std::smatch match;
+            if (std::regex_search(dirName, match, accelRegex))
+            {
+                const auto accel = match.str();
+
+                const auto    pci_addr_path = entry.path().string() + "/device/pci_addr";
+                std::ifstream file_pci_addr(pci_addr_path);
+                VERIFY(file_pci_addr.is_open(), "Failed to open {} pci_addr file", accel);
+                std::string pci_addr;
+                std::getline(file_pci_addr, pci_addr);
+                file_pci_addr.close();
+
+                const auto    module_id_path = entry.path().string() + "/device/module_id";
+                std::ifstream file_module_id(module_id_path);
+                VERIFY(file_module_id.is_open(), "Failed to open {} module_id file", accel);
+                std::string module_id;
+                std::getline(file_module_id, module_id);
+                file_module_id.close();
+
+                pci_addr_to_module_id[pci_addr] = std::stoul(module_id);
+                pci_addr_to_accel[pci_addr]     = accel;
+            }
+        }
+    }
 }
 
 static hwloc_obj_t getOSDevice(const hwloc_obj_t device, const hwloc_obj_osdev_type_t type)
@@ -55,22 +100,11 @@ static std::string getOpenfabricName(const hwloc_obj_t device)
 
 static uint32_t getModuleId(const hwloc_obj_t device)
 {
-    static std::map<hwloc_obj_t, uint32_t> device_module_id;
-    const auto                             it = device_module_id.find(device);
-    if (device_module_id.end() != it)
+    if (pci_addr_to_module_id.empty())
     {
-        return it->second;
+        mapPCIAddressToModuleIdAndAccel();
     }
-
-    const auto    name           = getOpenfabricName(device);
-    const auto    module_id_path = fmt::format("/sys/class/accel/accel{}/device//module_id", name.back());
-    std::ifstream file(module_id_path);
-    VERIFY(file.is_open(), "Failed to open accel module_id file");
-    std::string line;
-    std::getline(file, line);
-    file.close();
-    device_module_id[device] = std::stoul(line);
-    return device_module_id[device];
+    return pci_addr_to_module_id[getPCIAddress(device)];
 }
 
 struct HwlocOAMCompare
@@ -94,8 +128,7 @@ struct HwlocHNICCompare
     }
 };
 
-using HwObjMatrix  = std::map<hwloc_obj_t, std::map<hwloc_obj_t, hwloc_obj_t, HwlocHNICCompare>, HwlocOAMCompare>;
-using WeightMatrix = std::map<hwloc_obj_t, std::map<hwloc_obj_t, uint32_t, HwlocHNICCompare>, HwlocOAMCompare>;
+using HwObjMatrix = std::map<hwloc_obj_t, std::map<hwloc_obj_t, hwloc_obj_t, HwlocHNICCompare>, HwlocOAMCompare>;
 
 static constexpr uint16_t HABANA_LABS_VENDOR_ID {0x1da3};
 static constexpr uint16_t MELLANOX_VENDOR_ID {0x15b3};
@@ -123,13 +156,6 @@ static bool isHNICActive(const hwloc_obj_t device)
 static uint32_t getDistance(const hwloc_obj_t parent, const hwloc_obj_t obj1, const hwloc_obj_t obj2)
 {
     return (parent->depth - obj1->depth) + (parent->depth - obj2->depth) - 1;
-}
-
-static uint32_t getTypeWeight(const hwloc_obj_type_t type)
-{
-    // The hwloc_obj_type_t enum uses high values for better connections, we want to use high values for worse
-    // connections.
-    return ((type * -1) + HWLOC_OBJ_TYPE_MAX) * 10;
 }
 
 /**
@@ -179,7 +205,8 @@ ModuleID        mlx5_0        mlx5_2
        6       Machine       Package
        7       Machine       Package
 */
-static void printConnectionsMatrix(const HwObjMatrix& matrix)
+static void printConnectionsMatrix(const HwObjMatrix&                                   matrix,
+                                   std::map<hwloc_obj_t, hwloc_obj_t, HwlocOAMCompare>& oam2hnic)
 {
     std::stringstream matrixSS;
     matrixSS << std::setw(CELL_WIDTH) << "ModuleID";
@@ -197,6 +224,10 @@ static void printConnectionsMatrix(const HwObjMatrix& matrix)
         for (const auto& [hnic, parent] : hnics)
         {
             std::stringstream cell_ss;
+            if (oam2hnic[oam] == hnic)
+            {
+                cell_ss << "* ";
+            }
             cell_ss << hwloc_obj_type_string(parent->type);
             if (parent->type == HWLOC_OBJ_BRIDGE)
             {
@@ -263,97 +294,75 @@ static HwObjMatrix createConnectionMatrix([[maybe_unused]] const hwloc_topology_
     return connectionMatrix;
 }
 
-WeightMatrix createWeights(const HwObjMatrix& matrix)
+static hwloc_obj_t findBestConnections(const HwObjMatrix& connectionMatrix, const hwloc_obj_t targetOam)
 {
-    WeightMatrix weights;
-    for (const auto& [oam, hnics] : matrix)
+    std::map<hwloc_obj_t, int, HwlocHNICCompare>        hnicConnectionsCntr;
+    std::map<hwloc_obj_t, hwloc_obj_t, HwlocOAMCompare> oam2hnic;
+
+    for (const auto& [hnic, parent] : connectionMatrix.at(targetOam))
+    {
+        UNUSED(parent);
+        hnicConnectionsCntr[hnic] = 0;
+    }
+
+    uint32_t maxBridgeDistance = 0;
+    for (const auto& [oam, hnics] : connectionMatrix)
     {
         for (const auto& [hnic, parent] : hnics)
         {
-            const auto weight  = getDistance(parent, oam, hnic) + getTypeWeight(parent->type);
-            weights[oam][hnic] = weight;
+            if (parent->type == HWLOC_OBJ_BRIDGE)
+            {
+                maxBridgeDistance = std::max(maxBridgeDistance, getDistance(parent, oam, hnic));
+            }
         }
     }
-    return weights;
-}
 
-static hwloc_obj_t findBestConnections(const WeightMatrix& weights, const hwloc_obj_t targetOam)
-{
-    Mip mip;  // Mixed-Integer Programming solver
-
-    std::map<hwloc_obj_t, std::vector<Mip::Col>, HwlocOAMCompare>  oamVariables;
-    std::map<hwloc_obj_t, std::vector<Mip::Col>, HwlocHNICCompare> hnicVariables;
-    std::map<Mip::Col, std::tuple<hwloc_obj_t, hwloc_obj_t>>       variablesEdges;
-    Mip::Expr                                                      objective;
-    for (const auto& [oam, hnics] : weights)
+    for (const auto& connectionType : {HWLOC_OBJ_BRIDGE, HWLOC_OBJ_PACKAGE, HWLOC_OBJ_MACHINE})
     {
-        for (const auto& [hnic, weight] : hnics)
+        uint32_t distances = connectionType == HWLOC_OBJ_BRIDGE ? maxBridgeDistance : 1;
+        for (uint32_t i = 1; i <= distances; i++)
         {
-            const auto variable = mip.addCol();
-            mip.colType(variable, Mip::INTEGER);
-            mip.colLowerBound(variable, 0);
-            mip.colUpperBound(variable, 1);
-            oamVariables[oam].push_back(variable);
-            hnicVariables[hnic].push_back(variable);
-            variablesEdges[variable] = std::make_tuple(oam, hnic);
-            objective += (weight * variable);
+            for (const auto& [oam, hnics] : connectionMatrix)
+            {
+                hwloc_obj_t bestHnic = nullptr;
+                if (oam2hnic.find(oam) != oam2hnic.end()) continue;
+
+                for (const auto& [hnic, parent] : hnics)
+                {
+                    if (parent->type == connectionType &&
+                        (connectionType != HWLOC_OBJ_BRIDGE || i == getDistance(parent, oam, hnic)))
+                    {
+                        if (!bestHnic || hnicConnectionsCntr[hnic] < hnicConnectionsCntr[bestHnic])
+                        {
+                            bestHnic = hnic;
+                        }
+                    }
+                }
+                if (bestHnic)
+                {
+                    hnicConnectionsCntr[bestHnic] += 1;
+                    oam2hnic[oam] = bestHnic;
+                }
+            }
         }
     }
-    mip.min();
-    mip.obj(objective);
 
-    // Set constraint that each OAM must have exactly one connection
-    for (const auto& [oam, variables] : oamVariables)
-    {
-        UNUSED(oam);
-        Mip::Expr oamConnectionCount;
-        for (const auto& variable : variables)
-        {
-            oamConnectionCount += variable;
-        }
-        mip.addRow(oamConnectionCount == 1);
-    }
+    printConnectionsMatrix(connectionMatrix, oam2hnic);
 
-    const auto oamCount                 = weights.size();
-    const auto hnicCount                = (*weights.cbegin()).second.size();
-    const auto minConnectionCount       = oamCount / hnicCount;
-    const auto remainderConnectionCount = (oamCount % hnicCount) ? 1 : 0;
-    // Set constraint that each host NIC must have between minConnectionCount and minConnectionCount +
-    // remainderConnectionCount
-    for (const auto& [hnic, variables] : hnicVariables)
-    {
-        UNUSED(hnic);
-        Mip::Expr oamConnectionCount;
-        for (const auto& variable : variables)
-        {
-            oamConnectionCount += variable;
-        }
-        mip.addRow(minConnectionCount <= oamConnectionCount <= (minConnectionCount + remainderConnectionCount));
-    }
-
-    mip.solve();
-    VERIFY((Mip::OPTIMAL == mip.type()), "Failed to find optimal OAM to HNIC pairing");
-    const auto& v = oamVariables[targetOam];
-    const auto  variable =
-        std::find_if(v.cbegin(), v.cend(), [&mip](const auto& var) { return static_cast<int>(mip.sol(var)) == 1; });
-    VERIFY((variable != v.cend()));
-    return std::get<1>(variablesEdges[*variable]);
+    return oam2hnic[targetOam];
 }
 
 static hwloc_obj_t getOam(const std::vector<hwloc_obj_t>& oams, const std::string& accel)
 {
     static constexpr std::string_view ACCEL {"accel"};
-    static constexpr std::string_view OAM {"hbl_"};
-
     VERIFY(accel.compare(0, ACCEL.length(), ACCEL) == 0,
            std::string("Invalid accel does not start with \"") + ACCEL.data() + "\" - " + accel);
-
-    auto oam = accel;
-    // Change accel4 to hbl_4
-    oam.replace(accel.find(ACCEL), ACCEL.size(), OAM);
-
-    const auto accelIt = std::find_if(oams.cbegin(), oams.cend(), [&oam](const hwloc_obj_t& obj) {
-        return getOpenfabricName(obj) == oam;
+    if (pci_addr_to_accel.empty())
+    {
+        mapPCIAddressToModuleIdAndAccel();
+    }
+    const auto accelIt = std::find_if(oams.cbegin(), oams.cend(), [&accel](const hwloc_obj_t& obj) {
+        return pci_addr_to_accel[getPCIAddress(obj)] == accel;
     });
     VERIFY((accelIt != oams.cend()), "Failed to find given accel");
 
@@ -410,12 +419,9 @@ std::tuple<size_t, std::string> getBestProvider(const std::vector<struct fi_info
     VERIFY(!suitableHnics.empty(), "The are no suitable providers");
 
     const auto connectionMatrix = createConnectionMatrix(*topology, oams, suitableHnics);
-    printConnectionsMatrix(connectionMatrix);
-
-    const auto weights = createWeights(connectionMatrix);
 
     const auto oam  = getOam(oams, accel);
-    const auto hnic = findBestConnections(weights, oam);
+    const auto hnic = findBestConnections(connectionMatrix, oam);
 
     const auto        connection = connectionMatrix.at(oam).at(hnic);
     const std::string matchType  = translateHwlocType(connection->type);

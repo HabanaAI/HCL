@@ -15,6 +15,9 @@
 #include "hccl/ofi_communicator.h"                // for ofi_communicator_handle
 #include "interfaces/hcl_hal.h"                   // for HalPtr
 #include "hccl_internal_defs.h"                   // for internal_unique_id_t
+#include "hccl_types.h"                           // for hcclComm_t
+#include "platform/gen2_arch_common/qp_manager.h"
+#include "platform/gen2_arch_common/qp_migration_manager_scaleout.h"
 
 class HclStaticBuffersManager;
 class IHclDevice;
@@ -28,7 +31,8 @@ enum class FaultToleranceState
     FTcreateMigrationQPs = 2,
     FTmoveToRts          = 3,
     FTwaitMaxCounters    = 4,
-    FTcommUpdate         = 5
+    FTreachedTarget      = 5,
+    FTcommUpdate         = 6
 };
 
 class CommConnectivity
@@ -89,17 +93,17 @@ struct RankApiCounters
         {
             return true;
         }
-        // for (size_t i = 0; i < ranksSendRecv.size(); i++)
-        // {
-        //     if (ranksSendRecv[i].sendCounter < other.ranksSendRecv[i].sendCounter)
-        //     {
-        //         return true;
-        //     }
-        //     if (ranksSendRecv[i].recvCounter < other.ranksSendRecv[i].recvCounter)
-        //     {
-        //         return true;
-        //     }
-        // }
+        for (size_t i = 0; i < ranksSendRecv.size(); i++)
+        {
+            if (ranksSendRecv[i].sendCounter < other.ranksSendRecv[i].sendCounter)
+            {
+                return true;
+            }
+            if (ranksSendRecv[i].recvCounter < other.ranksSendRecv[i].recvCounter)
+            {
+                return true;
+            }
+        }
         return false;
     }
 
@@ -112,17 +116,17 @@ struct RankApiCounters
         {
             return false;
         }
-        // for (size_t i = 0; i < ranksSendRecv.size(); i++)
-        // {
-        //     if (ranksSendRecv[i].sendCounter != other.ranksSendRecv[i].sendCounter)
-        //     {
-        //         return false;
-        //     }
-        //     if (ranksSendRecv[i].recvCounter != other.ranksSendRecv[i].recvCounter)
-        //     {
-        //         return false;
-        //     }
-        // }
+        for (size_t i = 0; i < ranksSendRecv.size(); i++)
+        {
+            if (ranksSendRecv[i].sendCounter != other.ranksSendRecv[i].sendCounter)
+            {
+                return false;
+            }
+            if (ranksSendRecv[i].recvCounter != other.ranksSendRecv[i].recvCounter)
+            {
+                return false;
+            }
+        }
         return true;
     }
 
@@ -142,8 +146,8 @@ struct RankApiCounters
         }
     }
     void clear() { fill(0); }
-    void logDebug(const HCL_Comm commId, const std::string_view& prefix, const std::string_view& varName) const;
-    void logDebugCompare(const HCL_Comm          commId,
+    void logDebug(const CommIds& commIds, const std::string_view& prefix, const std::string_view& varName) const;
+    void logDebugCompare(const CommIds&          commIds,
                          const std::string_view& prefix,
                          const std::string_view& varName,
                          const RankApiCounters&  myCounters) const;
@@ -199,7 +203,10 @@ public:
 
     bool init(const uint32_t hcclCommSize, const HCL_Rank rank, const int boxSize);
 
-    void setUniqueID(const internal_unique_id_t* internal_unique_id);
+    void             setUniqueID(const internal_unique_id_t* internal_unique_id);
+    void             setHcclCommHandle(hcclComm_t commHandle);
+    hcclComm_t       getCommHandle() { return m_commHandle; }
+    const hcclComm_t getCommHandle() const { return m_commHandle; }
 
     /**
      * determine whether comm is inside the ScaleupGroup communicator
@@ -276,7 +283,7 @@ public:
 
     Gen2ArchServerDef& getServerDef() { return m_serverDef; };
 
-    void getAsyncError(hcclResult_t* asyncError);
+    void getAsyncError(hcclResult_t* asyncError, std::string& errMessage);
 
     HclRemoteDeviceArray m_remoteDevices;
     RankInfo             m_rankInfo           = {};
@@ -299,6 +306,9 @@ public:
     std::vector<uint64_t> m_streamLatestLongSo;
 
     operator HCL_Comm() const { return m_commId; }
+
+    CommIds getCommIds() const { return {m_commId, m_commIdPort}; }
+
     const CommConnectivity& getCommConnectivity() const { return m_commConnectivity; }
     CommConnectivity&       getCommConnectivity() { return m_commConnectivity; }
 
@@ -319,6 +329,9 @@ public:
     bool isDfaNicExists(const uint16_t dfaNic, const HCL_Rank rank);
 
     FaultToleranceDfaLog m_dfaData;
+
+    std::array<std::shared_ptr<QPManager>, MAX_NICS_GEN2ARCH> m_qpManagers = {};
+    MigrationQpManager                                        m_migrationQpManager;
 
 private:
     const HCL_Comm   m_commId;
@@ -356,6 +369,7 @@ private:
 
     internal_unique_id_t  m_commUniqueId;
     std::string           m_commUniqueIdStr;
+    std::string_view      m_commIdPort = "Unknown";
     Gen2ArchServerDef&    m_serverDef;
     hcl::HalPtr           m_hal;
     std::vector<HCL_Rank> m_remoteRanks   = {};
@@ -365,4 +379,5 @@ private:
 
     FaultToleranceTargetCounters m_faultToleranceTargetCounters;
     std::mutex                   m_faultToleranceTargetCountersMutex;
+    hcclComm_t m_commHandle = nullptr;  // Stores back pointer to hccl_communicator, needed for fault tolerance
 };

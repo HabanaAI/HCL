@@ -21,7 +21,7 @@ bool coordinator_t::stop()
 
 void coordinator_t::on_error(socket_base_t& s)
 {
-    HLCP_ERR("({}){}. {}", errno, strerror(errno), s);
+    HCL_COORD_ERR("({}){}. {}", errno, strerror(errno), s);
 
     if (s.fd == srv_.fd)
     {
@@ -53,7 +53,7 @@ void coordinator_t::drop_connection(hlcp_t& c)
 
 void coordinator_t::on_disconnect(socket_base_t& s)
 {
-    HLCP_LOG("{}", s);
+    HCL_COORD_LOG("{}", s);
 
     xsocket_t& xs = static_cast<xsocket_t&>(s);
 
@@ -61,7 +61,7 @@ void coordinator_t::on_disconnect(socket_base_t& s)
 
     if (!xs.marked)
     {
-        HLCP_ERR("peer disconnected", s);
+        HCL_COORD_ERR("peer disconnected {}", s);
     }
 
     asio_.remove(xs);
@@ -73,15 +73,13 @@ void coordinator_t::on_disconnect(socket_base_t& s)
 
 void coordinator_t::on_accept(socket_base_t& s, int new_socket_fd)
 {
-    HLCP_LOG("accepted({})<--{}", s.fd, new_socket_fd);
-
     xsocket_t& xs = *new xsocket_t(new_socket_fd, *this, &asio_);
 
     hlcp_t& conn = create_connection(xs);
 
     xs = conn;
 
-    HLCP_LOG("{}", xs.str());
+    HCL_COORD_LOG("{} accepted {}", s, xs.str());
 
     conn.notify_->on_connect(conn);
 }
@@ -93,11 +91,11 @@ void coordinator_t::on_error(hlcp_command_t*      cmd,
 {
     if (cmd)
     {
-        HLCP_ERR("expected {} .{} : [{}]. {}", *cmd, packet, connection->str(), reason);
+        HCL_COORD_ERR("expected {} .{} : [{}]. {}", *cmd, packet, connection->str(), reason);
     }
     else
     {
-        HLCP_ERR("{} : [{}]. {}", packet, connection->str(), reason);
+        HCL_COORD_LOG("{} : [{}]. {}", packet, connection->str(), reason);
     }
 
     drop_connection(connection);

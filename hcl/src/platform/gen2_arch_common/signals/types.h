@@ -1,6 +1,7 @@
 #pragma once
-#include "platform/gen2_arch_common/device_buffer_manager.h"  // for MAX_SCALEOUT_FACTOR
+#include "platform/gen2_arch_common/device_simb_pool_manager.h"  // for MAX_SCALEOUT_FACTOR
 
+// SignalEvent events are used to get the signal cost of the operation
 enum class SignalEvent
 {
     FORCE_ORDER = 0,
@@ -25,6 +26,7 @@ enum class SignalEvent
     SIGNAL_EVENT_MAX
 };
 
+// WaitMethod is the SO type we sync on
 enum class WaitMethod
 {
     GPSO_LONGTERM = 0,
@@ -67,6 +69,7 @@ const unsigned WAIT_PHASE_MAX = 128;
 const uint64_t MIN_PHASES     = 8;
 using WaitPhase               = size_t;
 
+// Associates the enqueued wait with a "wait if needed" method call
 enum class WaitEvent
 {
     GENERAL_COMPLETION_EVENT = 0,
@@ -90,7 +93,7 @@ enum class WaitEvent
     DMA_WAIT_FOR_SU_RECV,
     FINAL_DMA_WAIT_FOR_EDMA,
     SCALEOUT_SEND_WAIT_FOR_DMA,
-    RS_SO_WAIT_FOR_ALL_RECV,
+    SO_WAIT_FOR_EDMA_AND_ALL_RECV,
     GATHER_OPS_WAIT_FOR_RS,
     LTU_SIGNALING_WAIT_FOR_SCALEOUT_SEND,
     HNIC_SIGNAL_SPLIT_WAIT_FOR_GDR_MEMCPY,

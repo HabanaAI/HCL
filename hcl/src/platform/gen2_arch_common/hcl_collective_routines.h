@@ -13,7 +13,6 @@
 #include "platform/gen2_arch_common/hcl_address_generator.h"  // for HclAddressGenerator
 #include "llvm/small_vector.h"                                // for SmallVector
 #include "hcl_types.h"
-#include "platform/gen2_arch_common/types.h"          // for GEN2ARCH_HLS_BOX_SIZE
 #include "platform/gen2_arch_common/signals/types.h"  // for WaitEvent
 #include "platform/gen2_arch_common/wqe_tracker.h"    // for WqeWraparoundBits
 #include "platform/gen2_arch_common/collective_states.h"
@@ -49,13 +48,16 @@ struct SliceState;
 struct HclCollectiveParams;
 struct SendRecvMemCopyEntry;
 class ScaleoutProvider;
-class DeviceBufferManager;
+class DeviceSimbPoolManagerBase;
 class HclGraphSyncGen2Arch;
+
+static constexpr size_t MAX_DUMP_ADDRESS_ENTRIES = 10;
+static constexpr size_t MAX_BYTES_PER_ENTRY      = 1000;
 
 class HclCollectiveRoutinesGen2Arch : public IHcclGraphEngine
 {
 public:
-    HclCollectiveRoutinesGen2Arch(HclDeviceGen2Arch* device, int streamId, WqeTracker* wqeTracker);
+    HclCollectiveRoutinesGen2Arch(HclDeviceGen2Arch* device, int archStreamIdx, WqeTracker* wqeTracker);
     virtual ~HclCollectiveRoutinesGen2Arch();
     virtual uint64_t     initGraph(HcclGraph* graph) override;
     virtual void         finalizeGraph(HcclGraph* graph, uint64_t startTargetVal) override;
@@ -70,7 +72,6 @@ public:
 
     int enqueueWaitsForPrim(HcclPrim* prim, WaitMethod waitMethod, signalEvents_t&& signalEvents);
 
-    void           barrierArmSchedulers(unsigned requiredCredits);
     void           configureExternalSoForCompletion(LBWBurstData_t& completionInfoArr);
     LBWBurstData_t getLbwDataForExternalSoCompletion(unsigned numSignals);
 
@@ -134,19 +135,21 @@ public:
 
     Gen2ArchScalUtils* getScalUtils() { return m_utils; }
     SignalsManager*    getSignalsManager() { return m_signalsManager; }
-    uint64_t           getCurrentTargetValue() { return m_longSo.targetValue; }
-    int                getArchStream() { return m_streamId; }
+    uint64_t           getCurrentTargetValue() const { return m_longSo.targetValue; }
+    int                getArchStream() const { return m_streamId; }
     void               invalidateCommCache(const HCL_Comm comm);
 
     void setGroupContext(const bool value);
     bool getGroupContext() const { return m_groupContext; }
 
-    WqeWraparoundBits    getWraparoundBits(HCL_Comm commId, unsigned rank, QpType qpType);
-    DeviceBufferManager& getIntermediateBufferManager() { return m_intermediateBufferManager; }
-    HclDeviceGen2Arch*   getDevice() { return m_device; }
-    uint64_t             getGroupMaxTargetValue() const { return m_groupMaxTargetValue; }
-    void                 setGroupMaxTargetValue(uint64_t targetVal) { m_groupMaxTargetValue = targetVal; }
-    RemainderCalculator* m_remainderCalculator = nullptr;
+    WqeWraparoundBits          getWraparoundBits(HCL_Comm commId, unsigned rank, QpType qpType);
+    DeviceSimbPoolManagerBase& getDeviceSimbPoolManager() { return m_deviceSimbPoolManager; }
+    HclDeviceGen2Arch*         getDevice() { return m_device; }
+    uint64_t                   getGroupMaxTargetValue() const { return m_groupMaxTargetValue; }
+    void                       setGroupMaxTargetValue(uint64_t targetVal) { m_groupMaxTargetValue = targetVal; }
+    RemainderCalculator*       m_remainderCalculator = nullptr;
+
+    void DFA(uint64_t deviceTargetValue);
 
 protected:
     virtual void initCollectiveRoutinesGen2Arch();
@@ -168,11 +171,12 @@ protected:
                                                SliceState&      recvSliceState,
                                                unsigned         sliceIter);
 
-    void createDmaProgs(SliceState&    sendSliceState,
-                        SliceState&    recvSliceState,
-                        unsigned int   sizeInBytes,
-                        unsigned       requiredCredits,
-                        hcclDataType_t dataType);
+    void createStreamRecipes(SliceState&    sendSliceState,
+                             SliceState&    recvSliceState,
+                             unsigned int   sizeInBytes,
+                             hcclDataType_t dataType);
+
+    void createGeneralPurposeProgs(unsigned requiredCredits);
 
     void createScaleUpSendProgs(SliceState&      sliceState,
                                 unsigned         sliceIter,
@@ -187,7 +191,15 @@ protected:
                                 unsigned         requiredCredits,
                                 HCL_CollectiveOp currentOp);
 
-    void createDmaProgsNonCollective(unsigned int sizeInBytes, unsigned requiredCredits);
+    void createScaleOutSendProgs(SliceState& sliceState, unsigned requiredCredits);
+
+    void createScaleOutRecvProgs(SliceState& sliceState, unsigned requiredCredits);
+
+    void garbageCollectionStreamRecipeNonCollective();
+
+    inline void createStreamRecipesNonCollective() { garbageCollectionStreamRecipeNonCollective(); };
+
+    void createGeneralPurposeProgsNonCollective(unsigned int sizeInBytes, unsigned requiredCredits);
 
     void createScaleUpSendProgsNonCollective(uint32_t                                 numberOfSendBuckets,
                                              uint32_t                                 numberOfRecvBuckets,
@@ -216,10 +228,6 @@ protected:
                                               const unsigned                          requiredCredits,
                                               std::unordered_map<HCL_Rank, unsigned>& qpSetIterPerRecvPeerRank,
                                               const CommonState&                      commonState);
-
-    void createScaleOutSendProgs(SliceState& sliceState, unsigned requiredCredits);
-
-    void createScaleOutRecvProgs(SliceState& sliceState, unsigned requiredCredits);
 
     void getDeviceToRemoteIndex(CommonState&   commonState,
                                 bool           isSend,
@@ -282,11 +290,14 @@ protected:
                                     SliceState&      recvSliceState,
                                     unsigned int     sizeInBytes,
                                     hcclDataType_t   dataType,
-                                    hcl::ScalStream* garbageStream) = 0;
+                                    hcl::ScalStream& garbageStream) = 0;
 
     virtual void enqueueInternalCompletionSignals();
 
     void addScaleoutInternalSOB(SliceState& sliceState, WaitMethod method);
+
+    // For DFA log
+    void dfaLogAddress(uint64_t address, uint64_t size);
 
     HclDeviceGen2Arch*    m_device;
     int                   m_streamId = 0;
@@ -297,9 +308,9 @@ protected:
 
     HclConfigType m_boxType;
 
-    BufferAllocationManager m_staticBuffersAllocator;
-    DeviceBufferManager&    m_intermediateBufferManager;
-    Gen2ArchScalUtils*      m_utils = NULL;
+    BufferAllocationManager    m_staticBuffersAllocator;
+    DeviceSimbPoolManagerBase& m_deviceSimbPoolManager;
+    Gen2ArchScalUtils*         m_utils = NULL;
 
     HclCommandsGen2Arch&                             m_commands;
     std::unique_ptr<HclCollectiveMemHandlerGen2Arch> m_memHandler;
@@ -321,4 +332,17 @@ protected:
     bool                              m_nullSubmit;
 
     bool m_requestStrongOrderIter = false;
+
+    // For DFA log
+    uint64_t m_dfaLastCuid = 0;
+    struct DfaAddressEntry
+    {
+        uint64_t address;
+        uint64_t size;
+
+        // Define default constructor to avoid uninitialized values
+        DfaAddressEntry() : address(0), size(0) {};
+    };
+    std::array<DfaAddressEntry, MAX_DUMP_ADDRESS_ENTRIES> m_dfaUsedAddresses;
+    size_t                                                m_dfaUsedAddressesHead = 0;
 };

@@ -32,6 +32,7 @@ namespace DfaMsg
     const char* const FAIL_INFO             = "Failure Info";
     const char* const DMESG                 = "Copying dmesg to a seperate file";
     const char* const GCFG                  = "Log GCFG values";
+    const char* const ENV                   = "Log Environment variables";
     const char* const ENG_MASKS             = "Engines masks / number";
     const char* const DEV_MAP               = "Device Mapping";
     const char* const SW_MAP_MEM            = "SW Mapped memory";

@@ -11,13 +11,13 @@
 #include "platform/gen2_arch_common/signals/types.h"
 #include "platform/gen2_arch_common/collective_states.h"
 #include "hcl_utils.h"  // for VERIFY
-#include "platform/gen2_arch_common/device_buffer_manager.h"
-#include "intermediate_buffer_container.h"
-#include "platform/gen2_arch_common/host_buffer_manager.h"  // for HostBufferManager
-#include "platform/gen2_arch_common/hcl_graph_sync.h"       // for HclGraphSyncGen2Arch
-#include "platform/gen2_arch_common/signals/manager.h"      // for SignalsManager
-#include "platform/gen2_arch_common/collective_utils.h"     // for getNextBox, getPrevBox
-#include "platform/gen2_arch_common/dependency_checker.h"   // for DependencyChecker
+#include "platform/gen2_arch_common/device_simb_pool_manager.h"
+#include "simb_pool_container_allocator.h"
+#include "platform/gen2_arch_common/host_simb_pool_manager.h"  // for HostSimbPoolManager
+#include "platform/gen2_arch_common/hcl_graph_sync.h"          // for HclGraphSyncGen2Arch
+#include "platform/gen2_arch_common/signals/manager.h"         // for SignalsManager
+#include "platform/gen2_arch_common/collective_utils.h"        // for getNextBox, getPrevBox
+#include "platform/gen2_arch_common/dependency_checker.h"      // for DependencyChecker
 #include "platform/gen2_arch_common/active_stream_manager.h"
 #include "platform/gen2_arch_common/scaleout_provider.h"  // for ScaleoutProvider
 #include "platform/gen2_arch_common/hcl_device.h"         // for HclDevi...
@@ -72,7 +72,7 @@ void HclCollectiveRoutinesGen2Arch::determineCompletionSO(SliceState& sliceState
 
                     if (isEdgeIteration)
                     {
-                        sliceState.m_execution.m_scaleoutCompletionWaitEvent = WaitEvent::RS_SO_WAIT_FOR_ALL_RECV;
+                        sliceState.m_execution.m_scaleoutCompletionWaitEvent = WaitEvent::SO_WAIT_FOR_EDMA_AND_ALL_RECV;
                     }
                     else
                     {
@@ -150,7 +150,8 @@ void HclCollectiveRoutinesGen2Arch::provideScaleoutResources(SliceState& sliceSt
         return;
     }
 
-    hcl::ScalStream& currentStream = m_activeStreamManager.getActiveCollectiveStream(hcl::SchedulersIndex::dma);
+    hcl::ScalStream& currentStream =
+        m_activeStreamManager.getActiveCollectiveStream(hcl::SchedulersIndex::sendScaleOut);
 
     LOG_HCL_TRACE(HCL,
                   "need to provide {} SOBs and {} Fences",
@@ -185,7 +186,7 @@ void HclCollectiveRoutinesGen2Arch::provideScaleoutResources(SliceState& sliceSt
 
             if (isEdgeIteration)
             {
-                waitEvent = WaitEvent::RS_SO_WAIT_FOR_ALL_RECV;
+                waitEvent = WaitEvent::SO_WAIT_FOR_EDMA_AND_ALL_RECV;
             }
             else
             {
@@ -240,7 +241,8 @@ void HclCollectiveRoutinesGen2Arch::provideScaleoutResources(SliceState& sliceSt
 
 void HclCollectiveRoutinesGen2Arch::provideScaleoutResources(NonCollectiveState& nonCollectiveState)
 {
-    hcl::ScalStream& currentStream = m_activeStreamManager.getActiveCollectiveStream(hcl::SchedulersIndex::dma);
+    hcl::ScalStream& currentStream =
+        m_activeStreamManager.getActiveCollectiveStream(hcl::SchedulersIndex::sendScaleOut);
     LOG_HCL_TRACE(HCL,
                   "(NonCollectiveState): m_isSend={}, m_comm={}, m_isScaleoutRequired={}",
                   nonCollectiveState.m_isSend,
@@ -450,7 +452,7 @@ unsigned int HclCollectiveRoutinesGen2Arch::calcRequiredCreditAmount(CommonState
 
     if (m_staticBuffersAllocator.isValid())
     {
-        requiredExtraCredits = m_staticBuffersAllocator.alloc(m_intermediateBufferManager,
+        requiredExtraCredits = m_staticBuffersAllocator.alloc(m_deviceSimbPoolManager,
                                                               m_longSo,
                                                               cgSize,
                                                               requiredExtraCredits,
@@ -472,7 +474,7 @@ unsigned int HclCollectiveRoutinesGen2Arch::calcRequiredCreditAmount(CommonState
         }
 
         uint64_t lastTargetVal =
-            m_intermediateBufferManager.allocNextBuffer(m_longSo.targetValue + continuousTargets, SCALEOUT_GDR_POOL);
+            m_deviceSimbPoolManager.allocNextBuffer(m_longSo.targetValue + continuousTargets, SCALEOUT_GDR_POOL);
 
         LOG_HCL_TRACE(HCL_ECR,
                       "IMB allocation: SCALEOUT GDR pool, current SO {}, free at {}",
@@ -497,7 +499,7 @@ unsigned int HclCollectiveRoutinesGen2Arch::calcRequiredCreditAmount(CommonState
             LOG_HCL_TRACE(HCL,
                           "hnics & scaleout send, m_scaleoutNonCollectiveSend={}",
                           commonState.m_scaleoutNonCollectiveSend);
-            const uint64_t lastTargetVal = m_scaleoutProvider->getHostBufferManager(m_streamId)
+            const uint64_t lastTargetVal = m_scaleoutProvider->getHostSimbPoolManager(m_streamId)
                                                ->allocNextBuffer(m_longSo.targetValue, HNIC_SEND_POOL);
             if (lastTargetVal != 0)
             {
@@ -510,7 +512,7 @@ unsigned int HclCollectiveRoutinesGen2Arch::calcRequiredCreditAmount(CommonState
         else if (commonState.isScaleoutRequired(true, nexBoxNumInfo) ||
                  m_signalsManager->isEventRegistered(SignalEvent::HNIC_SCALEOUT_SEND))
         {
-            uint64_t lastTargetVal = m_scaleoutProvider->getHostBufferManager(m_streamId)
+            uint64_t lastTargetVal = m_scaleoutProvider->getHostSimbPoolManager(m_streamId)
                                          ->allocNextBuffer(m_longSo.targetValue, HNIC_SEND_POOL);
             if (lastTargetVal != 0)
             {
@@ -528,7 +530,7 @@ unsigned int HclCollectiveRoutinesGen2Arch::calcRequiredCreditAmount(CommonState
             LOG_HCL_TRACE(HCL,
                           "hnics & scaleout recv, m_scaleoutNonCollectiveRecv={}",
                           commonState.m_scaleoutNonCollectiveRecv);
-            const uint64_t lastTargetVal = m_scaleoutProvider->getHostBufferManager(m_streamId)
+            const uint64_t lastTargetVal = m_scaleoutProvider->getHostSimbPoolManager(m_streamId)
                                                ->allocNextBuffer(m_longSo.targetValue, HNIC_RECV_POOL);
             if (lastTargetVal != 0)
             {
@@ -552,7 +554,7 @@ unsigned int HclCollectiveRoutinesGen2Arch::calcRequiredCreditAmount(CommonState
                 }
                 LOG_HCL_TRACE(HCL, "allocating hnic recv buffer for {} future collectives", continuousTargets);
             }
-            uint64_t lastTargetVal = m_scaleoutProvider->getHostBufferManager(m_streamId)
+            uint64_t lastTargetVal = m_scaleoutProvider->getHostSimbPoolManager(m_streamId)
                                          ->allocNextBuffer(m_longSo.targetValue + continuousTargets, HNIC_RECV_POOL);
             if (lastTargetVal != 0)
             {

@@ -1,4 +1,4 @@
-#include "platform/gen2_arch_common/server_connectivity_types.h"  // for Gen2ArchNicsDeviceSingleConfig, ServerNicsConnectivityArray
+#include "platform/gen2_arch_common/server_connectivity_types.h"  // for Gen2ArchNicsDeviceSingleConfig, ServerNicsConnectivityVector
 
 #include <tuple>  // for make_tuple
 
@@ -230,7 +230,7 @@ static const Gen2ArchNicsDeviceSingleConfig g_HLS2PCIE_card_location_7_mapping =
 
 // clang-format off
 
-const ServerNicsConnectivityArray g_HLS2PCIEServerConnectivityArray = {
+const ServerNicsConnectivityVector g_HLS2PCIEServerConnectivityVector = {
     g_HLS2PCIE_card_location_0_mapping,
     g_HLS2PCIE_card_location_1_mapping,
     g_HLS2PCIE_card_location_2_mapping,

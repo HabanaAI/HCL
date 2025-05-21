@@ -49,7 +49,6 @@ public:
 
     virtual void addQPsToQPManagerDB(const QPManagerHints& hints, const QpsVector& qps) = 0;
     virtual void ReleaseQPsResource(const QPManagerHints& hints)                        = 0;
-    virtual void allocateQPDBStorage([[maybe_unused]] const HCL_Comm comm) {};
 
     virtual uint32_t getQPn(const QPManagerHints& hints) const                      = 0;
     virtual uint32_t getQPi(const QPManagerHints& hints) const                      = 0;

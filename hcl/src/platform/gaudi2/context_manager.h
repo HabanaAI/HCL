@@ -25,10 +25,7 @@ class ScalStreamBase;
 class ContextManager
 {
 public:
-    ContextManager(const std::vector<unsigned>& nicEngines,
-                   QPManager&                   qpManagerScaleUp,
-                   QPManager&                   qpManagerScaleOut,
-                   HclDeviceGaudi2&             device);
+    ContextManager(const std::vector<unsigned>& nicEngines, HclDeviceGaudi2& device);
     virtual ~ContextManager() = default;
 
     void createCollectiveContexts(HclCommandsGen2Arch& commands, const HCL_Comm hclCommId = DEFAULT_COMM_ID);
@@ -122,8 +119,6 @@ private:
 
     using CachedCollectiveContextScaleOut = CachedCollectiveContext;
 
-    QPManager&                                   m_qpManagerScaleUp;
-    QPManager&                                   m_qpManagerScaleOut;
     std::vector<g2fw::nic_glbl_ctxt_t>           m_globalContexts;                    // one per EARC
     std::vector<g2fw::nic_glbl_ctxt_t>           m_scaleoutGlobalContexts;            // one per EARC
     std::vector<CachedCollectiveContextScaleUp>  m_cachedCollectiveContextsScaleUp;   // one per Collective Context

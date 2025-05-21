@@ -5,6 +5,8 @@
 #include <vector>                                      // for vector
 #include "infra/scal/gen2_arch_common/scal_manager.h"  // for Gen2ArchScalMa...
 #include "scal.h"                                      // for scal_handle_t
+#include "infra/scal/gen2_arch_common/stream_layout.h"
+
 class HclCommandsGen2Arch;
 class HclDeviceGen2Arch;
 namespace hcl
@@ -26,22 +28,13 @@ namespace hcl
 class Gaudi2ScalManager : public Gen2ArchScalManager
 {
 public:
-    Gaudi2ScalManager(int fd, HclCommandsGen2Arch& commands);
+    Gaudi2ScalManager(int fd, HclCommandsGen2Arch& commands, Gen2ArchStreamLayout& streamLayout);
     Gaudi2ScalManager(Gaudi2ScalManager&&)                 = delete;
     Gaudi2ScalManager(const Gaudi2ScalManager&)            = delete;
     Gaudi2ScalManager& operator=(Gaudi2ScalManager&&)      = delete;
     Gaudi2ScalManager& operator=(const Gaudi2ScalManager&) = delete;
     virtual ~Gaudi2ScalManager();
 
-    void             initGlobalContext(HclDeviceGen2Arch* device, uint8_t api_id) override;
-    virtual void     serializeInitSequenceCommands(hcl::ScalStreamBase&                  recvStream,
-                                                   hcl::ScalStreamBase&                  recvSOStream,
-                                                   hcl::ScalStreamBase&                  dmaStream,
-                                                   unsigned                              indexOfCg,
-                                                   uint64_t                              soAddressLSB,
-                                                   const std::vector<sibAddressAndSize>& sibAddressesAndSizes,
-                                                   HclDeviceGen2Arch*                    device,
-                                                   uint8_t                               apiId);
     virtual uint32_t getCMaxTargetValue() override;
 };
 

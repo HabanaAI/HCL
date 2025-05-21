@@ -9,11 +9,7 @@
 #include "hllog_core.hpp"
 #include <unordered_map>
 
-#if defined(FMT_VERSION) && FMT_VERSION != 90100
-#error "fmt of an incompatible version was already included. only one version of fmt is allowed in one translation unit"
-#endif
-
-#include "impl/hllog_fmt_headers.hpp"
+#include "hllog_fmt_headers.hpp"
 
 #define HLLOG_UNLIKELY(x) __builtin_expect((x), 0)
 #define HLLOG_LIKELY(x) __builtin_expect((x), 1)
@@ -21,6 +17,9 @@
 // use HLLOG_FUNC instead of __FUNCTION__ to get good performance for lazy logs
 #define HLLOG_FUNC  hl_logger::static_string(__func__)
 HLLOG_BEGIN_NAMESPACE
+
+template <class TLoggerEnum>
+using isEnum = std::void_t<std::enable_if_t<std::is_enum_v<TLoggerEnum>>>;
 
 /**
  * @brief createLogger create a logger
@@ -159,7 +158,7 @@ inline SinksSPtr getSinks(const TLoggerEnum loggerEnumItem);
  * @return filenames of file_sinks that are connected to the logger
  */
 template<class TLoggerEnum>
-HLLOG_API std::vector<std::string> getSinksFilenames(const TLoggerEnum loggerEnumItem);
+std::vector<std::string> getSinksFilenames(const TLoggerEnum loggerEnumItem);
 
 /**
  * @brief setSinks set logger sinks
@@ -181,11 +180,11 @@ inline SinksSPtr setSinks(const TLoggerEnum loggerEnumItem, SinksSPtr sinks = Si
  * @param loggingLevel  logging level of the new file sink, by default it's equal to the logging level of the logger
   */
 template<class TLoggerEnum>
-HLLOG_API void addFileSink(const TLoggerEnum loggerEnumItem,
-                           std::string_view  logFileName,
-                           size_t            logFileSize,
-                           size_t            logFileAmount,
-                           int               loggingLevel = HLLOG_LEVEL_INVALID);
+void addFileSink(const TLoggerEnum loggerEnumItem,
+                 std::string_view  logFileName,
+                 size_t            logFileSize,
+                 size_t            logFileAmount,
+                 int               loggingLevel = HLLOG_LEVEL_INVALID);
 
 /**
  * @brief addConsole add a console sinks to a logger
@@ -212,6 +211,21 @@ inline bool removeConsole(const TLoggerEnum loggerEnumItem);
  */
 template<class TLoggerEnum>
 inline void flush(const TLoggerEnum loggerEnumItem);
+
+/**
+ * log lazy logs that are kept in memory into a file by logger names
+ *
+ * @param filename - filename for output
+ */
+template<class TLoggerEnum, typename = isEnum<TLoggerEnum>>
+void logLazyLogs(std::initializer_list<TLoggerEnum> loggerEnumItems, std::string_view filename);
+
+/**
+ * log lazy logs that are kept in memory into a file by logger names
+ * @param logger - logger for output
+ */
+template<class TLoggerEnum, typename = isEnum<TLoggerEnum>>
+void logLazyLogs(std::initializer_list<TLoggerEnum> loggerEnumItems, LoggerSPtr logger);
 
 /**
  * @brief flushAll flush all loggers of a module

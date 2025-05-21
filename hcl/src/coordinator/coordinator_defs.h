@@ -22,9 +22,6 @@
 #include "interfaces/hcl_unique_sorted_vector.h"
 #include "futex.h"
 
-using futex_t  = FutexLock;
-using locker_t = std::lock_guard<futex_t>;
-
 class IHcclCoordinatorClient
 {
 public:
@@ -37,7 +34,7 @@ public:
                                  uint32_t                                 rankInfoBufferSize,
                                  std::vector<RemoteDeviceConnectionInfo>& remoteDevicesInfo) = 0;
 
-    virtual bool rendezvous() = 0;
+    virtual bool rendezvous(bool migration_finished = false) = 0;
 
     virtual hcclResult_t sendCollectiveLog(const HCL_CollectiveOp op,
                                            const size_t           count,
@@ -58,6 +55,12 @@ public:
                                        const RankInfoBuffer& myInfo,
                                        uint32_t              rankInfoBufferSize,
                                        remote_devices_t&     remoteDevicesInfo) = 0;
+
+    virtual bool exchangeCountersData(const unsigned           nranks,
+                                      const FtRanksInfoBuffer& myInfo,
+                                      const uint32_t           myBufferSize,
+                                      bool&                    allReached,
+                                      remote_counters_ranks_t& remoteRanksInfo) = 0;
 
     class IMigrationCallback* migration_cb_ = nullptr;
 };

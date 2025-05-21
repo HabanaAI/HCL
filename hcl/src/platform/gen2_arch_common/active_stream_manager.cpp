@@ -21,113 +21,110 @@ ActiveStreamManagerGen2Arch::ActiveStreamManagerGen2Arch(ScaleoutProvider*      
   m_archStreamIdx(archStreamIdx),
   m_longSo(longSo)
 {
+    for (auto sched = 0; sched < hcl::SchedulersIndex::count; sched++)
+    {
+        // resize the active streams per scheduler stream count
+        auto streamCount =
+            m_deviceController.getSchedulerMicroArchStreamCount(static_cast<hcl::SchedulersIndex>(sched));
+        m_activeStreamsPerScheduler[static_cast<int>(sched)].resize(streamCount);
+    }
 }
 
-void ActiveStreamManagerGen2Arch::initializeDmaStreams(CommonState& commonState, unsigned boxNum)
+void ActiveStreamManagerGen2Arch::initializeActiveStreams(CommonState& commonState, unsigned boxNum)
 {
-    HCL_CollectiveOp currentOp = commonState.m_currentOp;
-    bool             isActive  = false;
-    unsigned         schedIdx  = (unsigned)hcl::SchedulersIndex::dma;
-
     m_commonState = &commonState;
 
     bool isHierarchicalSelfBox =
-        (boxNum == commonState.m_dynamicComm.getMyScaleupGroup() && commonState.m_isMultiScaleupGroup);
-    bool reductionRS     = (currentOp == eHCLReduceScatter) && (!isHierarchicalSelfBox);
-    bool reductionReduce = false;
-    bool isLastBox = (getNextBox(boxNum, commonState.m_boxIterations) == commonState.m_dynamicComm.getMyScaleupGroup());
-    bool isFirstBox = boxNum == commonState.m_dynamicComm.getMyScaleupGroup();
+        (boxNum == m_commonState->m_dynamicComm.getMyScaleupGroup() && m_commonState->m_isMultiScaleupGroup);
+    bool reductionRS = (m_commonState->m_currentOp == eHCLReduceScatter) && (!isHierarchicalSelfBox);
+    bool isLastBox =
+        (getNextBox(boxNum, m_commonState->m_boxIterations) == m_commonState->m_dynamicComm.getMyScaleupGroup());
+    bool isFirstBox = boxNum == m_commonState->m_dynamicComm.getMyScaleupGroup();
 
-    m_dmaStreams.resize(static_cast<size_t>(hcl::DMAStreams::max));
-    std::fill(m_dmaStreams.begin(), m_dmaStreams.end(), nullptr);
+    for (unsigned sched = 0; sched < hcl::SchedulersIndex::count; sched++)
+    {
+        // set all streams in lists to nullptr
+        auto& streamList = m_activeStreamsPerScheduler[static_cast<int>(sched)];
+        std::fill(streamList.begin(), streamList.end(), nullptr);
 
-    // arbitrator
-    fillDmaStream(hcl::DMAStreams::arbitrator, m_archStreamIdx, schedIdx);
-
-    // garbageCollection
-    fillDmaStream(hcl::DMAStreams::garbageCollection, m_archStreamIdx, schedIdx);
+        // add the collective stream to the active stream list for each scaleup/scaleout scheduler
+        if (sched != hcl::SchedulersIndex::gp)
+        {
+            addCollectiveStreamToActiveStreamList((hcl::SchedulersIndex)sched);
+        }
+    }
 
     // reduction
-    isActive = ((commonState.m_16BitReduction || (!commonState.m_inPlace && !commonState.m_isMultiScaleupGroup)) &&
-                reductionRS && commonState.m_dynamicComm.getScaleupGroupSize() != 1) ||
-               reductionReduce ||
-               (currentOp == eHCLReduceScatter && commonState.m_dynamicComm.getScaleupGroupSize() != 1);
-    bool isReductionStreamActive = isActive;
-    if (isActive) fillDmaStream(hcl::DMAStreams::reduction, m_archStreamIdx, schedIdx);
+    bool isRedActive = isReductionStreamActive(reductionRS);
+    if (isReductionStreamActive(reductionRS))
+    {
+        addStreamToActiveStreamList(HclStreamIndex::REDUCTION);
+    }
 
     // scaleoutReduction
-    isActive = commonState.m_isMultiScaleupGroup && currentOp == eHCLReduceScatter &&
-               (isLastBox || (commonState.isRSContReduction() && commonState.isBufferReductionIter()));
-    if (isActive) fillDmaStream(hcl::DMAStreams::scaleoutReduction, m_archStreamIdx, schedIdx);
+    if (isScaleoutReductionStreamActive(isLastBox))
+    {
+        addStreamToActiveStreamList(HclStreamIndex::SO_REDUCTION);
+    }
 
     // signaling
-    isActive = false;
-    if (currentOp == eHCLReduceScatter)
+    if (isSignalingStreamActive(isRedActive, isFirstBox))
     {
-        bool incLtu     = commonState.m_syncUpBufferWithLtu;
-        bool isPdmaHnic = m_scaleoutProvider->isHostNic() && !m_scaleoutProvider->isGaudiDirect();
-        isActive        = commonState.m_isMultiScaleupGroup &&
-                   (((!isFirstBox && incLtu) && isReductionStreamActive) || (!isFirstBox && isPdmaHnic));
-    }
-    else if (currentOp == eHCLScatter)
-    {
-        bool isRootBox   = commonState.m_dynamicComm.getMyScaleupGroup() == commonState.rootBox();
-        bool isPdmaHnic  = m_scaleoutProvider->isHostNic() && !m_scaleoutProvider->isGaudiDirect();
-        bool isPeersOnly = commonState.m_isMultiScaleupGroup && commonState.m_dynamicComm.getScaleupGroupSize() == 1;
-        isActive = commonState.m_isMultiScaleupGroup && (!isFirstBox && isPdmaHnic && !isRootBox && !isPeersOnly);
+        addStreamToActiveStreamList(HclStreamIndex::SIGNALING);
     }
 
-    VERIFY(isActive || !(commonState.m_syncUpBufferWithLtu && !isFirstBox) ||
-               (commonState.m_currentOp != eHCLReduceScatter && commonState.m_currentOp != eHCLScatter),
-           "signaling stream must be active when syncing with LTU!"
-           "isActive={}, m_syncUpBufferWithLtu={}, m_currentOp={}",
-           isActive,
-           commonState.m_syncUpBufferWithLtu,
-           commonState.m_currentOp);
-
-    if (isActive) fillDmaStream(hcl::DMAStreams::signaling, m_archStreamIdx, schedIdx);
-
-    // gdr
-    isActive = m_scaleoutProvider->isGaudiDirect() && commonState.m_isMultiScaleupGroup &&
-               currentOp == eHCLReduceScatter && !isFirstBox && !commonState.isRSContReduction();
-    if (isActive) fillDmaStream(hcl::DMAStreams::gdr, m_archStreamIdx, schedIdx);
-
-    for (unsigned i = 0; i < static_cast<size_t>(hcl::DMAStreams::max); i++)
+    if (isGdrStreamActive(isFirstBox))
     {
-        hcl::ScalStream* scalStream = m_dmaStreams[i];
-        if (scalStream) scalStream->setTargetValue(m_longSo.targetValue);
+        addStreamToActiveStreamList(HclStreamIndex::GDR);
     }
+
+    addStreamToActiveStreamList(HclStreamIndex::GC);
 }
 
-void ActiveStreamManagerGen2Arch::fillDmaStream(hcl::DMAStreams stream, unsigned archStreamIdx, unsigned schedIdx)
+llvm_vecsmall::SmallVector<unsigned, MAX_STREAM_PER_SCHED>
+ActiveStreamManagerGen2Arch::getActiveStreams(hcl::SchedulersIndex schedIdx) const
 {
-    m_dmaStreams[static_cast<size_t>(stream)] =
-        &m_deviceController.getScalStream(archStreamIdx, schedIdx, static_cast<size_t>(stream));
-}
-
-llvm_vecsmall::SmallVector<unsigned, MAX_STREAM_TO_INC> ActiveStreamManagerGen2Arch::getActiveDmaStreams() const
-{
-    llvm_vecsmall::SmallVector<unsigned, MAX_STREAM_TO_INC> activeStreams = {0};
-
-    for (unsigned i = 0; i < static_cast<size_t>(hcl::DMAStreams::max); i++)
+    llvm_vecsmall::SmallVector<unsigned, MAX_STREAM_PER_SCHED> activeStreams = {};
+    const auto&                                                streamList    = m_activeStreamsPerScheduler[schedIdx];
+    unsigned streamCount = m_deviceController.getSchedulerMicroArchStreamCount(schedIdx);
+    for (unsigned i = 0; i < streamCount; i++)
     {
-        if (i == static_cast<unsigned>(hcl::DMAStreams::garbageCollection) ||
-            i == static_cast<unsigned>(hcl::DMAStreams::arbitrator))
-        {
-            continue;
-        }
-        if (m_dmaStreams[i] != nullptr)
+        if (streamList[i] != nullptr)
         {
             activeStreams.push_back(i);
         }
     }
-
     return activeStreams;
 }
 
-hcl::ScalStream& ActiveStreamManagerGen2Arch::getActiveCollectiveStream(const hcl::SchedulersIndex schedIdx)
+void ActiveStreamManagerGen2Arch::addStreamToActiveStreamList(HclStreamIndex hclStreamIdx)
 {
-    unsigned idx = 0;
+    hcl::ScalStream& scalStream       = m_deviceController.getScalStream(m_archStreamIdx, hclStreamIdx);
+    unsigned         uArchStreamIndex = scalStream.getUarchStreamIndex();
+    unsigned         schedIdx         = scalStream.getSchedIdx();
+    m_activeStreamsPerScheduler[schedIdx][uArchStreamIndex] = &scalStream;
+    scalStream.setTargetValue(m_longSo.targetValue);
+}
+
+void ActiveStreamManagerGen2Arch::addCollectiveStreamToActiveStreamList(hcl::SchedulersIndex schedIdx)
+{
+    hcl::ScalStream& scalStream                             = getActiveCollectiveStream(schedIdx);
+    unsigned         uArchStreamIndex                       = scalStream.getUarchStreamIndex();
+    m_activeStreamsPerScheduler[schedIdx][uArchStreamIndex] = &scalStream;
+    scalStream.setTargetValue(m_longSo.targetValue);
+}
+
+hcl::ScalStream* ActiveStreamManagerGen2Arch::getScalStreamIfNeeded(HclStreamIndex hclStreamIdx)
+{
+    hcl::ScalStream& scalStream       = m_deviceController.getScalStream(m_archStreamIdx, hclStreamIdx);
+    unsigned         uArchStreamIndex = scalStream.getUarchStreamIndex();
+    unsigned         schedIdx         = scalStream.getSchedIdx();
+    return m_activeStreamsPerScheduler[schedIdx][uArchStreamIndex];
+}
+
+hcl::ScalStream& ActiveStreamManagerGen2Arch::getActiveCollectiveStream(hcl::SchedulersIndex schedIdx)
+{
+    hcl::ScalStream* scalStream = nullptr;
     switch (m_commonState->m_currentOp)
     {
         case eHCLGather:
@@ -135,7 +132,7 @@ hcl::ScalStream& ActiveStreamManagerGen2Arch::getActiveCollectiveStream(const hc
         case eHCLSimpleBroadcast:
         case eHCLBroadcast:
         case eHCLSinglePeerBroadcast:
-            idx = static_cast<unsigned>(CollectiveStreams::AG);
+            scalStream = &m_deviceController.getScalAgUarchStream(m_archStreamIdx, schedIdx);
             break;
         case eHCLReduceScatter:
         case eHCLScatter:
@@ -143,22 +140,66 @@ hcl::ScalStream& ActiveStreamManagerGen2Arch::getActiveCollectiveStream(const hc
         case eHCLAllReduce:
         case eHCLAll2All:
         case eHCLNoCollective:  // used in Gen2Arch for Send/Recv operations
-            idx = static_cast<unsigned>(CollectiveStreams::RS);
+            scalStream = &m_deviceController.getScalRsUarchStream(m_archStreamIdx, schedIdx);
             break;
         default:
             VERIFY(false, "collective op is not supported {}", (int)m_commonState->m_currentOp);
     }
+    return *scalStream;
+}
 
-    hcl::ScalStream& scalStream = m_deviceController.getScalStream(m_archStreamIdx, (unsigned)schedIdx, idx);
+hcl::ScalStream& ActiveStreamManagerGen2Arch::getArbitratorStream(const hcl::SchedulersIndex schedIdx)
+{
+    hcl::ScalStream& scalStream = m_deviceController.getScalArbUarchStream(m_archStreamIdx, schedIdx);
     scalStream.setTargetValue(m_longSo.targetValue);
 
     return scalStream;
 }
 
-hcl::ScalStream& ActiveStreamManagerGen2Arch::getArbitratorStream(const hcl::SchedulersIndex schedIdx)
+bool ActiveStreamManagerGen2Arch::isReductionStreamActive(bool reductionRS)
 {
-    hcl::ScalStream& scalStream = m_deviceController.getScalStream(m_archStreamIdx, (unsigned)schedIdx, ARB_STREAM_IDX);
-    scalStream.setTargetValue(m_longSo.targetValue);
+    return ((m_commonState->m_16BitReduction || (!m_commonState->m_inPlace && !m_commonState->m_isMultiScaleupGroup)) &&
+            reductionRS && m_commonState->m_dynamicComm.getScaleupGroupSize() != 1) ||
+           (m_commonState->m_currentOp == eHCLReduceScatter && m_commonState->m_dynamicComm.getScaleupGroupSize() != 1);
+}
 
-    return scalStream;
+bool ActiveStreamManagerGen2Arch::isScaleoutReductionStreamActive(bool isLastBox)
+{
+    return m_commonState->m_isMultiScaleupGroup && m_commonState->m_currentOp == eHCLReduceScatter &&
+           (isLastBox || (m_commonState->isRSContReduction() && m_commonState->isBufferReductionIter()));
+}
+
+bool ActiveStreamManagerGen2Arch::isSignalingStreamActive(bool isReductionStreamActive, bool isFirstBox)
+{
+    bool isActive = false;
+    if (m_commonState->m_currentOp == eHCLReduceScatter)
+    {
+        bool incLtu     = m_commonState->m_syncUpBufferWithLtu;
+        bool isPdmaHnic = m_scaleoutProvider->isHostNic() && !m_scaleoutProvider->isGaudiDirect();
+        isActive        = m_commonState->m_isMultiScaleupGroup &&
+                   (((!isFirstBox && incLtu) && isReductionStreamActive) || (!isFirstBox && isPdmaHnic));
+    }
+    else if (m_commonState->m_currentOp == eHCLScatter)
+    {
+        bool isRootBox  = m_commonState->m_dynamicComm.getMyScaleupGroup() == m_commonState->rootBox();
+        bool isPdmaHnic = m_scaleoutProvider->isHostNic() && !m_scaleoutProvider->isGaudiDirect();
+        bool isPeersOnly =
+            m_commonState->m_isMultiScaleupGroup && m_commonState->m_dynamicComm.getScaleupGroupSize() == 1;
+        isActive = m_commonState->m_isMultiScaleupGroup && (!isFirstBox && isPdmaHnic && !isRootBox && !isPeersOnly);
+    }
+
+    VERIFY(isActive || !(m_commonState->m_syncUpBufferWithLtu && !isFirstBox) ||
+               (m_commonState->m_currentOp != eHCLReduceScatter && m_commonState->m_currentOp != eHCLScatter),
+           "signaling stream must be active when syncing with LTU!"
+           "isActive={}, m_syncUpBufferWithLtu={}, m_currentOp={}",
+           isActive,
+           m_commonState->m_syncUpBufferWithLtu,
+           m_commonState->m_currentOp);
+    return isActive;
+}
+
+bool ActiveStreamManagerGen2Arch::isGdrStreamActive(bool isFirstBox)
+{
+    return m_scaleoutProvider->isGaudiDirect() && m_commonState->m_isMultiScaleupGroup &&
+           m_commonState->m_currentOp == eHCLReduceScatter && !isFirstBox && !m_commonState->isRSContReduction();
 }

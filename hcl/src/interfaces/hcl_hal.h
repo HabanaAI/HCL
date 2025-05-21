@@ -26,9 +26,9 @@ public:
     Hal& operator=(const Hal&) = delete;
 
     // getters
-    virtual uint64_t getMaxStreams() const   = 0;
-    virtual uint64_t getMaxQPsPerNic() const = 0;
-    virtual uint64_t getMaxNics() const      = 0;
+    virtual uint64_t getMaxArchStreams() const = 0;
+    virtual uint64_t getMaxQPsPerNic() const   = 0;
+    virtual uint64_t getMaxNics() const        = 0;
 
     virtual uint32_t getMaxEDMAs() const = 0;
 

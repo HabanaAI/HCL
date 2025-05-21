@@ -11,10 +11,10 @@ class socket_base_t;
 class socket_op_notify_t  // socket operations
 {
 public:
-    virtual void on_accept([[maybe_unused]] socket_base_t& s,
-                           [[maybe_unused]] socketfd_t new_socket) _DEF_IMPL_;  // server only, new connected endpoint
-    virtual void on_disconnect([[maybe_unused]] socket_base_t& s) _DEF_IMPL_;
-    virtual void on_error([[maybe_unused]] socket_base_t& s) _DEF_IMPL_;
+    virtual void on_accept(socket_base_t& /*s*/,
+                           socketfd_t /*new_socket*/) _DEF_IMPL_;  // server only, new connected endpoint
+    virtual void on_disconnect(socket_base_t& /*s*/) _DEF_IMPL_;
+    virtual void on_error(socket_base_t& /*s*/) _DEF_IMPL_;
 };
 
 class socket_base_t : public socket_op_notify_t
@@ -27,8 +27,8 @@ public:
 
     virtual ~socket_base_t() { close(); }
 
-    virtual bool send([[maybe_unused]] void* data, [[maybe_unused]] size_t size) { return false; };
-    virtual bool recv([[maybe_unused]] void* data, [[maybe_unused]] size_t size) { return false; };
+    virtual bool send(void*, size_t) { return false; };
+    virtual bool recv(void*, size_t) { return false; };
 
     bool close();
 
@@ -40,7 +40,7 @@ public:
 
     socket_op_notify_t* op_notify_ = this;
 
-    std::string str() const;
+    virtual std::string str() const;
 
     bool set_non_blocking(bool non_blocking = true);
 
@@ -93,10 +93,8 @@ struct packet_t
 class socket_io_notify_t  // read / write notify
 {
 public:
-    virtual void on_send([[maybe_unused]] const packet_t& p,
-                         [[maybe_unused]] socket_base_t&  s) _DEF_IMPL_;  // send completed
-    virtual void on_recv([[maybe_unused]] const packet_t& p,
-                         [[maybe_unused]] socket_base_t&  s) _DEF_IMPL_;  // recv completed
+    virtual void on_send(const packet_t&, socket_base_t&) _DEF_IMPL_;  // send completed
+    virtual void on_recv(const packet_t&, socket_base_t&) _DEF_IMPL_;  // recv completed
 };
 
 class socket_io_t
@@ -110,9 +108,9 @@ private:
         size_t   offset = 0;
         packet_t packet;
 
-        operator void*() { return (uint8_t*)packet.buf + offset; }
-        operator const packet_t&() { return packet; }
-        operator ssize_t() { return packet.size - offset; }
+        operator void*() const { return (uint8_t*)packet.buf + offset; }
+        operator const packet_t&() const { return packet; }
+        operator ssize_t() const { return packet.size - offset; }
         auto& operator+=(size_t _x)
         {
             offset += _x;

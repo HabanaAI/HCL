@@ -48,7 +48,7 @@ public:  // IHcclCoordinatorClient
                                  uint32_t              rankInfoBufferSize,
                                  remote_devices_t&     remoteDevicesInfo) override;
 
-    virtual bool rendezvous() override;
+    virtual bool rendezvous(bool migration_finished = false) override;
 
     virtual hcclResult_t sendCollectiveLog(const HCL_CollectiveOp op,
                                            const size_t           count,
@@ -69,6 +69,11 @@ public:  // IHcclCoordinatorClient
                                        const RankInfoBuffer& myInfo,
                                        uint32_t              rankInfoBufferSize,
                                        remote_devices_t&     remoteDevicesInfo) override;
+    virtual bool exchangeCountersData(const unsigned           nranks,
+                                      const FtRanksInfoBuffer& myInfo,
+                                      const uint32_t           myBufferSize,
+                                      bool&                    allReached,
+                                      remote_counters_ranks_t& remoteRanksInfo) override;
 
 public:                                                                               // coordinator_t
     virtual void on_command(hlcp_command_t& cmd, hlcp_t& connection) override;        // specific command
@@ -86,6 +91,12 @@ private:
                        uint32_t              rankInfoBufferSize,
                        remote_devices_t&     remoteDevicesInfo);
 
+    bool xchg_counters_data(const unsigned           nranks,
+                            const FtRanksInfoBuffer& ftSyncCountersRanksInfoBuffer,
+                            const uint32_t           syncCountersBufferSize,
+                            bool&                    allReached,
+                            remote_counters_ranks_t& remoteRanksInfo);
+
     bool non_peer_data_ready(const UniqueSortedVector& nonPeerRemoteRanks, bool init);
 
     bool send_to_rank(HCL_Rank rank, const hlcp_command_t& cmd);
@@ -100,10 +111,10 @@ private:
     void on_hlcp_non_peer_data(hlcp_cmd_non_peers_t& cmd);
     void on_hlcp_sync(hlcp_cmd_sync_t& cmd);
     void on_hlcp_log_msg(hlcp_cmd_log_msg_t& cmd);
+    void on_hlcp_counters(hlcp_cmd_counters_t& cmd);
 
-    HCL_Comm comm_id_ = HCL_INVALID_COMM;
-    HCL_Rank rank_    = HCL_INVALID_RANK;
-    uint32_t ranks_   = 0;
+    HCL_Rank rank_  = HCL_INVALID_RANK;
+    uint32_t ranks_ = 0;
 
     sockaddr_t hlcp_srv_;
 
@@ -132,6 +143,7 @@ private:
     hlcp_cmd_comm_data_t cmd_comm_data_;
     hlcp_cmd_qps_conf_t  cmd_qps_conf_;
     hlcp_cmd_sync_t      cmd_sync_;
+    hlcp_cmd_counters_t  cmd_counters_;
 
     devices_conn_info_t non_peers_;
     ranks_addrs_t       rank_addr_;

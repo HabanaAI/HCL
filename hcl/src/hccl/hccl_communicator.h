@@ -26,6 +26,13 @@
 #include "coordinator/qp_migration.h"             // for IMigrationCallback
 #include "coordinator_defs.h"
 
+enum TargetCountersCheckResult
+{
+    FT_TARGET_COUNTERS_CHECK_RESULT_LESS_THAN     = 0,
+    FT_TARGET_COUNTERS_CHECK_RESULT_GREATER_EQUAL = 1,
+    FT_TARGET_COUNTERS_CHECK_RESULT_IGNORE        = 2
+};
+
 class hccl_communicator : public IMigrationCallback
 {
 public:
@@ -45,6 +52,7 @@ public:
     hcclResult_t comm_count(int* count);
 
     hcclResult_t get_async_error(hcclResult_t* asyncError);
+    const char*  get_async_error_message();
 
     hcclResult_t comm_user_rank(int* rank);
 
@@ -130,18 +138,34 @@ public:
     const uint64_t getRecvCtr(const HCL_Rank peer) const;
     const uint64_t incRecvCtr(const HCL_Rank peer);
 
-    HclDynamicCommunicator*       getDynamicComm();
-    const HclDynamicCommunicator& getDynamicCommConst() const;
+    HclDynamicCommunicator* getDynamicComm();
+    [[nodiscard]] CommIds   getCommIds() const { return m_comm->getCommIds(); }
 
     virtual void mcNicStateChange(const NicState& nicState) override;
 
-    void checkFaultToleranceStopCommCollApiUntil();  // called by HCL API functions to check if to stop comm specific
+    void checkFaultToleranceStopCommCollApiUntil();  // Called by HCL API functions to check if to stop comm specific
                                                      // collectives API's
 
-    void checkFaultToleranceStopCommSendRecvApiUntil();  // called by HCL API group end to check if to stop comm
-                                                         // specific S/R API's
+    const TargetCountersCheckResult
+    checkFaultToleranceStopCommSendRecvApiUntil() const;  // Called by HCL API group end to check if to stop comm
+                                                          // specific S/R API's, returns a ternary value
 
 private:
+    struct RanksExchangeBuffers
+    {
+        uint32_t                   myBufferSize               = 0;        // of RankInfoBuffer to send
+        uint32_t                   mySyncCountersBufferSize   = 0;        // of FtRanksInfoBuffer to send
+        std::unique_ptr<uint8_t[]> rankInfoSendBuffer         = nullptr;  // Buffer for first migration QP exchange
+        std::unique_ptr<uint8_t[]> rankSyncCountersSendBuffer = nullptr;  // Buffer for ranks sync counters exchange
+        remote_devices_t        hcclRemoteDevices;  // Buffers we receive from the other ranks in migration QPs exchange
+        remote_counters_ranks_t remoteSyncCounters;  // Buffers we receive from the other ranks for sync counters
+        RankInfoBuffer&         getRankInfoBuffer() { return (*((RankInfoBuffer*)(rankInfoSendBuffer.get()))); }
+        FtRanksInfoBuffer&      getRemoteSyncCountersInfoBuffer()
+        {
+            return (*((FtRanksInfoBuffer*)(rankSyncCountersSendBuffer.get())));
+        }
+    };
+
     hcclResult_t openConnections(bool isLoopbackModeOrNullSubmission);
 
     hcclResult_t exchangeRankData(RankInfoHeader& header, std::vector<RankInfoHeader>& hcclRankInfoHeaders);
@@ -157,35 +181,44 @@ private:
     hcclResult_t finalizeInitialization(bool isLoopbackModeOrNullSubmission);
 
     void prepareQPsInfo(RankInfoBuffer& rankInfoBuffer) const;
-    void buildMigrationAndCountersDataExchangeBuffer(remote_devices_t& remoteDevicesData, const bool failover);
+    void initRanksExchangeBuffers(RanksExchangeBuffers& ranksExchangeBuffers) const;
+    void updateMigrationAndCountersDataAndExchangeBuffers(RanksExchangeBuffers& ranksExchangeInfo, const bool failover);
+    bool updateReachedTargetAndExchangeBuffers(const bool            reachedEqualCounters,
+                                               RanksExchangeBuffers& ranksExchangeInfo);
 
-    bool rendezvous();
+    bool rendezvous(bool migration_finished = false);
 
-    HCL_Rank m_rank;
-
-    void     updateRemoteDevices(std::vector<RankInfoHeader>& hcclRankInfo);
-    void     updateRemoteDevices(std::vector<RemoteDeviceConnectionInfo>& hcclRemoteDevices);
+    void     updateRemoteDevicesHeader(const std::vector<RankInfoHeader>& hcclRankInfo);
+    void     updateRemoteDevicesConnections(const std::vector<RemoteDeviceConnectionInfo>& hcclRemoteDevices);
+    void     updateRemoteCounters(const remote_counters_ranks_t& remoteRanksInfo);
     uint64_t getAccumulatedMask(const std::vector<RankInfoHeader>& RankInfoHeaders) const;
 
     hcclResult_t updateScaleoutPortMask(const std::vector<RankInfoHeader>& RankInfoHeaders);
 
     void faultToleranceStopAllApis() const;  // Stop all API's globally (done once for all comms)
-    void faultToleranceStopCommApisUntil(
-        const RankApiCounters& stopUntil);     // Stop all collectives and S/R API's until specific counters set
+    void faultToleranceContinueCommApisUntil(
+        const RankApiCounters& stopUntil);     // Continue all collectives and S/R API's until specific counters set
     void faultToleranceStopCommAllApis();      // Stop all collective and S/R API calls
     void faultToleranceResumeAllApis() const;  // Resumes all API's globally (done once for all comms)
     void faultToleranceResumeCommApis();       // Resume all collective and S/R API calls
-    void faultTolerancePrepareMySendRecvCounters(RankInfoBuffer& rankInfoBuffer) const;
-    void faultTolerancePrepareMyCollectivesApiCounter(RankInfoBuffer& rankInfoBuffer) const;
-    void faultToleranceCalcAllRanksMaxCounters(RankApiCounters&        maxRankApiCountersData,
-                                               const remote_devices_t& hcclRemoteDevices);
-    void faultTolerancePollUntilApiReach(const RankApiCounters& maxRankApiCountersData);
+    void faultTolerancePrepareMySendRecvCounters(RanksExchangeBuffers& ranksExchangeInfo) const;
+    void faultTolerancePrepareMyCollectivesApiCounter(RanksExchangeBuffers& ranksExchangeInfo) const;
+    void faultToleranceCalcAllRanksMaxCounters(const remote_counters_ranks_t& remoteRanksInfo,
+                                               RankApiCounters&               maxRankApiCountersData);
+    bool faultTolerancePollUntilApiReach(const RankApiCounters&         maxRankApiCountersData,
+                                         const remote_devices_t&        remoteDevices,
+                                         const remote_counters_ranks_t& remoteRanksInfo);
+    void copyDevicesCountersToSyncCounters(const remote_devices_t&  remoteDevices,
+                                           remote_counters_ranks_t& remoteRanksInfo);
+
+    void faultToleranceStreamsSync(const RankApiCounters& maxRankApiCountersData);
     void mcNicStateShutdown(const uint32_t logicalPort);
     void mcNicStateUp(const uint32_t logicalPort);
     void stopApis();
     void resumeUntil(const RankApiCounters& maxRankApiCountersData);
     void resumeApis();
 
+    HCL_Rank                m_rank;
     spHcclCoordinatorClient m_coordClient;
     int                     m_boxSize;
     size_t                  m_commSize;
@@ -199,5 +232,7 @@ private:
                                                           // When ULLONG_MAX its unblocked.
                                                           // when 0 its blocked unconditionally
 
-    nics_mask_t m_lkdBadMask = 0;
+    nics_mask_t m_failedPorts;
+
+    std::string m_async_error_message;
 };

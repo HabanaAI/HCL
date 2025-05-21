@@ -28,12 +28,6 @@ static const unsigned LONG_MONITORS_PER_STREAM = 1;
 static const unsigned LONG_MONITOR_LENGTH      = 4;
 static const unsigned GP_SO_PER_CG_ENTRY       = 2;
 
-enum CgType
-{
-    eInternal = 0,
-    eExternal = 1
-};
-
 struct LtuInfo
 {
     unsigned SOidx;

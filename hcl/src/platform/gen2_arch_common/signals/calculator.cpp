@@ -3,7 +3,10 @@
 #include "hcl_utils.h"
 #include "hcl_global_conf.h"  // for GFCG_*...
 
-SignalsCalculator::SignalsCalculator() {};
+SignalsCalculator::SignalsCalculator()
+{
+    m_costs[(unsigned)SignalEvent::FORCE_ORDER] = 1;
+};
 SignalsCalculator::~SignalsCalculator() {};
 
 void SignalsCalculator::initialize(CommonState& commonState)
@@ -13,8 +16,6 @@ void SignalsCalculator::initialize(CommonState& commonState)
     unsigned minimumEdmaGroupSize      = (unsigned)alwaysUseEdmaWorkDistribution() * workDistributionGroupSize +
                                     (unsigned)(!alwaysUseEdmaWorkDistribution());
     unsigned numScaleOutPorts = commonState.m_numScaleOutPorts;
-
-    m_costs[(unsigned)SignalEvent::FORCE_ORDER] = 1;
 
     m_costs[(unsigned)SignalEvent::EDMA_CAST_DOWN]            = minimumEdmaGroupSize;
     m_costs[(unsigned)SignalEvent::EDMA_MEMCOPY]              = workDistributionGroupSize;

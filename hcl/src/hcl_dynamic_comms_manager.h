@@ -14,10 +14,11 @@ public:
     HclDynamicCommsManager();
     virtual ~HclDynamicCommsManager();
 
-    HclDynamicCommunicator& getComm(HCL_Comm commId);
-    HCL_Comm                createNextComm(hcl::HalPtr hal, Gen2ArchServerDef& serverDef);
-    bool                    isCommExist(const HCL_Comm comm) const;
-    size_t                  getMaxCommNum() const;
+    HclDynamicCommunicator&       getComm(const HCL_Comm commId);
+    const HclDynamicCommunicator& getComm(const HCL_Comm commId) const;
+    HCL_Comm                      createNextComm(hcl::HalPtr hal, Gen2ArchServerDef& serverDef);
+    bool                          isCommExist(const HCL_Comm comm) const;
+    size_t                        getMaxCommNum() const;
 
     int getNumOfActiveComms() const;
 
@@ -25,6 +26,7 @@ public:
 
 private:
     std::vector<HclDynamicCommunicator*> m_communicators;
+    mutable lock_t                       m_lock;
     HCL_Comm                             m_nextCommId = 1;  // 0 reserved for HCL_COMM_WORLD
     size_t                               m_size       = 0;
 };

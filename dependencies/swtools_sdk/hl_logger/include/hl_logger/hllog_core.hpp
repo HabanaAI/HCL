@@ -432,15 +432,27 @@ HLLOG_API void logStackTrace(std::ostream & ostream);
 
 /**
  * log all the lazy logs that are kept in memory into a file
- * @param filename
+ * @param filename filename for output
  */
 HLLOG_API void logAllLazyLogs(std::string_view filename);
 
 /**
  * log all the lazy logs that are kept in memory into a logger
- * @param logger
+ * @param logger logger for output
  */
 HLLOG_API void logAllLazyLogs(LoggerSPtr logger);
+
+/**
+ * log lazy logs that are kept in memory into a file by logger names
+    * @param loggerNameMasks - list of logger names or regex masks
+     * {"SYN_API", "API2_.+} - loggers SYN_API and all loggers that start with "API2_"
+     * "(?!SYN_API)" - all loggers except SYN_API
+     * @endcode
+ * @param filename filename for output
+ * @param logger logger for output
+ */
+HLLOG_API void logLazyLogs(std::vector<std::string_view> const& loggerNameMasks, std::string_view filename);
+HLLOG_API void logLazyLogs(std::vector<std::string_view> const& loggerNameMasks, LoggerSPtr logger);
 
 /**
  * @brief getDefaultLoggingLevel get logger level according to env variables

@@ -7,11 +7,6 @@
 #include <cstdint>
 #include <vector>
 
-struct synDeviceLimitationInfo
-{
-    bool    fp32Limited    = false;
-};
-
 enum synDeviceRevision
 {
     DEVICE_REVISION_INVALID,

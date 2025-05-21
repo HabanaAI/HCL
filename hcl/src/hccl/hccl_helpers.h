@@ -19,11 +19,15 @@
 #include "hcl_log_manager.h"       // for LOG_INFO, LOG_TRACE
 #include "hcl_utils.h"             // for checkReductionOp
 
+void setLastErrorMessage(const std::string& message);
+void resetLastErrorMessage();
+
 #define RETURN_ON_COND(_condition_for_error, _result, _message)                                                        \
     {                                                                                                                  \
         if (_condition_for_error)                                                                                      \
         {                                                                                                              \
             LOG_ERR(HCL_API, "{}", _message);                                                                          \
+            setLastErrorMessage(_message);                                                                             \
             return to_hccl_result(_result);                                                                            \
         }                                                                                                              \
     }
@@ -57,8 +61,8 @@
 #define RETURN_ON_INVALID_RANK(rank, commSize)                                                                         \
     RETURN_ON_INVALID_ARG(rank >= (int)commSize || rank < 0, rank, "Invalid rank")
 
-#define RETURN_ON_INVALID_HCCL_COMM(_arg)                                                                              \
-    RETURN_ON_INVALID_ARG(_arg == nullptr, _arg, "Invalid HCCL communicator handle.")
+#define RETURN_ON_INVALID_HCCL_COMM(commHandle)                                                                        \
+    RETURN_ON_INVALID_ARG(commHandle == nullptr, commHandle, "Invalid HCCL communicator handle.")
 
 #define RETURN_ON_INVALID_REDUCTION_OP(_reduction_op)                                                                  \
     RETURN_ON_INVALID_ARG(checkReductionOp(_reduction_op) == false, _arg, "Invalid reduction op");

@@ -9,8 +9,8 @@
 #include "hcl_api_types.h"
 #include "hcl_dynamic_communicator.h"
 #include "hcl_utils.h"
-#include "platform/gen2_arch_common/device_buffer_manager.h"
-#include "intermediate_buffer_container.h"
+#include "platform/gen2_arch_common/device_simb_pool_manager.h"
+#include "simb_pool_container_allocator.h"
 #include "hcl_log_manager.h"  // for LOG_*
 #include "interfaces/hcl_unique_sorted_vector.h"
 #include "platform/gen2_arch_common/hcl_address_generator.h"
@@ -21,15 +21,15 @@
 #define SLICE_RATIO_FIXED_POINT_ACCURACY 4
 #define MAX_NUM_SLICES_SEARCH            4
 
-CommonState::CommonState(HclCollectiveParams& other,
-                         DeviceBufferManager& intermediateBufferManager,
-                         bool                 isHostNic,
-                         bool                 isGdr,
-                         unsigned             workDistributionGroupSize,
-                         const unsigned       maxNumScaleUpPortsPerConnection,
-                         unsigned             numScaleOutPorts,
-                         SignalsCalculator&   signalsCalculator,
-                         RemainderCalculator* remainderCalculator)
+CommonState::CommonState(HclCollectiveParams&       other,
+                         DeviceSimbPoolManagerBase& deviceSimbPoolManager,
+                         bool                       isHostNic,
+                         bool                       isGdr,
+                         unsigned                   workDistributionGroupSize,
+                         const unsigned             maxNumScaleUpPortsPerConnection,
+                         unsigned                   numScaleOutPorts,
+                         SignalsCalculator&         signalsCalculator,
+                         RemainderCalculator*       remainderCalculator)
 : HclCollectiveParams(other),
   m_hnicQpSprayThreshold(GCFG_HCL_HNIC_QP_SPRAY_THRESHOLD.value()),
   m_singleQpPerSet(GCFG_HCL_SINGLE_QP_PER_SET.value()),
@@ -45,7 +45,7 @@ CommonState::CommonState(HclCollectiveParams& other,
   m_workDistributionGroupSize(workDistributionGroupSize),
   m_numScaleOutPorts(numScaleOutPorts),
   m_dataTypeSizeInBytes(dataTypeSizeInBytes(m_dataType)),
-  m_intermediateBufferManager(intermediateBufferManager),
+  m_deviceSimbPoolManager(deviceSimbPoolManager),
   m_remainderCalculator(remainderCalculator),
   m_boxType((HclConfigType)GCFG_BOX_TYPE_ID.value()),
   m_maxNumScaleUpPortsPerConnection(maxNumScaleUpPortsPerConnection),
@@ -63,14 +63,14 @@ CommonState::CommonState(HclCollectiveParams& other,
     m_signalsCalculator->initialize(*this);
 }
 
-CommonState::CommonState(HclCollectiveParams& other,
-                         DeviceBufferManager& intermediateBufferManager,
-                         bool                 isGdr,
-                         unsigned             workDistributionGroupSize,
-                         const unsigned       maxNumScaleUpPortsPerConnection,
-                         unsigned             numScaleOutPorts,
-                         SignalsCalculator&   signalsCalculator,
-                         RemainderCalculator* remainderCalculator)
+CommonState::CommonState(HclCollectiveParams&       other,
+                         DeviceSimbPoolManagerBase& deviceSimbPoolManager,
+                         bool                       isGdr,
+                         unsigned                   workDistributionGroupSize,
+                         const unsigned             maxNumScaleUpPortsPerConnection,
+                         unsigned                   numScaleOutPorts,
+                         SignalsCalculator&         signalsCalculator,
+                         RemainderCalculator*       remainderCalculator)
 : HclCollectiveParams(other),
   m_hnicQpSprayThreshold(GCFG_HCL_HNIC_QP_SPRAY_THRESHOLD.value()),
   m_singleQpPerSet(GCFG_HCL_SINGLE_QP_PER_SET.value()),
@@ -85,7 +85,7 @@ CommonState::CommonState(HclCollectiveParams& other,
   m_workDistributionGroupSize(workDistributionGroupSize),
   m_numScaleOutPorts(numScaleOutPorts),
   m_dataTypeSizeInBytes(dataTypeSizeInBytes(m_dataType)),
-  m_intermediateBufferManager(intermediateBufferManager),
+  m_deviceSimbPoolManager(deviceSimbPoolManager),
   m_remainderCalculator(remainderCalculator),
   m_boxType((HclConfigType)GCFG_BOX_TYPE_ID.value()),
   m_maxNumScaleUpPortsPerConnection(maxNumScaleUpPortsPerConnection),
@@ -100,7 +100,7 @@ CommonState::CommonState(HclCollectiveParams& other,
 
 uint64_t CommonState::calculateCUID(bool isFirstBox, bool isLastBox)
 {
-    VERIFY(DeviceBufferManager::getFactor(SCALEOUT_POOL) <= 8, "Not enough bits to represent boxIterPhase!");
+    VERIFY(m_scaleoutBuffersAmount <= 8, "Not enough bits to represent boxIterPhase!");
     static_assert(sizeof(cuid_t) == sizeof(uint64_t), "Size of cuid_t structure is not as expected!");
 
     cuid_t ret;
@@ -114,15 +114,31 @@ uint64_t CommonState::calculateCUID(bool isFirstBox, bool isLastBox)
     ret.isPeersOnly         = (m_isMultiScaleupGroup && m_dynamicComm.getScaleupGroupSize() == 1);
     ret.isHostNic           = m_isHostNic;
     ret.isGaudiDirect       = m_isGdr;
-    ret.isFloat             = (m_dataType == hcclFloat32 || m_dataType == hcclFloat16);
-    ret.isBf16              = (m_dataType == hcclBfloat16);
+    ret.isFloat             = (m_dataType == hcclFloat32);
+    ret.is16BitDatatype     = (m_dataType == hcclBfloat16 || m_dataType == hcclFloat16);
     ret.all2allIter         = m_all2allIter;
-    ret.boxIterPhase        = m_boxIter % DeviceBufferManager::getFactor(SCALEOUT_POOL);
     ret.firstBox            = isFirstBox;
     ret.lastBox             = isLastBox;
-    ret.edgeIteration       = isEdgeIteration();
     ret.firstScaleOut       = m_boxIter == 1;
     ret.reserved            = 0;
+    if (eHCLReduceScatter == m_currentOp && isRSContReduction())
+    {
+        ret.boxIterPhase              = 0;
+        ret.edgeIteration             = 0;
+        ret.isBufferReductionIter     = isBufferReductionIter();
+        ret.isLastBufferReductionIter = isLastBufferReductionIter();
+        ret.soBufferNum               = calcScaleoutBufferPool() == e_devicePoolID::SCALEOUT_POOL_0;
+        ret.isFirstSOBufferUse        = m_boxIter < (RS_CONT_REDUC_SO_POOL_AMOUNT * m_scaleoutBuffersAmount);
+    }
+    else
+    {
+        ret.boxIterPhase              = m_boxIter % m_scaleoutBuffersAmount;
+        ret.edgeIteration             = isEdgeIteration();
+        ret.isBufferReductionIter     = 0;
+        ret.isLastBufferReductionIter = 0;
+        ret.isFirstSOBufferUse        = 0;
+        ret.soBufferNum               = 0;
+    }
 
     return ret.raw;
 }
@@ -358,7 +374,7 @@ unsigned CommonState::countSignalsSingleOp() const
 
 uint64_t CommonState::getIntermediateBuffer(e_devicePoolID poolIndex)
 {
-    return m_intermediateBufferManager.getCurrentBuffer(poolIndex);
+    return m_deviceSimbPoolManager.getCurrentBuffer(poolIndex);
 }
 
 void CommonState::initCollectiveOp()
@@ -664,11 +680,22 @@ void CommonState::calcMaxSliceCounts()
  */
 uint32_t CommonState::getNumSlices(uint64_t totalRankCount, uint32_t numRanks)
 {
+    uint32_t minSlices = div_round_up(totalRankCount, m_optimalBufferCount);
+    // must be slicing when calling this function
+    if (minSlices == 1)
+    {
+        minSlices = 2;
+    }
+    // no slicing size optimization
+    if (!GCFG_HCL_OPT_SLICE_SIZE.value())
+    {
+        return minSlices;
+    }
+
     uint32_t originalBufferCount = (uint32_t)m_optimalBufferCount;
     uint32_t minBufferCount      = (uint32_t)div(m_optimalBufferCount, GCFG_HCL_MIN_IMB_SIZE_FACTOR.value());
-    uint32_t minSlices           = div_round_up(totalRankCount, m_optimalBufferCount);
     uint32_t maxSlices           = minSlices + MAX_NUM_SLICES_SEARCH;
-    ;
+
     uint32_t numSlices     = 0;
     uint32_t minSliceRatio = m_optimalBufferCount << SLICE_RATIO_FIXED_POINT_ACCURACY;
     uint32_t lastSliceCount;
@@ -677,13 +704,6 @@ uint32_t CommonState::getNumSlices(uint64_t totalRankCount, uint32_t numRanks)
     uint32_t numSlicesToCheck;
     uint32_t sliceCountNotRounded;
     uint64_t sumSlices;
-
-    // must be slicing when calling this function
-    if (minSlices == 1)
-    {
-        minSlices = 2;
-        maxSlices++;
-    }
 
     // check first slicing with max buffer size
     if (m_remainderCalculator->isValidSlicing((uint32_t)m_optimalBufferCount,
@@ -1202,18 +1222,16 @@ SliceState::SliceState(const CommonState&   commonState,
 : CommonState(commonState), m_isSend(isSend), m_sliceIter(sliceIter), m_boxNumInfo(boxNumInfo)
 {
     m_currentOp = currentOp;
-
+    calcBoxAndScaleOutCounts();
     initSlice();
+    initCastFlags();
 
     uint64_t offset = m_dynamicComm.getRankInScaleupGroup() * m_execution.m_strideCount * m_dataTypeSizeInBytes;
-
     setScaleoutAddresses(addressGenerator, offset);
 }
 
-void SliceState::initSlice(bool calcScaleout)
+void SliceState::initSlice()
 {
-    if (calcScaleout) calcBoxAndScaleOutCounts();
-
     LOG_TRACE(HCL_ECR,
               "Counts for collective {}, slice {}, box num {}: box type {}: ScaleUp cell count {}, ScaleUp stride {},"
               "Box count {}, Box stride {}, ScaleOut cell count {}, slice offset count {}, has_buffer {}, "
@@ -1276,7 +1294,7 @@ void SliceState::updateScaleoutCounts(HCL_Rank remoteRank, uint64_t inputCount, 
     m_setup.m_scaleoutInternalFences = requiredInternalFences;
     m_execution.m_scaleoutFences.clear();
     m_execution.m_scaleoutInternalSOBs.clear();
-    initSlice(false);
+    initSlice();
     m_rankScaleOutCount       = inputCount;
     m_execution.m_cellCount   = inputCount;
     m_execution.m_strideCount = inputCount;
@@ -1285,6 +1303,32 @@ void SliceState::updateScaleoutCounts(HCL_Rank remoteRank, uint64_t inputCount, 
 bool SliceState::doReduction()
 {
     return m_execution.m_doReduction;
+}
+
+void SliceState::initCastFlags()
+{
+    m_execution.casts.scaleupSendCastUp = m_isSend && m_isMultiScaleupGroup && m_16BitReduction &&
+                                          m_boxNumInfo.m_boxNum == m_dynamicComm.getMyScaleupGroup() &&
+                                          !isRSContReduction();
+    m_execution.casts.scaleoutRecvCastUp = !m_isSend && m_currentOp != eHCLAllGather && m_currentOp != eHCLGather &&
+                                           m_16BitReduction &&
+                                           !(m_currentOp == eHCLReduceScatter && isRSContReduction());
+    m_execution.casts.aggregatedResultCastDown = m_16BitReduction;
+}
+
+bool SliceState::suSendCastUp()
+{
+    return m_execution.casts.scaleupSendCastUp;
+}
+
+bool SliceState::soRecvCastUp()
+{
+    return m_execution.casts.scaleoutRecvCastUp;
+}
+
+bool SliceState::aggResCastDown()
+{
+    return m_execution.casts.aggregatedResultCastDown;
 }
 
 void SliceState::setScaleoutAddresses(HclAddressGenerator& addressGenerator, uint64_t offset)
@@ -1503,9 +1547,11 @@ std::ostream& operator<<(std::ostream& out, const cuid_t& cuid)
         << ", isRoot: " << cuid.isRoot << ", isRootPeer: " << cuid.isRootPeer << ", isRootBox: " << cuid.isRootBox
         << ", isMultiScaleupGroup: " << cuid.isMultiScaleupGroup << ", isPeersOnly: " << cuid.isPeersOnly
         << ", isHostNic: " << cuid.isHostNic << ", isGaudiDirect: " << cuid.isGaudiDirect
-        << ", isFloat: " << cuid.isFloat << ", isBf16: " << cuid.isBf16 << ", all2allIter: " << cuid.all2allIter
-        << ", boxIterPhase: " << cuid.boxIterPhase << ", firstBox: " << cuid.firstBox << ", lastBox: " << cuid.lastBox
-        << ", edgeIteration: " << cuid.edgeIteration << ", firstScaleOut: " << cuid.firstScaleOut
-        << ", reserved: " << cuid.reserved << " }";
+        << ", isFloat: " << cuid.isFloat << ", is16BitDatatype: " << cuid.is16BitDatatype
+        << ", all2allIter: " << cuid.all2allIter << ", boxIterPhase: " << cuid.boxIterPhase
+        << ", firstBox: " << cuid.firstBox << ", lastBox: " << cuid.lastBox << ", edgeIteration: " << cuid.edgeIteration
+        << ", firstScaleOut: " << cuid.firstScaleOut << ", isBufferReductionIter: " << cuid.isBufferReductionIter
+        << ", isLastBufferReductionIter: " << cuid.isLastBufferReductionIter << ", isFirstSOBufferUse"
+        << cuid.isFirstSOBufferUse << ", soBufferNum: " << cuid.soBufferNum << ", reserved: " << cuid.reserved << " }";
     return out;
 }

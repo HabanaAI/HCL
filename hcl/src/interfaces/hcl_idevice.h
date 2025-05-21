@@ -46,9 +46,8 @@ public:
      * @brief enable parametrized destruction
      * to be called before destructor
      *
-     * @param force - flag to force destroy, false by default
      */
-    virtual hcclResult_t destroy(bool force = false);
+    virtual void destroy();
 
     // called by communicator after device has been created and
     // and performed basic setup. put extended initialization/setup code here
@@ -88,7 +87,9 @@ public:
     /**
      * get dynamic communicator with given id
      */
-    virtual HclDynamicCommunicator& getComm(HCL_Comm comm);
+    virtual HclDynamicCommunicator& getComm(const HCL_Comm comm);
+
+    virtual const HclDynamicCommunicator& getComm(const HCL_Comm comm) const;
 
     /**
      * get logical Rank IDs of devices in the same ScaleupGroup in comm
@@ -209,14 +210,16 @@ public:
         return std::make_shared<IHclNic>(this, nic);
     }
 
-    virtual uint32_t     createQpnInLKD(const uint32_t port, const uint8_t qpId) = 0;
+    virtual uint32_t createQpnInLKD(HCL_Comm comm, const uint32_t port, const uint8_t qpId) = 0;
+
     virtual hcclResult_t establishQpConnectionWithPeerQp(const HCL_Comm comm,
                                                          const HCL_Rank rank,
                                                          const uint32_t stream,
                                                          const uint32_t port,
                                                          const uint32_t qpn,
-                                                         const uint8_t  qpSet)    = 0;
-    virtual void         destroyQp(uint32_t port, uint32_t qpn)                  = 0;
+                                                         const uint8_t  qpSet) = 0;
+
+    virtual void destroyQp(HCL_Comm comm, uint32_t port, uint32_t qpn) = 0;
 
     virtual uint64_t getDRAMSize() { return 0; };
     virtual uint64_t getDRAMBaseAddr() { return 0; };
@@ -231,6 +234,13 @@ public:
     virtual const Gen2ArchServerDef& getServerDefConst() const = 0;
 
     const nics_mask_t getFailedScaleOutPortsMask() const { return m_failedScaleOutPortsMask; }
+
+    virtual void handleFaultToleranceGroupEndApi() {};  // Called by HCL Group End API to handle fault tolerance case
+    virtual void faultToleranceNotifyGroupApis() {};    // Notify group end API calls for stop/resume
+    virtual void clearScaleoutCommsCurrentGroup() {};   // Called in group start to clear the current group comms
+    virtual void addScaleoutCommsCurrentGroup([[maybe_unused]] const HCL_Comm hclCommId) {
+    };  // Called while doing API calls inside  group call to add the scaleout comm to current group comms
+    virtual void setQpManagersForComm(const HCL_Comm, const size_t commSize) = 0;
 
 protected:
     virtual uint32_t allocateQp(uint32_t port, HCL_Rank rank, HCL_Comm comm, uint8_t qpId, uint8_t qpSet = 0);

@@ -777,9 +777,9 @@ struct sched_arc_cmd_alloc_nic_barrier_t {
 			/**<
 			 * Number of lbw writes
 			 */
-			uint32_t rsvd:1;
+			uint32_t is_sw_fence:1;
 			/**<
-			 * Reserved
+			 * flag to indicate which type of fence to be used
 			 */
 		} __attribute__ ((aligned(4), __packed__));
 		uint32_t raw_dword0;

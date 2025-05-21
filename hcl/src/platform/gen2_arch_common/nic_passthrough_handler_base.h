@@ -6,12 +6,13 @@
 #include <vector>   // for vector
 
 #include "hcl_api_types.h"                    // for HCL_Comm
-#include "platform/gen2_arch_common/types.h"  // for MAX_NICS_GEN2ARCH, GEN2ARCH_HLS_BOX_SIZE
+#include "hcl_types.h"                        // for MAX_MODULES_IDS_PER_SERVER
+#include "platform/gen2_arch_common/types.h"  // for MAX_NICS_GEN2ARCH
 
-typedef std::array<std::vector<uint32_t>, GEN2ARCH_HLS_BOX_SIZE>
-    DwordsBoxesArray;  // a vector of dwords commands per device, for all devices
-typedef std::array<std::vector<uint32_t>, MAX_NICS_GEN2ARCH>
-    NicsDwordsArray;  // A vector of dwords commands per NIC / NIC macro pair
+// a vector of dwords commands per device, for all devices
+typedef std::array<std::vector<uint32_t>, MAX_MODULES_IDS_PER_SERVER> DwordsBoxesArray;
+// A vector of dwords commands per NIC / NIC macro pair
+typedef std::array<std::vector<uint32_t>, MAX_NICS_GEN2ARCH> NicsDwordsArray;
 
 struct UnionFindNode
 {

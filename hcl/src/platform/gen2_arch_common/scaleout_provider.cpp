@@ -18,8 +18,8 @@
 #include "platform/gen2_arch_common/hcl_device.h"
 #include "platform/gen2_arch_common/host_scheduler.h"
 #include "platform/gen2_arch_common/host_stream.h"
-#include "platform/gen2_arch_common/intermediate_buffer_container.h"
-#include "platform/gen2_arch_common/host_buffer_manager.h"
+#include "platform/gen2_arch_common/simb_pool_container_allocator.h"
+#include "platform/gen2_arch_common/host_simb_pool_manager.h"
 #include "platform/gen2_arch_common/signals/manager.h"
 #include "platform/gen2_arch_common/signals/types.h"
 #include "platform/gen2_arch_common/collective_utils.h"  // for getNextBox, getPrevBox
@@ -44,7 +44,7 @@ ScaleoutProvider* ScaleoutProvider::createScaleOutProvider(HclDeviceGen2Arch* de
     return provider;
 }
 
-HostBufferManager* ScaleoutProvider::getHostBufferManager([[maybe_unused]] unsigned streamIdx)
+HostSimbPoolManager* ScaleoutProvider::getHostSimbPoolManager([[maybe_unused]] unsigned streamIdx)
 {
     VERIFY(false, "This scaleout provider does not support host-mapped buffers");
     return nullptr;
@@ -295,7 +295,7 @@ unsigned Gen2ArchScaleoutProvider::getNumOfNicsPerDevice(const HCL_Comm comm) co
 }
 
 LibfabricScaleoutProvider::LibfabricScaleoutProvider(HclDeviceGen2Arch* device)
-: ScaleoutProvider(device), m_numArchStreams(device->getHal().getMaxStreams())
+: ScaleoutProvider(device), m_numArchStreams(device->getHal().getMaxArchStreams())
 {
     LOG_HCL_INFO(HCL, "Scale-Out provider - libfabric");
     VERIFY(mod(m_numArchStreams, GCFG_HOST_SCHEDULER_THREADS.value()) == 0, "Invalid Number of Host Scheduler threads");
@@ -350,12 +350,12 @@ LibfabricScaleoutProvider::LibfabricScaleoutProvider(HclDeviceGen2Arch* device)
     {
         if (!isGaudiDirect())
         {
-            m_hostBufferManager.push_back(
-                new HostBufferManager(m_deviceHandle + (archStream * sizeOfHostBufferPool),
-                                      (uint64_t)m_hostAddress + (archStream * sizeOfHostBufferPool),
-                                      {{HNIC_SEND_POOL, HostBuffersAmount::getBufferCount(HNIC_SEND_POOL)},
-                                       {HNIC_RECV_POOL, HostBuffersAmount::getBufferCount(HNIC_RECV_POOL)}},
-                                      device->getSIBBufferSize()));
+            m_hostSimbPoolManager.push_back(
+                new HostSimbPoolManager(m_deviceHandle + (archStream * sizeOfHostBufferPool),
+                                        (uint64_t)m_hostAddress + (archStream * sizeOfHostBufferPool),
+                                        {{HNIC_SEND_POOL, HostBuffersAmount::getBufferCount(HNIC_SEND_POOL)},
+                                         {HNIC_RECV_POOL, HostBuffersAmount::getBufferCount(HNIC_RECV_POOL)}},
+                                        device->getSIBBufferSize()));
         }
 
         for (size_t uarchStream = 0;
@@ -427,12 +427,12 @@ LibfabricScaleoutProvider::LibfabricScaleoutProvider(HclDeviceGen2Arch* device)
 
 LibfabricScaleoutProvider::~LibfabricScaleoutProvider()
 {
-    for (unsigned i = 0; i < m_hostBufferManager.size(); i++)
+    for (unsigned i = 0; i < m_hostSimbPoolManager.size(); i++)
     {
-        delete m_hostBufferManager[i];
+        delete m_hostSimbPoolManager[i];
     }
 
-    m_hostBufferManager.clear();
+    m_hostSimbPoolManager.clear();
 }
 
 void LibfabricScaleoutProvider::destroy()
@@ -453,11 +453,11 @@ void LibfabricScaleoutProvider::destroy()
                                   m_device->getDeviceConfig().getFd());
     }
 
-    for (unsigned i = 0; i < m_hostBufferManager.size(); i++)
+    for (unsigned i = 0; i < m_hostSimbPoolManager.size(); i++)
     {
-        delete m_hostBufferManager[i];
+        delete m_hostSimbPoolManager[i];
     }
-    m_hostBufferManager.clear();
+    m_hostSimbPoolManager.clear();
 
     for (unsigned archStream = 0; archStream < m_numArchStreams; archStream++)
     {
@@ -484,9 +484,9 @@ bool LibfabricScaleoutProvider::isGaudiDirect() const
     return m_isGaudiDirect;
 }
 
-HostBufferManager* LibfabricScaleoutProvider::getHostBufferManager(unsigned streamIdx)
+HostSimbPoolManager* LibfabricScaleoutProvider::getHostSimbPoolManager(unsigned streamIdx)
 {
-    return m_hostBufferManager.at(streamIdx);
+    return m_hostSimbPoolManager.at(streamIdx);
 }
 
 void LibfabricScaleoutProvider::openConnectionsOuterRanks(const HCL_Comm comm, const UniqueSortedVector& outerRanks)

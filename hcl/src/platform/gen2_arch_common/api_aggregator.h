@@ -36,7 +36,7 @@ public:
     hcclResult_t addSendRecvApiCall(HCL_Rank myRank, const SendRecvApiEntry& entry);
     hcclResult_t addCollectiveApiCall(HclCollectiveParams& params);
     hcclResult_t addGroupStart();
-    hcclResult_t addGroupEnd();
+    hcclResult_t addGroupEnd(const bool firstStream = true);
 
 protected:
     void onHandleSendRecvEntry(SendRecvApiEntry& entry);
@@ -51,7 +51,7 @@ protected:
     int      m_counter = 0;
     unsigned m_calls   = 0;
 
-    comms_t            m_comms;
+    CommsSet           m_comms;
     comm_ranks_t       m_remoteRanks;
     sendrecv_calls_t   m_sendRecvStack;
     collective_calls_t m_collectiveStack;

@@ -48,11 +48,12 @@
 /*
  * Twice the size of max inflight requests
  */
-#define OFI_MAX_REQUESTS         256
-#define REQUIRED_LIBFABRIC_MAJOR 1
-#define REQUIRED_LIBFABRIC_MINOR 20
-#define REQUIRED_KERNEL_MAJOR    5
-#define REQUIRED_KERNEL_MINOR    12
+#define OFI_MAX_REQUESTS              256
+#define MINIMAL_LIBFABRIC_VERSION     (FI_VERSION(1, 20))
+#define UNSUPPORTED_LIBFABRIC_VERSION (FI_VERSION(2, 0))
+
+#define REQUIRED_KERNEL_MAJOR 5
+#define REQUIRED_KERNEL_MINOR 12
 
 void get_hints(struct fi_info* hints, bool gaudi_direct);
 
@@ -167,7 +168,7 @@ private:
     int                           m_hw_module_id;
     int                           m_nOFIDevices;
     size_t                        m_ofi_device;
-    FutexLock                     m_ofi_lock;
+    lock_t                        m_ofi_lock;
     bool                          m_is_initialized;
     std::vector<ofi_component_t*> m_components;
     struct fi_info*               m_fi_getinfo_result;

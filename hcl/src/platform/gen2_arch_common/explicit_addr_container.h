@@ -2,7 +2,7 @@
 
 #include <cstdint>  // for uint64_t
 #include <functional>
-#include "platform/gen2_arch_common/device_buffer_manager.h"  // for e_devicePoolID
+#include "platform/gen2_arch_common/device_simb_pool_manager.h"  // for e_devicePoolID
 
 class CommonState;
 

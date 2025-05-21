@@ -1,7 +1,7 @@
 #pragma once
 
-#include "buffer_manager_base.h"
-#include "device_buffer_manager.h"
+#include "simb_pool_manager_base.h"
+#include "device_simb_pool_manager.h"
 #include "hcl_public_streams.h"
 
 static constexpr uint32_t MAX_BUFFERS_TO_ALLOCATE {5};
@@ -22,7 +22,7 @@ public:
 
     void registerStaticBuffersAllocations(CommonState& commonState, unsigned boxIter);
 
-    unsigned alloc(DeviceBufferManager&                deviceBufferManager,
+    unsigned alloc(DeviceSimbPoolManagerBase&          deviceSimbPoolManager,
                    hcl::syncInfo&                      longSo,
                    int64_t                             cgSize,
                    unsigned                            requiredExtraCredits,

@@ -1123,6 +1123,10 @@ enum hl_device_status {
  * @HL_SERVER_GAUDI2_HL288: HL288, 4 OAMs, 22 ports are enabled
  *                          18 internal (6 per card)
  *                          4 external
+ * @HL_SERVER_GAUDI3_RACK: GAUDI3_RACK, 24 ports are enabled
+ *                         24 external
+ * @HL_SERVER_GAUDI3_RACK_WHITEBOX: GAUDI3_RACK_WHITEBOX, 24 ports are enabled
+ *                         24 external
  */
 enum hl_server_type {
 	HL_SERVER_TYPE_UNKNOWN = 0,
@@ -1140,6 +1144,8 @@ enum hl_server_type {
 	HL_SERVER_GAUDI3_HLS3_SINGLEPORT_OAM_FULLSCALE_OUT = 12,
 	HL_SERVER_GAUDI3_HL338 = 13,
 	HL_SERVER_GAUDI2_HL288 = 14,
+	HL_SERVER_GAUDI3_RACK = 15,
+	HL_SERVER_GAUDI3_RACK_WHITEBOX = 16,
 };
 
 /*

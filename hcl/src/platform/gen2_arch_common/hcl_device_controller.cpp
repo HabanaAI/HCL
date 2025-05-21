@@ -68,18 +68,18 @@ void HclDeviceControllerGen2Arch::initDeviceForCollectiveRoutine(int            
                   longSo->long_so_index,
                   longSo->targetValue,
                   (uint64_t)(longSo->cp_handle));
-    auto& syncParams                = getSyncParams(archStreamId);
-    syncParams.m_longSo             = longSo;
-    syncParams.m_longSoNullSubmit   = longSoNullSubmit;
-    auto& smInfo                    = syncParams.m_smInfo;
-    auto& intermediateBufferManager = m_device->getSIB(archStreamId);
+    auto& syncParams              = getSyncParams(archStreamId);
+    syncParams.m_longSo           = longSo;
+    syncParams.m_longSoNullSubmit = longSoNullSubmit;
+    auto& smInfo                  = syncParams.m_smInfo;
+    auto& deviceSimbPoolManager   = m_device->getDeviceSimbPoolManager(archStreamId);
     m_graphSync[archStreamId]->setSyncData(smInfo.soBaseIdx, smInfo.soSize);
 
     std::array<hcl::CgInfo, (int)hcl::SchedulerType::count> cgInfo = m_scalManager->getCgInfo(archStreamId);
     m_graphSync[archStreamId]->setCgInfo(cgInfo[(int)hcl::SchedulerType::external],
                                          cgInfo[(int)hcl::SchedulerType::internal],
                                          GCFG_HCL_LONGTERM_GPSO_COUNT.value(),
-                                         intermediateBufferManager.getPoolBufferSize(SCALEUP_AND_ALL2ALL_POOL));
+                                         deviceSimbPoolManager.getPoolBufferSize(SCALEUP_AND_ALL2ALL_POOL));
     longSo->long_so_index = cgInfo[(int)hcl::SchedulerType::external].longSoIndex;
     longSo->targetValue   = cgInfo[(int)hcl::SchedulerType::external].longSoInitialValue;
     longSo->cp_handle     = m_scalManager->getCgHandle(archStreamId, true);
@@ -96,17 +96,17 @@ void HclDeviceControllerGen2Arch::initDeviceForCollectiveRoutine(int            
 
     setupHFCMonitors(archStreamId, syncParams);
 
-    for (unsigned poolSizeIndex = 0; poolSizeIndex < intermediateBufferManager.getPoolAmount(); poolSizeIndex++)
+    for (unsigned poolContainerIndex = 0; poolContainerIndex < deviceSimbPoolManager.getPoolContainerCount();
+         poolContainerIndex++)
     {
-        m_scalManager->addStaticBufferAddrAndSize(intermediateBufferManager.getBufferBaseAddr(poolSizeIndex),
-                                                  intermediateBufferManager.getSingleBufferSize(poolSizeIndex),
-                                                  intermediateBufferManager.getBufferAmountInPool(poolSizeIndex));
+        m_scalManager->addContainerParamsPerStream(
+            deviceSimbPoolManager.getPoolContainerParamsPerStream(poolContainerIndex));
     }
 
-    const unsigned monitorsPerSched     = smInfo.monitorSize / TOTAL_SCHED_NR;
-    const unsigned longMonitorsPerSched = ((smInfo.longMonitorSize / 4) / TOTAL_SCHED_NR) * 4;
+    const unsigned monitorsPerSched     = smInfo.monitorSize / SCHED_COUNT;
+    const unsigned longMonitorsPerSched = ((smInfo.longMonitorSize / 4) / SCHED_COUNT) * 4;
 
-    for (unsigned i = 0; i < SCHED_NR; ++i)
+    for (unsigned i = 0; i < SCHED_COUNT; ++i)
     {
         syncParams.m_schedulers[i].internalResources.monitorBase  = smInfo.monitorBaseIdx + (i * monitorsPerSched);
         syncParams.m_schedulers[i].internalResources.monitorsSize = monitorsPerSched;
@@ -127,9 +127,7 @@ void HclDeviceControllerGen2Arch::initDeviceForCollectiveRoutine(int            
 void HclDeviceControllerGen2Arch::setupHFCMonitors(int archStreamId, ArchStreamSyncParams& syncParams)
 {
     // doesn't really matter the scalStream, as we don't have a dedicated stream for init
-    hcl::ScalStream&      scalStream = getScalStream(archStreamId,
-                                                (unsigned)hcl::SchedulersIndex::sendScaleOut,
-                                                (unsigned)hcl::NetworkStreams::arbitrator);
+    hcl::ScalStream&      scalStream = getScalStream(archStreamId, HclStreamIndex::SO_SEND_ARB);
     HclGraphSyncGen2Arch& graphSync  = getGraphSync(archStreamId);
     const int64_t         cgSize     = graphSync.getCgData(false).size;
     syncParams.m_hfcMonitorManager   = new CreditManager(cgSize);
@@ -144,64 +142,72 @@ void HclDeviceControllerGen2Arch::setupHFCMonitors(int archStreamId, ArchStreamS
 void HclDeviceControllerGen2Arch::allocAllExternalBarrier(int archStreamId)
 {
     hcl::CgInfo      externalCgInfo = m_graphSync[archStreamId]->getCgData(true);
-    unsigned         schedIdx       = (unsigned)hcl::SchedulersIndex::dma;
-    hcl::ScalStream& currentStream  = m_scalManager->getScalStream(archStreamId, schedIdx, 0);
+    hcl::ScalStream& currentStream  = getScalStream(archStreamId, HclStreamIndex::GC);
     currentStream.setTargetValue(m_streamSyncParams[archStreamId].m_longSo->targetValue);
     m_commands->serializeAllocBarrierCommand(currentStream,
-                                             schedIdx,
-                                             externalCgInfo.cgIdx[(int)hcl::SchedulersIndex::dma],
+                                             currentStream.getSchedIdx(),
+                                             externalCgInfo.cgIdx[currentStream.getSchedIdx()],
                                              externalCgInfo.size);
 }
 
+/**
+ * @brief Setup monitors for all micro architecture streams.
+ *
+ * This function initializes the monitors for each micro architecture stream.
+ * It ensures that there are enough monitors and long monitors available for each stream.
+ * It then sets up the monitors and long monitors for each stream.
+ *
+ * @param archStreamId The architecture stream ID.
+ */
 void HclDeviceControllerGen2Arch::setupMonitors(int archStreamId)
 {
-    // setup monitors for each scheduler
-    for (unsigned schedIdx = 0; schedIdx < (unsigned)hcl::SchedulersIndex::count; ++schedIdx)
+    for (unsigned hclStreamIndex = 0; hclStreamIndex < m_streamLayout->getTotalMicroArchStreamCount(); hclStreamIndex++)
     {
+        hcl::ScalStream& scalStream    = getScalStream(archStreamId, (HclStreamIndex)hclStreamIndex);
+        unsigned         schedIdx      = scalStream.getSchedIdx();
+        unsigned         uarchStreamId = scalStream.getUarchStreamIndex();
+
         auto& schedResources = m_streamSyncParams[archStreamId].m_schedulers[schedIdx].internalResources;
 
-        // Make sure we have enough monitors
-        VERIFY(schedResources.monitorsSize >= MONITORS_PER_STREAM * STREAMS_NR, "There aren't enough monitors");
-        // Make sure we have enough long monitors
-        VERIFY(schedResources.longMonitorsSize >= LONG_MONITOR_LENGTH * LONG_MONITORS_PER_STREAM * STREAMS_NR,
+        // Ensure there are enough monitors
+        VERIFY(schedResources.monitorsSize >= MONITORS_PER_STREAM * MAX_STREAM_PER_SCHED,
+               "There aren't enough monitors");
+
+        // Ensure there are enough long monitors
+        VERIFY(schedResources.longMonitorsSize >= LONG_MONITOR_LENGTH * LONG_MONITORS_PER_STREAM * MAX_STREAM_PER_SCHED,
                "There aren't enough long monitors");
 
-        for (unsigned uarchStreamId = 0; uarchStreamId < m_scalManager->getMicroArchStreams(schedIdx); ++uarchStreamId)
+        unsigned fenceBase = getFenceIdx(archStreamId, uarchStreamId, FENCE_MONITOR_IDX);
+        scalStream.setTargetValue(m_streamSyncParams[archStreamId].m_longSo->targetValue);
+
+        // Setup regular monitors
+        for (unsigned fenceIdx = 0; fenceIdx < FENCES_PER_STREAM; ++fenceIdx)
         {
-            // We set the setup on the first stream of the dma
-            unsigned         streamForCommands = schedIdx == 0 ? 0 : uarchStreamId;
-            hcl::ScalStream& currentStream = m_scalManager->getScalStream(archStreamId, schedIdx, streamForCommands);
-            unsigned         fenceBase     = getFenceIdx(archStreamId, uarchStreamId, FENCE_MONITOR_IDX);
+            uint64_t monitorPayloadAddr =
+                m_scalManager->getMonitorPayloadAddr((hcl::SchedulersIndex)schedIdx, fenceBase + fenceIdx);
 
-            currentStream.setTargetValue(m_streamSyncParams[archStreamId].m_longSo->targetValue);
-            for (unsigned fenceIdx = 0; fenceIdx < FENCES_PER_STREAM; ++fenceIdx)
-            {
-                uint64_t monitorPayloadAddr =
-                    m_scalManager->getMonitorPayloadAddr((hcl::SchedulersIndex)schedIdx, fenceBase + fenceIdx);
+            m_graphSync[archStreamId]->addSetupMonitors(scalStream,
+                                                        uarchStreamId,
+                                                        schedResources.monitorBase,
+                                                        m_streamSyncParams[archStreamId].m_smInfo.monitorSmIndex,
+                                                        monitorPayloadAddr,
+                                                        fenceBase,
+                                                        fenceIdx);
+        }
 
-                m_graphSync[archStreamId]->addSetupMonitors(currentStream,
-                                                            //  schedIdx,
-                                                            uarchStreamId,
-                                                            schedResources.monitorBase,
-                                                            m_streamSyncParams[archStreamId].m_smInfo.monitorSmIndex,
-                                                            monitorPayloadAddr,
-                                                            fenceBase,
-                                                            fenceIdx);
-            }
+        // Setup long monitors
+        for (unsigned fenceIdx = 0; fenceIdx < LONG_MONITORS_PER_STREAM; ++fenceIdx)
+        {
+            uint64_t monitorPayloadAddr =
+                m_scalManager->getMonitorPayloadAddr((hcl::SchedulersIndex)schedIdx, fenceBase + fenceIdx);
 
-            for (unsigned fenceIdx = 0; fenceIdx < LONG_MONITORS_PER_STREAM; ++fenceIdx)
-            {
-                uint64_t monitorPayloadAddr =
-                    m_scalManager->getMonitorPayloadAddr((hcl::SchedulersIndex)schedIdx, fenceBase + fenceIdx);
-
-                m_graphSync[archStreamId]->addSetupLongMonitors(
-                    currentStream,
-                    m_streamSyncParams[archStreamId].m_smInfo.longMonitorSmIndex,
-                    monitorPayloadAddr,
-                    getLongMonitorIdx(archStreamId, schedIdx, uarchStreamId),
-                    fenceBase,
-                    fenceIdx);
-            }
+            m_graphSync[archStreamId]->addSetupLongMonitors(
+                scalStream,
+                m_streamSyncParams[archStreamId].m_smInfo.longMonitorSmIndex,
+                monitorPayloadAddr,
+                getLongMonitorIdx(archStreamId, schedIdx, uarchStreamId),
+                fenceBase,
+                fenceIdx);
         }
     }
 }
@@ -215,7 +221,8 @@ void HclDeviceControllerGen2Arch::advanceProg(int archStreamId, bool nopOp)
         m_graphSync[archStreamId]->incSoIndex(1);
     }
 
-    m_device->getSIB(archStreamId).advanceProg(m_streamSyncParams[archStreamId].m_longSo->targetValue);
+    m_device->getDeviceSimbPoolManager(archStreamId)
+        .advanceProg(m_streamSyncParams[archStreamId].m_longSo->targetValue);
 
     m_streamSyncParams[archStreamId].m_longtermGPSOManager->advanceProg(
         m_streamSyncParams[archStreamId].m_longSo->targetValue);
@@ -243,6 +250,38 @@ unsigned int HclDeviceControllerGen2Arch::handleExtraCredits(int archStreamId, u
     return creditsToAsk;
 }
 
+void HclDeviceControllerGen2Arch::nopArbStreamRecipe(int                  archStreamId,
+                                                     hcl::SchedulersIndex schedIdx,
+                                                     unsigned             requiredCredits,
+                                                     uint64_t             targetValue,
+                                                     hcl::ScalStream&     garbageCollectorStream)
+{
+    // After waiting for the required credits, the arbitrator on the gc scheduler needs to un-fence the gc stream
+    llvm_vecsmall::SmallVector<unsigned, MAX_STREAM_PER_SCHED> streamsToInc = {};
+    if (garbageCollectorStream.getSchedIdx() == (unsigned)schedIdx)
+        streamsToInc.push_back(garbageCollectorStream.getUarchStreamIndex());
+
+    // Wait for credits on the arb stream of each scheduler
+    auto& arbStream = getScalArbUarchStream(archStreamId, schedIdx);
+    arbStream.setTargetValue(targetValue);
+    setOpExecutionConditions(arbStream, requiredCredits, streamsToInc);
+
+    // Set cmax on the external SO
+    if (schedIdx == hcl::SchedulersIndex::sendScaleUp)
+    {
+        int additionalSignalExternal = m_graphSync[archStreamId]->isForceOrder(true)
+                                           ? m_device->getSignalsCalculator().signalToCost(SignalEvent::FORCE_ORDER)
+                                           : 0;
+
+        m_commands->serializeLbwWriteCommand(
+            arbStream,
+            arbStream.getSchedIdx(),
+            m_graphSync[archStreamId]->getCurrentCgSoAddr(CgType::eExternal),
+            m_graphSync[archStreamId]->getSoConfigValue(m_scalManager->getCMaxTargetValue() - additionalSignalExternal,
+                                                        true));
+    }
+}
+
 void HclDeviceControllerGen2Arch::addNop(int archStreamId)
 {
     advanceProg(archStreamId, true);
@@ -265,66 +304,30 @@ void HclDeviceControllerGen2Arch::addNop(int archStreamId)
     // the long SO and the GPSO pool are tightly coupled so we need to move the gpso idx
     syncParams.m_regularGPSOManager->allocNextCredit(syncParams.m_longSo->targetValue);
 
-    unsigned schedIdx               = (unsigned)hcl::SchedulersIndex::dma;
-    auto&    arbStream              = m_scalManager->getScalStream(archStreamId, schedIdx, ARB_STREAM_IDX);
-    auto&    garbageCollectorStream = m_scalManager->getScalStream(archStreamId, schedIdx, 0);
-    arbStream.setTargetValue(targetValue);
+    auto& garbageCollectorStream = getScalStream(archStreamId, HclStreamIndex::GC);
+    for (unsigned i = 0; i < hcl::SchedulersIndex::count; i++)
+    {
+        nopArbStreamRecipe(archStreamId, (hcl::SchedulersIndex)i, requiredCredits, targetValue, garbageCollectorStream);
+    }
+
+    ////////////////////////////////////////////////// GC STREAM RECIPE ///////////////////////////////////////////
     garbageCollectorStream.setTargetValue(targetValue);
-
-    setOpExecutionConditions(arbStream, requiredCredits, {0});
-
-    int additionalSignalInternal = m_graphSync[archStreamId]->isForceOrder(false) ? 1 : 0;
     waitForExecutionConditions(garbageCollectorStream);
+
+    // scheduler waits for credits on the external CG
     setGcExecutionConditions(garbageCollectorStream, 1, {});
 
+    // set cmax on the internal SO
+    int additionalSignalInternal = m_graphSync[archStreamId]->isForceOrder(false)
+                                       ? m_device->getSignalsCalculator().signalToCost(SignalEvent::FORCE_ORDER)
+                                       : 0;
     m_commands->serializeLbwWriteCommand(
         garbageCollectorStream,
-        schedIdx,
+        garbageCollectorStream.getSchedIdx(),
         m_graphSync[archStreamId]->getCurrentCgSoAddr(CgType::eInternal),
         m_graphSync[archStreamId]->getSoConfigValue(m_scalManager->getCMaxTargetValue() - additionalSignalInternal,
                                                     true));
     incInternalCgTargetValue(archStreamId);
-
-    schedIdx                   = (unsigned)hcl::SchedulersIndex::sendScaleUp;
-    auto& sendStream           = m_scalManager->getScalStream(archStreamId, schedIdx, 0);
-    auto& arbitratorStreamSend = m_scalManager->getScalStream(archStreamId, schedIdx, ARB_STREAM_IDX);
-    sendStream.setTargetValue(targetValue);
-    arbitratorStreamSend.setTargetValue(targetValue);
-
-    setOpExecutionConditions(arbitratorStreamSend, requiredCredits, {0});
-    waitForExecutionConditions(sendStream);
-    int additionalSignalExternal = m_graphSync[archStreamId]->isForceOrder(true) ? 1 : 0;
-
-    m_commands->serializeLbwWriteCommand(
-        sendStream,
-        schedIdx,
-        m_graphSync[archStreamId]->getCurrentCgSoAddr(CgType::eExternal),
-        m_graphSync[archStreamId]->getSoConfigValue(m_scalManager->getCMaxTargetValue() - additionalSignalExternal,
-                                                    true));
-
-    schedIdx                   = (unsigned)hcl::SchedulersIndex::recvScaleUp;
-    auto& recvStream           = m_scalManager->getScalStream(archStreamId, schedIdx, 0);
-    auto& arbitratorStreamRecv = m_scalManager->getScalStream(archStreamId, schedIdx, ARB_STREAM_IDX);
-    recvStream.setTargetValue(targetValue);
-    arbitratorStreamRecv.setTargetValue(targetValue);
-    setOpExecutionConditions(arbitratorStreamRecv, requiredCredits, {0});
-    waitForExecutionConditions(recvStream);
-
-    schedIdx                      = (unsigned)hcl::SchedulersIndex::sendScaleOut;
-    auto& sendOutStream           = m_scalManager->getScalStream(archStreamId, schedIdx, 0);
-    auto& arbitratorStreamSendOut = m_scalManager->getScalStream(archStreamId, schedIdx, ARB_STREAM_IDX);
-    sendOutStream.setTargetValue(targetValue);
-    arbitratorStreamSendOut.setTargetValue(targetValue);
-    setOpExecutionConditions(arbitratorStreamSendOut, requiredCredits, {0});
-    waitForExecutionConditions(sendOutStream);
-
-    schedIdx                      = (unsigned)hcl::SchedulersIndex::recvScaleOut;
-    auto& recvOutStream           = m_scalManager->getScalStream(archStreamId, schedIdx, 0);
-    auto& arbitratorStreamRecvOut = m_scalManager->getScalStream(archStreamId, schedIdx, ARB_STREAM_IDX);
-    recvOutStream.setTargetValue(targetValue);
-    arbitratorStreamRecvOut.setTargetValue(targetValue);
-    setOpExecutionConditions(arbitratorStreamRecvOut, requiredCredits, {0});
-    waitForExecutionConditions(recvOutStream);
 }
 
 void HclDeviceControllerGen2Arch::submitWork(int archStreamId, bool submitToHw)
@@ -333,16 +336,13 @@ void HclDeviceControllerGen2Arch::submitWork(int archStreamId, bool submitToHw)
 
     if (submitToHw)
     {
-        for (unsigned schedIdx = 0; schedIdx < SCHED_NR; ++schedIdx)
+        for (unsigned hclStreamIndex = 0; hclStreamIndex < m_streamLayout->getTotalMicroArchStreamCount();
+             hclStreamIndex++)
         {
-            for (unsigned uarchStreamId = 0; uarchStreamId < m_scalManager->getMicroArchStreams(schedIdx);
-                 ++uarchStreamId)
+            hcl::ScalStream& scalStream = getScalStream(archStreamId, (HclStreamIndex)hclStreamIndex);
+            if (scalStream.requiresSubmission())
             {
-                hcl::ScalStream& scalStream = m_scalManager->getScalStream(archStreamId, schedIdx, uarchStreamId);
-                if (scalStream.requiresSubmission())
-                {
-                    scalStream.submit();
-                }
+                scalStream.submit();
             }
         }
 
@@ -386,21 +386,21 @@ void HclDeviceControllerGen2Arch::streamAddWait(hcl::ScalStream&            scal
 }
 
 void HclDeviceControllerGen2Arch::setExecutionConditions(
-    hcl::ScalStream&                                               scalStream,
-    bool                                                           external,
-    unsigned                                                       creditsNr,
-    const llvm_vecsmall::SmallVector<unsigned, MAX_STREAM_TO_INC>& streamsToInc,
-    bool                                                           shouldAddWait,
-    LBWBurstData_t*                                                lbwBurstData)
+    hcl::ScalStream&                                                  scalStream,
+    bool                                                              external,
+    unsigned                                                          creditsNr,
+    const llvm_vecsmall::SmallVector<unsigned, MAX_STREAM_PER_SCHED>& streamsToInc,
+    bool                                                              shouldAddWait,
+    LBWBurstData_t*                                                   lbwBurstData)
 
 {
-    unsigned                                                archStreamIdx = scalStream.getArchStreamIndex();
-    unsigned                                                schedIdx      = scalStream.getSchedIdx();
-    llvm_vecsmall::SmallVector<unsigned, MAX_STREAM_TO_INC> fences;
+    unsigned                                                   archStreamIdx = scalStream.getArchStreamIndex();
+    unsigned                                                   schedIdx      = scalStream.getSchedIdx();
+    llvm_vecsmall::SmallVector<unsigned, MAX_STREAM_PER_SCHED> fences;
 
     if (shouldAddWait)
     {
-        addStreamWaitOnLongSo(scalStream, ARB_STREAM_IDX);
+        addStreamWaitOnExternalEvent(scalStream, ARB_STREAM_IDX);
     }
 
     if (creditsNr)
@@ -447,34 +447,6 @@ void HclDeviceControllerGen2Arch::waitForExecutionConditions(hcl::ScalStream& sc
         scalStream,
         scalStream.getSchedIdx(),
         getFenceIdx(scalStream.getArchStreamIndex(), scalStream.getUarchStreamIndex(), FENCE_BARRIER_IDX));
-}
-
-void HclDeviceControllerGen2Arch::addStreamWaitOnLongSo(hcl::ScalStream& scalStream, unsigned uarchStreamId)
-{
-    unsigned archStreamIdx = scalStream.getArchStreamIndex();
-    unsigned schedIdx      = scalStream.getSchedIdx();
-    // Apply the pending waits that were requested in previous eventWait calls.
-    m_graphSync[archStreamIdx]->addStreamWaitOnLongSo(
-        scalStream,
-        archStreamIdx,
-        m_streamSyncParams[archStreamIdx].m_smInfo.longMonitorSmIndex,
-        getLongMonitorIdx(archStreamIdx, schedIdx, uarchStreamId),
-        m_streamSyncParams[archStreamIdx].m_schedulers[schedIdx].streams[uarchStreamId],
-        getFenceIdx(archStreamIdx, uarchStreamId, FENCE_MONITOR_IDX));
-}
-
-void HclDeviceControllerGen2Arch::addStreamWaitOnLongSo(hcl::ScalStream& scalStream, uint64_t soValue, unsigned soIdx)
-{
-    unsigned archStreamIdx = scalStream.getArchStreamIndex();
-    unsigned schedIdx      = scalStream.getSchedIdx();
-    unsigned uarchStreamId = scalStream.getUarchStreamIndex();
-
-    m_graphSync[archStreamIdx]->addStreamWaitOnLongSo(scalStream,
-                                                      m_streamSyncParams[archStreamIdx].m_smInfo.longMonitorSmIndex,
-                                                      getLongMonitorIdx(archStreamIdx, schedIdx, uarchStreamId),
-                                                      soValue,
-                                                      soIdx,
-                                                      getFenceIdx(archStreamIdx, uarchStreamId, FENCE_MONITOR_IDX));
 }
 
 void HclDeviceControllerGen2Arch::setHostFences(int     archStreamId,
@@ -578,22 +550,17 @@ void HclDeviceControllerGen2Arch::enableNullSubmit(int archStreamId, bool enable
 void HclDeviceControllerGen2Arch::setTraceMarker(int archStreamId, uint32_t val)
 {
     LOG_HCL_TRACE(HCL, "setTraceMarker = {}", val);
-    unsigned         uArchStream = static_cast<unsigned int>(hcl::NetworkStreams::arbitrator);
-    hcl::ScalStream& currentStream =
-        m_scalManager->getScalStream(archStreamId, (unsigned)hcl::SchedulersIndex::sendScaleUp, uArchStream);
-    addStreamWaitOnLongSo(currentStream, uArchStream);
+    hcl::ScalStream& currentStream = getScalStream(archStreamId, HclStreamIndex::SU_SEND_ARB);
+    addStreamWaitOnExternalEvent(currentStream, currentStream.getUarchStreamIndex());
 
     m_commands->serializeSetTraceMarker(currentStream, currentStream.getSchedIdx(), val);
     submitWork(archStreamId);
 }
 
-void HclDeviceControllerGen2Arch::setTraceMarker(int          archStreamId,
-                                                 unsigned int schedIdx,
-                                                 unsigned int uArchStream,
-                                                 uint32_t     val)
+void HclDeviceControllerGen2Arch::setTraceMarker(int archStreamId, HclStreamIndex streamIdx, uint32_t val)
 {
-    LOG_HCL_TRACE(HCL, "setTraceMarker:{}, schedIdx:{}, uArchStream:{}", val, schedIdx, uArchStream);
-    hcl::ScalStream& currentStream = m_scalManager->getScalStream(archStreamId, schedIdx, uArchStream);
+    LOG_HCL_TRACE(HCL, "setTraceMarker:{}, HclStreamIndex:{}", val, streamIdx);
+    hcl::ScalStream& currentStream = getScalStream(archStreamId, streamIdx);
 
     m_commands->serializeSetTraceMarker(currentStream, currentStream.getSchedIdx(), val);
 }

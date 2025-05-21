@@ -101,18 +101,18 @@ public:
                                          uint32_t             qpn,
                                          uint32_t             ports_mask);
 
-    void serializeScaleUpSendRecv(hcl::ScalStreamBase&              scalStream,
-                                  const int                         selfModuleId,
-                                  const bool                        isSend,
-                                  const uint8_t                     dcore,
-                                  const uint8_t                     ssm,
-                                  const uint16_t                    sobId,
-                                  const uint32_t                    qpn,
-                                  const SendRecvArray&              sendRecvArray,
-                                  const RemoteDevicePortMasksArray& remoteDevicesPortMasks,
-                                  const HCL_Comm                    comm,
-                                  SendRecvAggregatorGaudi3&         sendRecvAggr,
-                                  const unsigned                    maxNumScaleUpNicsPerConnection);
+    void serializeScaleUpSendRecv(hcl::ScalStreamBase&               scalStream,
+                                  const int                          selfModuleId,
+                                  const bool                         isSend,
+                                  const uint8_t                      dcore,
+                                  const uint8_t                      ssm,
+                                  const uint16_t                     sobId,
+                                  const uint32_t                     qpn,
+                                  const SendRecvArray&               sendRecvArray,
+                                  const RemoteDevicePortMasksVector& remoteDevicesPortMasks,
+                                  const HCL_Comm                     comm,
+                                  SendRecvAggregatorGaudi3&          sendRecvAggr,
+                                  const unsigned                     maxNumScaleUpNicsPerConnection);
 
     // Serialize a single device send/recv
     void serializeScaleUpSendRecvDevice(hcl::ScalStreamBase& scalStream,
@@ -159,12 +159,13 @@ public:
     virtual void serializeScaleOutCollectiveOp(hcl::ScalStreamBase&    scalStream,
                                                ScaleOutCollectiveOpG3& scaleoutCollectiveOp);
 
-    virtual void serializeAllocBarrierCommand(hcl::ScalStreamBase& scalStream,
-                                              unsigned             schedIdx,
-                                              uint32_t             completionGroupIndex,
-                                              uint32_t             requiredSobs,
-                                              llvm_vecsmall::SmallVector<uint32_t, MAX_STREAM_TO_INC>* fences = nullptr,
-                                              const LBWBurstData_t* destData = nullptr) override;
+    virtual void
+    serializeAllocBarrierCommand(hcl::ScalStreamBase&                                        scalStream,
+                                 unsigned                                                    schedIdx,
+                                 uint32_t                                                    completionGroupIndex,
+                                 uint32_t                                                    requiredSobs,
+                                 llvm_vecsmall::SmallVector<uint32_t, MAX_STREAM_PER_SCHED>* fences = nullptr,
+                                 const LBWBurstData_t* destData                                     = nullptr) override;
 
     virtual void serializeLbwWriteCommand(hcl::ScalStreamBase& scalStream,
                                           unsigned             schedIdx,
@@ -192,11 +193,13 @@ public:
 
     virtual void serializeNopCommand(hcl::ScalStreamBase& scalStream, unsigned schedIdx, uint32_t padding) override;
 
-    virtual void serializeGlobalDmaCommand(hcl::ScalStreamBase&                  scalStream,
-                                           uint32_t                              soAddressLSB,
-                                           const std::vector<sibAddressAndSize>& sibAddressesAndSizes,
-                                           uint32_t                              fwStrideSize,
-                                           uint64_t                              fwBaseAddress) override;
+    virtual void
+    serializeGlobalDmaCommand(hcl::ScalStreamBase&                                 scalStream,
+                              unsigned                                             schedIdx,
+                              uint32_t                                             soAddressLSB,
+                              const std::vector<SimbPoolContainerParamsPerStream>& containerParamsPerStreamVec,
+                              uint32_t                                             fwStrideSize,
+                              uint64_t                                             fwBaseAddress) override;
 
     virtual void serializePdmaCommand(hcl::ScalStreamBase& scalStream,
                                       unsigned             schedIdx,

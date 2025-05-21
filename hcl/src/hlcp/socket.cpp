@@ -7,6 +7,8 @@
 
 // ===============================================================================
 
+#define SOCKET_LOG(FMT, ...) COORD_LOG("{} " FMT, str(), ##__VA_ARGS__)
+
 socket_base_t::socket_base_t(int socket_fd) : socket_(socket_fd)
 {
     get_info();
@@ -49,7 +51,7 @@ bool socket_base_t::set_linger(bool set, uint32_t seconds)
 
 bool socket_base_t::set_non_blocking(bool non_blocking)
 {
-    HLCP_LOG("({}) socket({})", non_blocking, socket_);
+    SOCKET_LOG("({})", non_blocking);
 
     int flags = fcntl(socket_, F_GETFL, 0);
     if (flags < 0)
@@ -57,7 +59,7 @@ bool socket_base_t::set_non_blocking(bool non_blocking)
         return false;
     }
 
-    non_blocking ? flags |= O_NONBLOCK : flags &= ~O_NONBLOCK;
+    (non_blocking ? flags |= O_NONBLOCK : flags &= ~O_NONBLOCK);
 
     RET_ON_ERR(fcntl(socket_, F_SETFL, flags));
 
@@ -68,13 +70,13 @@ bool socket_base_t::close_socket()
 {
     if (socket_ != INVALID_SOCKET)
     {
-        RET_ON_ERR(::close(socket_));
+        SYS_FUNC_CALL(::close(socket_));
     }
+
+    SOCKET_LOG("");
 
     local_  = "";
     remote_ = "";
-
-    HLCP_LOG("{}", socket_);
 
     socket_ = INVALID_SOCKET;
 
@@ -90,9 +92,9 @@ bool socket_base_t::close()
         return true;
     }
 
-    RET_ON_FALSE(set_linger(true, RX_TX_CLOSE_TIMEOUT));
+    set_linger(true, RX_TX_CLOSE_TIMEOUT);
 
-    RET_ON_ERR(::shutdown(socket_, SHUT_RDWR));
+    SYS_FUNC_CALL(::shutdown(socket_, SHUT_RDWR));
 
     close_socket();
 
@@ -102,7 +104,8 @@ bool socket_base_t::close()
 std::string socket_base_t::str() const
 {
     std::stringstream out;
-    out << "[" << this << "]" << " socket(" << fd << ")[" << local_addr.str() << " <-> " << remote_addr.str() << "]";
+    out << "socket(0x" << std::hex << socket_ << std::dec << ")[" << local_addr.str() << " <-> " << remote_addr.str()
+        << "]";
 
     return out.str();
 }
@@ -139,7 +142,7 @@ std::string socket_base_t::str() const
 
 int socket_io_t::io_event(uint32_t io_events)
 {
-    HLCP_LOG("socket({}) events:{}", socket_, io_events);
+    SOCKET_LOG("{}", io_events);
 
     if (io_events & EPOLLERR)
     {
@@ -208,7 +211,7 @@ void socket_io_t::set_op(bool send, bool on)
 
 void socket_io_t::op_complete(bool send)
 {
-    HLCP_LOG("socket({}): {} {}", socket_, send ? "send" : "recv", send ? (ssize_t)tx_ : (ssize_t)rx_);
+    SOCKET_LOG("{} {}", send ? "send" : "recv", send ? tx_.packet.size : rx_.packet.size);
 
     if (send)
     {
@@ -241,7 +244,7 @@ int socket_io_t::send()
 {
     while (true)
     {
-        HLCP_LOG("socket({}) -> {}", socket_, (ssize_t)tx_);
+        SOCKET_LOG(" -> {}", (ssize_t)tx_);
 
         auto sent = ::send(socket_, tx_, tx_, 0);
         if (tx_ == sent)  //  all data sent
@@ -276,7 +279,7 @@ int socket_io_t::recv()
 {
     while (true)
     {
-        HLCP_LOG("socket({}) <- {}", socket_, (ssize_t)rx_);
+        SOCKET_LOG(" <- {}", (ssize_t)rx_);
 
         auto received = ::recv(socket_, rx_, rx_, 0);
         if (rx_ == received)  // all data received
@@ -313,11 +316,11 @@ bool socket_t::connect(const sockaddr_t& peer, uint32_t /* timeout */ sec, const
 {
     RET_ON_FALSE(create(peer));
 
-    HLCP_LOG("socket({}) -> {}", socket_, peer.str());
+    SOCKET_LOG("-> {}", peer.str());
 
     if (if_name != "")
     {
-        RET_ON_ERR(setsockopt(socket_, SOL_SOCKET, SO_BINDTODEVICE, if_name.c_str(), if_name.size()));
+        RET_ON_ERR(setsockopt(socket_, SOL_SOCKET, SO_BINDTODEVICE, if_name.c_str(), if_name.size() + 1));
     }
 
     /* Set the option active */
@@ -328,7 +331,7 @@ bool socket_t::connect(const sockaddr_t& peer, uint32_t /* timeout */ sec, const
 
     RET_ON_FALSE(get_info());
 
-    HLCP_LOG("connected: {}", str());
+    SOCKET_LOG("connected.");
 
     return true;
 }

@@ -5,14 +5,14 @@
 #include <tuple>              // for tuple
 #include <nlohmann/json.hpp>  // for json
 
-#include "platform/gen2_arch_common/server_connectivity_types.h"  // for ServerNicsConnectivityArray
+#include "platform/gen2_arch_common/server_connectivity_types.h"  // for ServerNicsConnectivityVector
 
-using json = nlohmannV340::json;
+using json = nlohmann::json;
 
 class ServerConnectivityUserConfig
 {
 public:
-    ServerConnectivityUserConfig()          = default;
+    ServerConnectivityUserConfig(const uint32_t numberOfDevicesPerHost);
     virtual ~ServerConnectivityUserConfig() = default;
 
     /**
@@ -28,7 +28,7 @@ public:
      *
      * @return The port mapping configuration read from file
      */
-    const ServerNicsConnectivityArray& getMapping() const { return m_customMapping; };
+    const ServerNicsConnectivityVector& getMapping() const { return m_customMapping; };
 
     /**
      * @return If the json mapping file read was valid or not
@@ -43,7 +43,8 @@ public:
 private:
     virtual bool parseNics(const std::string& path, const json& config);
 
-    bool                        m_hasValidMapping = false;
-    std::string                 m_filePathLoaded;
-    ServerNicsConnectivityArray m_customMapping;
+    bool                         m_hasValidMapping = false;
+    std::string                  m_filePathLoaded;
+    ServerNicsConnectivityVector m_customMapping;
+    const uint32_t               m_numberOfDevicesPerHost;
 };

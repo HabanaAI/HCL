@@ -10,6 +10,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string_view>
 
 // Allows for creating different communicators. Initially, use HCL_COMM_WORLD reserved name only.
 
@@ -71,3 +72,9 @@ struct HCL_UniqueId
 
 const uint64_t HCL_InfinityWait   = 0xFFFFFFFFFFFFFFFF;
 const uint8_t  HCL_DEFAULT_API_ID = 0;
+
+struct CommIds
+{
+    HCL_Comm               commId;
+    const std::string_view commIdPort;
+};

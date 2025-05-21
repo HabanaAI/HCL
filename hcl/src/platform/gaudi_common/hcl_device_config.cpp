@@ -100,6 +100,10 @@ bool HclDeviceConfigGaudiCommon::determineHclType()
         case HL_SERVER_GAUDI3_HL338:
             configTypeFromServer = HL338;
             break;
+        case HL_SERVER_GAUDI3_RACK:
+        case HL_SERVER_GAUDI3_RACK_WHITEBOX:
+            configTypeFromServer = HL3_RACK;
+            break;
         default:
             LOG_HCL_CRITICAL(HCL, "Got unknown server_type ({}) from driver", server_type);
             configTypeFromServer = UNKNOWN;
@@ -137,6 +141,7 @@ bool HclDeviceConfigGaudiCommon::validateHclType()
             break;
         case HLS3:
         case HL338:
+        case HL3_RACK:
             if (!IS_DEVICE_GAUDI3(m_deviceType))
             {
                 LOG_HCL_CRITICAL(HCL, "Invalid HCL_TYPE value ({}) for Gaudi3", configType);

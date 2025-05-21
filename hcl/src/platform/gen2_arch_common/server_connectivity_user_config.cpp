@@ -6,12 +6,18 @@
 
 #include <nlohmann/json.hpp>  // for json
 
-#include "platform/gen2_arch_common/types.h"                      // for MAX_NICS_GEN2ARCH, GEN2ARCH_HLS_BOX_SIZE
-#include "platform/gen2_arch_common/server_connectivity_types.h"  // for ServerNicsConnectivityArray
+#include "platform/gen2_arch_common/types.h"                      // for MAX_NICS_GEN2ARCH
+#include "platform/gen2_arch_common/server_connectivity_types.h"  // for ServerNicsConnectivityVector
 #include "hcl_utils.h"                                            // for LOG_HCL_*
 #include "hcl_log_manager.h"                                      // for LOG_*
 
-using json = nlohmannV340::json;
+using json = nlohmann::json;
+
+ServerConnectivityUserConfig::ServerConnectivityUserConfig(const uint32_t numberOfDevicesPerHost)
+: m_numberOfDevicesPerHost(numberOfDevicesPerHost)
+{
+    m_customMapping.resize(numberOfDevicesPerHost);
+}
 
 bool ServerConnectivityUserConfig::parseConfig(const std::string path)
 {
@@ -55,7 +61,7 @@ bool ServerConnectivityUserConfig::parseConfig(const std::string path)
 bool ServerConnectivityUserConfig::parseNics(const std::string& path, const json& config)
 {
     const std::vector<json> cards = config["HCL_NICS"].get<std::vector<json>>();
-    if (!(cards.size() == std::tuple_size<ServerNicsConnectivityArray>::value))
+    if (!(cards.size() == m_numberOfDevicesPerHost))
     {
         LOG_HCL_CRITICAL(HCL, "JSON Config File ({}) number of cards not correct", path.c_str());
         return false;
@@ -65,7 +71,7 @@ bool ServerConnectivityUserConfig::parseNics(const std::string& path, const json
     {
         const unsigned deviceId = card["CARD_LOCATION"].get<unsigned>();
         LOG_HCL_DEBUG(HCL, "deviceId={}", deviceId);
-        if (!(deviceId >= 0 && deviceId < GEN2ARCH_HLS_BOX_SIZE))
+        if (!(deviceId >= 0 && deviceId < m_numberOfDevicesPerHost))
         {
             LOG_HCL_CRITICAL(HCL, "JSON Config File ({}) invalid CARD_LOCATION id {}", path.c_str(), deviceId);
             return false;
@@ -100,7 +106,7 @@ bool ServerConnectivityUserConfig::parseNics(const std::string& path, const json
                           remoteSubNic);
 
             if (!(((unsigned)remoteCard == SCALEOUT_DEVICE_ID) || ((unsigned)remoteCard == NOT_CONNECTED_DEVICE_ID) ||
-                  ((unsigned)remoteCard >= 0 && (unsigned)remoteCard < GEN2ARCH_HLS_BOX_SIZE)))
+                  ((unsigned)remoteCard >= 0 && (unsigned)remoteCard < m_numberOfDevicesPerHost)))
             {
                 LOG_HCL_CRITICAL(HCL,
                                  "JSON Config File ({})  device {} NIC {} invalid REMOTE_CARD id {}",

@@ -8,7 +8,7 @@
 
 #include "hcl_api_types.h"                                           // for HCL_Comm
 #include "platform/gaudi2/types.h"                                   // for HLS2_BOX_SIZE
-#include "platform/gen2_arch_common/types.h"                         // for MAX_NICS_GEN2ARCH, GEN2ARCH_HLS_BOX_SIZE
+#include "platform/gen2_arch_common/types.h"                         // for MAX_NICS_GEN2ARCH
 #include "g2_sched_pkts.h"                                           // for g2fw
 #include "platform/gen2_arch_common/nic_passthrough_handler_base.h"  // for NicPassthroughHandlerBase
 
@@ -41,8 +41,6 @@ public:
                           const Gen2ArchServerConnectivity& serverConnectivity,
                           HclCommandsGen2Arch&              commands);
     virtual ~NicPassthroughHandler() = default;
-
-    static_assert(GEN2ARCH_HLS_BOX_SIZE == HLS2_BOX_SIZE, "G2 must match Gen2Arch box size");
 
     virtual uint32_t getDupMask(const int deviceId);
 
@@ -77,8 +75,8 @@ private:
 
     const Gen2ArchServerConnectivity& m_serverConnectivity;
 
-    uint32_t m_dupMasksPerNic[MAX_NICS_GEN2ARCH];
-    uint32_t m_dupMasksPerDevice[HLS2_BOX_SIZE];
+    uint32_t                               m_dupMasksPerNic[MAX_NICS_GEN2ARCH];
+    std::unordered_map<uint32_t, uint32_t> m_dupMasksPerDevice;  // <deviceId, dupMaskForDevice>
 
     RecordsPerCommands m_records;
     HclCommandsGaudi2& m_commands;

@@ -89,11 +89,11 @@ struct host_sched_cmd_scale_out_nic_op
 
 struct host_sched_cmd_scale_out_with_fence_nic_op
 {
-    uint32_t opcode : 4;
-    uint32_t qpSetIndex : 4;
-    uint32_t askForCredit : 1;
-    uint32_t __unused : 23;
-    uint32_t rank : 32;  // HCL_Rank
+    uint32_t              opcode : 4;
+    uint32_t              qpSetIndex : 4;
+    uint32_t              askForCredit : 1;
+    uint32_t              __unused : 23;
+    uint32_t              rank : 32;  // HCL_Rank
     uint64_t              address;
     uint64_t              size;
     HCL_Comm              comm;  // uint32_t

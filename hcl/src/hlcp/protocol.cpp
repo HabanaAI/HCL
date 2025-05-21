@@ -28,7 +28,7 @@ std::ostream& operator<<(std::ostream& out, const hlcp_header_t& hdr)
 {
     const magic_t& magic = *(magic_t*)hdr.magic;
 
-    out << "[" << magic[0] << magic[1] << magic[2] << magic[3];
+    out << "hlcp_header_t[" << magic[0] << magic[1] << magic[2] << magic[3];
 
     out << std::hex << std::uppercase;
     out << " " << hdr.version << " " << hdr.type << " " << hdr.footer << "]";
@@ -39,20 +39,20 @@ std::ostream& operator<<(std::ostream& out, const hlcp_header_t& hdr)
 
 std::ostream& operator<<(std::ostream& out, const hlcp_message_t& msg)
 {
-    return out << "[" << msg.id << ", " << msg.payload_size << "]";
+    return out << "hlcp_msg[" << msg.id << ", " << msg.payload_size << "]";
 }
 
 std::ostream& operator<<(std::ostream& out, const hlcp_packet_t& p)
 {
-    return out << "hlcp_packet(" << "hdr:" << p.hdr << ", msg:" << p.msg << ")";
+    return out << "hlcp_packet(" << p.hdr << " " << p.msg << ")";
 }
 
 std::ostream& operator<<(std::ostream& out, const hlcp_command_t& c)
 {
-    out << "cmd:" << "[" << c.name() << "(" << c.id() << "), " << c.param_size();
+    out << "hlcp_cmd[" << c.name() << "(" << c.id() << "), " << c.param_size();
     if (c.payload())
     {
-        out << ", " << c.payload() << " " << c.payload_size();
+        out << ", payload: " << c.payload_size() << " @ " << c.payload();
     }
     out << "]";
     return out;

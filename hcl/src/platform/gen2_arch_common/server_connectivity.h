@@ -6,7 +6,7 @@
 #include <memory>   // for unique_ptr
 
 #include "platform/gen2_arch_common/server_connectivity_user_config.h"  // for ServerConnectivityUserConfig
-#include "platform/gen2_arch_common/server_connectivity_types.h"        // for ServerNicsConnectivityArray
+#include "platform/gen2_arch_common/server_connectivity_types.h"        // for ServerNicsConnectivityVector
 #include "platform/gen2_arch_common/runtime_connectivity.h"             // for Gen2ArchRuntimeConnectivity
 #include "hcl_bits.h"                                                   // for nics_mask_t
 #include "hcl_types.h"                                                  // for portMaskConfig
@@ -19,16 +19,16 @@ using Gen2ArchRuntimeConnectivityPtr = std::unique_ptr<Gen2ArchRuntimeConnectivi
 
 static constexpr unsigned INVALID_PORTS_MASK = (unsigned)-1;
 
-extern const ServerNicsConnectivityArray g_dummyTestDeviceServerNicsConnectivity;
+extern const ServerNicsConnectivityVector g_dummyTestDeviceServerNicsConnectivity;
 
 class Gen2ArchServerConnectivity
 {
 public:
-    Gen2ArchServerConnectivity(const int                          fd,
-                               const int                          moduleId,
-                               const bool                         useDummyConnectivity,
-                               const ServerNicsConnectivityArray& serverNicsConnectivityArray,
-                               HclDeviceConfig&                   deviceConfig);
+    Gen2ArchServerConnectivity(const int                           fd,
+                               const int                           moduleId,
+                               const bool                          useDummyConnectivity,
+                               const ServerNicsConnectivityVector& serverNicsConnectivityVector,
+                               HclDeviceConfig&                    deviceConfig);
     virtual ~Gen2ArchServerConnectivity()                                    = default;
     Gen2ArchServerConnectivity(const Gen2ArchServerConnectivity&)            = delete;
     Gen2ArchServerConnectivity& operator=(const Gen2ArchServerConnectivity&) = delete;
@@ -70,7 +70,8 @@ public:
     getAllScaleoutPorts(const HCL_Comm hclCommId = DEFAULT_COMM_ID) const;  // Used for unit tests, w/o any masks
     uint16_t getMaxNumScaleUpPortsPerConnection(const HCL_Comm hclCommId = DEFAULT_COMM_ID) const;
 
-    void setUnitTestsPortsMasks(const nics_mask_t fullScaleoutPorts, const nics_mask_t allPortsMask);
+    void           setUnitTestsPortsMasks(const nics_mask_t fullScaleoutPorts, const nics_mask_t allPortsMask);
+    const uint32_t getNumberOfDevicesPerHost() const { return m_numberOfDevicesPerHost; }
 
 protected:
     virtual Gen2ArchRuntimeConnectivity*
@@ -81,11 +82,12 @@ protected:
     const int  m_fd       = UNIT_TESTS_FD;        // This device FD, can stay -1 for unit tests
     const int  m_moduleId = UNDEFINED_MODULE_ID;  // This device module id, can stay -1 for unit tests
     const bool m_useDummyConnectivity;
-    const ServerNicsConnectivityArray& m_serverNicsConnectivityArray;  // Init this from all sub-classes
-    HclDeviceConfig&                   m_deviceConfig;
-    struct portMaskConfig              m_lkdPortsMasks;  // Stores LKD ports mask
-    bool                               m_lkdPortsMaskValid = false;
-    uint64_t m_userScaleOutPortsMask = INVALID_PORTS_MASK;  // Stores users's external ports mask if supplied
+    const ServerNicsConnectivityVector& m_serverNicsConnectivityVector;  // Init this from all sub-classes
+    HclDeviceConfig&                    m_deviceConfig;
+    struct portMaskConfig               m_lkdPortsMasks;  // Stores LKD ports mask
+    bool                                m_lkdPortsMaskValid = false;
+    uint64_t       m_userScaleOutPortsMask = INVALID_PORTS_MASK;  // Stores users's external ports mask if supplied
+    const uint32_t m_numberOfDevicesPerHost;
 
     std::vector<Gen2ArchRuntimeConnectivityPtr>
                 m_commsRuntimeConnectivity;  // vector of dynamic runtime connectivity per comm

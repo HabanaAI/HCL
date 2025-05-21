@@ -6,7 +6,7 @@
 #include "hcl_api_types.h"  // for HCL_CollectiveOp
 #include "platform/gen2_arch_common/types.h"
 #include "hccl_types.h"  // for hcclRedOp_t
-#include "platform/gen2_arch_common/device_buffer_manager.h"
+#include "platform/gen2_arch_common/device_simb_pool_manager.h"
 #include "gaudi3/nic_patcher_cmds.h"                  // for direct_coll_desc_send_receive
 #include "platform/gaudi3/nic_passthrough_handler.h"  // for pRecordWithMetadataGaudi3
 #include "platform/gen2_arch_common/commands/hcl_commands.h"
@@ -20,12 +20,12 @@ namespace SchedArcCommandsGaudi3
 {
 void serializeNopCommand(hcl::ScalStreamBase& scalStream, unsigned schedIdx, uint32_t padding);
 
-void serializeAllocBarrierCommand(hcl::ScalStreamBase&                                     scalStream,
-                                  unsigned                                                 schedIdx,
-                                  uint32_t                                                 completionGroupIndex,
-                                  uint32_t                                                 requiredSobs,
-                                  llvm_vecsmall::SmallVector<uint32_t, MAX_STREAM_TO_INC>* fences        = nullptr,
-                                  const LBWBurstData_t*                                    destBurstData = nullptr);
+void serializeAllocBarrierCommand(hcl::ScalStreamBase&                                        scalStream,
+                                  unsigned                                                    schedIdx,
+                                  uint32_t                                                    completionGroupIndex,
+                                  uint32_t                                                    requiredSobs,
+                                  llvm_vecsmall::SmallVector<uint32_t, MAX_STREAM_PER_SCHED>* fences        = nullptr,
+                                  const LBWBurstData_t*                                       destBurstData = nullptr);
 
 void serializeFenceDecCommand(hcl::ScalStreamBase& scalStream,
                               unsigned             schedIdx,
@@ -69,7 +69,8 @@ void serializeDmaCommand(hcl::ScalStreamBase& scalStream,
                          bool                 isBFloat           = false,
                          bool                 useReductionInd    = false,
                          bool                 isFirstWrite       = false,
-                         uint32_t             memsetValue        = 0);
+                         uint32_t             memsetValue        = 0,
+                         bool                 isWideAccumulation = false);
 
 void serializePdmaCommand(hcl::ScalStreamBase& scalStream,
                           unsigned             schedIdx,
@@ -104,7 +105,8 @@ void serializeCollectiveCommand(hcl::ScalStreamBase& scalStream,
                                 hcclDataType_t       dataType,
                                 uint32_t             ScaleupGroupSize,
                                 uint32_t             lagSize,
-                                uint64_t             strideCount = 1);
+                                uint64_t             strideCount   = 1,
+                                bool                 isRSContReduc = false);
 
 void serializeSendRecvDesc(const bool                                  isSend,
                            const bool                                  isScaleUp,
@@ -124,7 +126,8 @@ void serializeSendRecvDesc(const bool                                  isSend,
                            const uint32_t                              ScaleupGroupSize,
                            const uint32_t                              lagSize,
                            const uint64_t                              strideCount,
-                           gaudi3::Nic::direct_coll_desc_send_receive& desc);
+                           gaudi3::Nic::direct_coll_desc_send_receive& desc,
+                           bool                                        isRSContReduc = false);
 
 void serializeScaleupNonCollectiveCommand(hcl::ScalStreamBase& scalStream,
                                           const bool           isSend,
@@ -149,12 +152,13 @@ void serializeNicNopCommand(hcl::ScalStreamBase& scalStream,
                             const uint32_t       credits,
                             const uint32_t       consumeDwords);
 
-void serializeGlobalDmaCommand(hcl::ScalStreamBase&                  scalStream,
-                               uint32_t                              soAddressLSB,
-                               const std::vector<sibAddressAndSize>& sibAddressesAndSizes,
-                               uint32_t                              fwStrideSize,
-                               uint64_t                              fwBaseAddress,
-                               uint32_t                              engineType);
+void serializeGlobalDmaCommand(hcl::ScalStreamBase&                                 scalStream,
+                               unsigned                                             schedIdx,
+                               uint32_t                                             soAddressLSB,
+                               const std::vector<SimbPoolContainerParamsPerStream>& containerParamsPerStreamVec,
+                               uint32_t                                             fwStrideSize,
+                               uint64_t                                             fwBaseAddress,
+                               uint32_t                                             engineType);
 
 void serializeUpdateNicOffsets(hcl::ScalStreamBase&                     scalStream,
                                bool                                     isSend,

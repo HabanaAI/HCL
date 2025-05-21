@@ -16,6 +16,9 @@
 #include "interfaces/hcl_hal.h"                               // for HalPtr
 #include "platform/gaudi3/gaudi3_base_server_connectivity.h"  // for Gaudi3BaseServerConnectivity
 #include "hcl_types.h"                                        // for NicLkdEventsEnum, eIbvNicPhysicalState
+#include "fault_tolerance_inc.h"                              // for HLFT.* macros
+#include "delayed_exec.h"                                     // for delayed_exec_t
+#include "wts_queue.h"
 
 class Gen2ArchDevicePortMapping;
 class Gen2ArchServerDef;
@@ -52,6 +55,9 @@ public:
     {
         return reinterpret_cast<Gaudi3BaseServerConnectivity&>(getServerConnectivity());
     }
+
+    virtual hcclResult_t destroyComm(HCL_Comm comm, bool force) override;
+    virtual void         faultToleranceCommInit(const HCL_Comm comm) override;
 
     virtual hcclResult_t connectCommQps(HCL_Comm comm) override;
     virtual void         updateDisabledPorts() override;
@@ -99,15 +105,29 @@ public:
     virtual void createMigrationQps(const HCL_Comm commId, const uint16_t nicDown) override;
 
     virtual void deleteMigrationQPs(const HCL_Comm comm) override;
-    virtual void updateMigrationQpsToRts(const HCL_Comm comm) override;
+    virtual void updateMigrationQpsToRts(const CommIds& commIds) override;
 
     virtual void updateNicState(const uint32_t nic, const NicLkdEventsEnum event, const bool atInit) override;
+    virtual void
+    handleFaultToleranceGroupEndApi() override;  // called by HCL Group End API to handle fault tolerance case
+    virtual void faultToleranceNotifyGroupApis() override;  // Notify group end API calls for stop/resume
+    virtual void clearScaleoutCommsCurrentGroup() override;
+    virtual void addScaleoutCommsCurrentGroup(const HCL_Comm hclCommId) override;
+
+    virtual void destroy() override;
+    virtual void setQpManagersForComm(const HCL_Comm comm, const size_t commSize) override;
+
+    // currently, this function is only used in Gaudi2
+    virtual uint32_t getCollectiveQpi(const HCL_CollectiveOp collectiveOp, const bool isSend) override;
 
 protected:
     using HclDeviceGen2Arch::createQpnInLKD;  // to avoid compiler "hides overloaded virtual function" error
-    uint32_t                           createQpnInLKD(const uint32_t nic, const unsigned qpId, uint32_t coll_qpn);
-    uint32_t                           requestCollectiveQpnFromLKD(bool isScaleOut);
-    virtual bool                       isSender(unsigned qpi) override;
+
+    uint32_t createQpnInLKD(HCL_Comm comm, const uint32_t nic, const unsigned qpId, uint32_t coll_qpn);
+    uint32_t requestCollectiveQpnFromLKD(bool isScaleOut);
+
+    virtual bool isSender(unsigned qpi) override;
+
     virtual const eIbvNicPhysicalState getNicPhysicalState(const uint32_t nic) override;
 
 private:
@@ -133,8 +153,48 @@ private:
     void setMigrationQPsRTR(const HCL_Comm comm);
     void setMigrationQPsRTS(const HCL_Comm comm);
     void migrateQPs(const HCL_Comm comm);
+    void
+    faultToleranceContinueGroupEndApiUntil();  // called by HCL Group End API to check if to continue group end API
+                                               // processing for all scaleout comms in this rank until specific counters
+
+    bool checkFaultToleranceGroupEndAllCommsUntil() const;  // Returns true if the group API can continue
 
     HclConfigType m_boxConfigType = HLS3;
 
-    std::unique_ptr<MigrationScaleOutQpManagerGaudi3> m_migrationQpManager;
+    CommsSet                     m_faultToleranceScaleoutComms;       // Contains all scaleout comms for fault tolerance
+    static thread_local CommsSet s_faultToleranceGroupScaleoutComms;  // Contains all current group call scaleout comms,
+                                                                      // needs to be TLS because aggregators are TLS
+    std::condition_variable m_faultsStopGroupEndApiCv;
+    std::mutex              m_faultsStopGroupEndApiMutex;
+
+    std::array<delayed_exec_t, MAX_NICS_GEN2ARCH> m_delayedReports;
+
+    /*
+      NicStatusReport structure is designed to manage and process NIC status messages.
+      This structure encapsulates a queue of messages with a worker thread that processes these messages asynchronously.
+
+      So, when an LKD NIC status message is received, it is added to the queue (m_nicReports.add(msg)) and the calling
+      thread (ib eq_poll) is released to receive further LKD notifications. The message is then processed in the
+      background by the worker thread, which applies the reportCommNicStatus() function to each message.
+     */
+    struct NicStatusReport
+    {
+        struct NicStatusMsg
+        {
+            uint16_t nic = -1;
+            bool     up  = false;
+        };
+
+        using status_reports_t = dispatcher_queue_t<NicStatusMsg>;
+
+        status_reports_t msgs;
+
+        void add(uint16_t nic, bool up) { msgs.push({nic, up}); }
+
+        NicStatusReport(HclDeviceGaudi3* device)
+        : msgs([=](const NicStatusMsg& m) { device->reportCommNicStatus(m.nic, m.up); })
+        {
+        }
+
+    } m_nicReports {this};
 };

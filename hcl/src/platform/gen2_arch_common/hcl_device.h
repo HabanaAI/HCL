@@ -26,11 +26,11 @@ class Gen2ArchDevicePortMapping;
 class HclCommandsGen2Arch;
 class HclDeviceControllerGen2Arch;
 class IEventQueueHandler;
-class DeviceBufferManager;
+class DeviceSimbPoolManagerBase;
 class QPManager;
 class Gen2ArchServerConnectivity;
 class Gen2ArchServerDef;
-class IntermediateBufferContainer;
+class SimbPoolContainerAllocator;
 
 namespace hcl
 {
@@ -65,7 +65,7 @@ public:
     virtual hcclResult_t onNewCommStart(HCL_Comm comm, uint32_t commSize, HclConfig& config) override;
     virtual hcclResult_t destroyComm(HCL_Comm comm, bool force = false) override;
     void                 deleteCommConnections(HCL_Comm comm);
-    virtual hcclResult_t destroy(bool force = false) override;
+    virtual void         destroy() override;
 
     virtual bool              isDramAddressValid(uint64_t addr) const override;
     hcl::Gen2ArchScalManager& getScalManager();
@@ -82,13 +82,13 @@ public:
      */
     void openAllRequiredNonPeerQPs(const HCL_Comm comm, const std::set<HCL_Rank>& remoteRanks);
 
-    virtual uint32_t createQpnInLKD(const uint32_t port, const uint8_t qpId) override;
+    virtual uint32_t createQpnInLKD(HCL_Comm comm, const uint32_t port, const uint8_t qpId) override;
 
-    void                 updateRankHasQp(const HCL_Comm comm, const HCL_Rank remoteRank);
-    DeviceBufferManager& getSIB(const uint32_t streamIndex);
-    uint64_t             getSIBBufferSize() const;
-    virtual void         getLagInfo(const uint16_t nic, uint8_t& lagIdx, uint8_t& lastInLag, const HCL_Comm comm);
-    virtual hcclResult_t openQpsScaleOut(HCL_Comm comm, const UniqueSortedVector& outerRanks) = 0;
+    void                       updateRankHasQp(const HCL_Comm comm, const HCL_Rank remoteRank);
+    DeviceSimbPoolManagerBase& getDeviceSimbPoolManager(const uint32_t streamIndex);
+    uint64_t                   getSIBBufferSize() const;
+    virtual void               getLagInfo(const uint16_t nic, uint8_t& lagIdx, uint8_t& lastInLag, const HCL_Comm comm);
+    virtual hcclResult_t       openQpsScaleOut(HCL_Comm comm, const UniqueSortedVector& outerRanks) = 0;
     virtual HclCommandsGen2Arch& getGen2ArchCommands();
     ScaleoutProvider*            getScaleOutProvider();
     const std::set<HCL_Rank>&    getOpenScaleOutRanks(const HCL_Comm comm);
@@ -103,7 +103,7 @@ public:
     Gen2ArchServerConnectivity&       getServerConnectivity() { return m_serverConnectivity; }
     const Gen2ArchServerConnectivity& getServerConnectivity() const { return m_serverConnectivity; }
 
-    virtual void destroyQp(uint32_t port, uint32_t qpn) override;
+    virtual void destroyQp(HCL_Comm comm, uint32_t port, uint32_t qpn) override;
     void         dfa(hl_logger::LoggerSPtr logger);
 
     virtual bool isACcbHalfFullForDeviceBenchMark(const unsigned archStreamIdx) override;
@@ -113,20 +113,23 @@ public:
 
     virtual void setGaudiDirect() override;
 
-    std::unique_ptr<IntermediateBufferContainer> m_sibContainer;
-    HclDeviceControllerGen2Arch&                 m_deviceController;
+    std::unique_ptr<SimbPoolContainerAllocator> m_sibContainerManager;
+    HclDeviceControllerGen2Arch&                m_deviceController;
 
     SignalsCalculator& getSignalsCalculator() const { return *m_signalsCalculator; }
 
     virtual bool      supportNicFaultTolerance() const { return false; }
     NicsEventHandler& getNicsFaultHandler() { return *m_nicsEventsHandler; }
-    virtual void      updateMigrationQpsToRts(const HCL_Comm comm);
+    virtual void      updateMigrationQpsToRts(const CommIds& commIds);
     virtual void      createMigrationQps(const HCL_Comm commId, const uint16_t nicDown);
 
-    void
-    getAsyncError(const std::vector<HCL_HwModuleId> remoteModuleIDs, const HCL_Comm comm, hcclResult_t* asyncError);
+    void getAsyncError(const std::vector<HCL_HwModuleId>& remoteModuleIDs,
+                       const HCL_Comm                     comm,
+                       hcclResult_t*                      asyncError,
+                       std::string&                       errMessage);
 
-    unsigned getCgSize() { return m_cgSize; };
+    unsigned     getCgSize() { return m_cgSize; };
+    virtual void faultToleranceCommInit(const HCL_Comm comm) { UNUSED(comm); };
 
 protected:
     virtual void
@@ -134,13 +137,11 @@ protected:
 
     virtual uint32_t
     getQpi(const HCL_Comm comm, const uint8_t nic, const HCL_Rank remoteRank, uint32_t qpn, uint8_t qpSet) = 0;
-    virtual uint32_t getDestQpi(const unsigned qpi, const unsigned nic) const;
-    virtual bool     isSender(unsigned _qpi) = 0;
+    virtual bool     isSender(unsigned _qpi)                                                               = 0;
+    virtual uint32_t getCollectiveQpi(const HCL_CollectiveOp collectiveOp, const bool isSend)              = 0;
 
     virtual hcclResult_t openQpsHLS(const HCL_Comm comm);
     virtual hcclResult_t openQpsHlsScaleUp(const HCL_Comm comm) = 0;
-
-    virtual void allocateQPDBStorage(const HCL_Comm comm);
 
     void checkSignals();
 
@@ -172,8 +173,6 @@ protected:
     std::unordered_map<HCL_Comm, std::set<HCL_Rank>> m_QpConnectionExistsForRank;
 
     const unsigned m_cgSize;
-
-    std::array<std::shared_ptr<QPManager>, MAX_NICS_GEN2ARCH> m_qpManagers = {};
 
     Gen2ArchServerDef&          m_serverDef;
     Gen2ArchServerConnectivity& m_serverConnectivity;

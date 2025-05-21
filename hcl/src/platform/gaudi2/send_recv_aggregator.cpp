@@ -22,6 +22,7 @@ SendRecvAggregator::SendRecvAggregator(const std::vector<unsigned>&      nicEngi
                                        HclCommandsGen2Arch&              commands)
 : SendRecvAggregatorBase(),
   m_commands((HclCommandsGaudi2&)commands),
+  m_serverConnectivity(serverConnectivity),
   m_nicPassthroughHandler(nicEngines, serverConnectivity, commands)
 {
 }
@@ -47,7 +48,7 @@ void SendRecvAggregator::addSendRecvArray(const SendRecvArray&              arr,
         const SendRecvEntry& entry = arr[deviceId];
         aggregatedArray[deviceId]  = AggregatedEntry {entry, /*isLast=*/false};
     }
-    m_arrays.push_back(aggregatedArray);
+    m_aggEntryArrays.push_back(aggregatedArray);
 
     if (!m_requiredContextSet)
     {
@@ -74,12 +75,12 @@ void SendRecvAggregator::addSendRecvArray(const SendRecvArray&              arr,
 
 void SendRecvAggregator::configureLastEntriesPerDevice()
 {
-    std::array<AggregatedEntry, HLS2_BOX_SIZE>& arr = *m_arrays.rbegin();
+    AggregatedEntryArray& aggregatedEntryVector = *m_aggEntryArrays.rbegin();
     for (unsigned deviceId = 0; deviceId < HLS2_BOX_SIZE; deviceId++)
     {
-        if (arr[deviceId].data.isValid)
+        if (aggregatedEntryVector[deviceId].data.isValid)
         {
-            arr[deviceId].isLast = true;
+            aggregatedEntryVector[deviceId].isLast = true;
             continue;
         }
     }
@@ -96,17 +97,17 @@ void SendRecvAggregator::flush(hcl::ScalStreamBase&             scalStream,
                                bool                             notifyRndvAck,
                                bool                             waitForRndvAcks)
 {
-    LOG_HCL_TRACE(HCL, "Flush for send/recv aggregator triggered for {} arrays", m_arrays.size());
+    LOG_HCL_TRACE(HCL, "Flush for send/recv aggregator triggered for {} arrays", m_aggEntryArrays.size());
     configureLastEntriesPerDevice();
-    for (unsigned i = 0; i < m_arrays.size(); i++)
+    for (unsigned i = 0; i < m_aggEntryArrays.size(); i++)
     {
-        AggregatedEntryArray& arr = m_arrays[i];
+        AggregatedEntryArray& aggregatedEntryVector = m_aggEntryArrays[i];
 
         DwordsBoxesArray buffer;
 
-        for (size_t deviceId = 0; deviceId < buffer.size(); deviceId++)
+        for (size_t deviceId = 0; deviceId < m_serverConnectivity.getNumberOfDevicesPerHost(); deviceId++)
         {
-            const AggregatedEntry& entry = arr[deviceId];
+            const AggregatedEntry& entry = aggregatedEntryVector[deviceId];
 
             if (deviceId == (unsigned)selfModuleId) continue;
             else if (entry.data.isValid)
@@ -140,6 +141,6 @@ void SendRecvAggregator::flush(hcl::ScalStreamBase&             scalStream,
     m_nicPassthroughHandler
         .flush(scalStream, collectiveContextIndex, selfModuleId, comm, syncObjectAddressIndex, isSend);
 
-    m_arrays.clear();
+    m_aggEntryArrays.clear();
     m_requiredContextSet = false;
 }

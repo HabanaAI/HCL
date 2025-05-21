@@ -8,7 +8,6 @@
 #include "hcl_api_types.h"                                   // for HCL_Rank
 #include "hcl_api_entry.h"                                   // for SendRecvApiEntry
 #include "hcl_utils.h"                                       // for VERIFY
-#include "platform/gen2_arch_common/types.h"                 // for GEN2ARCH_HLS_BOX_SIZE
 #include "hcl_log_manager.h"                                 // for LOG_*
 #include "platform/gen2_arch_common/collective_utils.h"      // for getNextBox, getPrevBox
 #include "platform/gen2_arch_common/send_recv_aggregator.h"  // for SendRecvEntry
@@ -92,18 +91,15 @@ const SendRecvVector& GroupCalls::buildIterationsLayout(const bool     isSend,
     // Key => rank, Value => vector of entries to send / recv from that rank
     std::map<HCL_Rank, SendRecvVector> orderedMap;
 
-    for (unsigned hwModuleId = 0; hwModuleId < GEN2ARCH_HLS_BOX_SIZE; hwModuleId++)
+    for (const auto& mapPair : m_groupCalls)
     {
-        if (m_groupCalls.count(hwModuleId))
-        {
-            const SendRecvVector& ranksVectorPerHwModule = m_groupCalls.at(hwModuleId);
+        const SendRecvVector& ranksVectorPerHwModule = m_groupCalls.at(mapPair.first);
 
-            for (const SendRecvEntry& entry : ranksVectorPerHwModule)
-            {
-                VERIFY(entry.isValid, "Invalid entry");
-                const HCL_Rank remoteRank = entry.remoteRank;
-                orderedMap[remoteRank].push_back(entry);
-            }
+        for (const SendRecvEntry& entry : ranksVectorPerHwModule)
+        {
+            VERIFY(entry.isValid, "Invalid entry");
+            const HCL_Rank remoteRank = entry.remoteRank;
+            orderedMap[remoteRank].push_back(entry);
         }
     }
     // now iterate over boxes. For send -> go right from our current box until wrap around. For recv -> go left until

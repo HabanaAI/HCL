@@ -124,7 +124,7 @@ int NicPassthroughHandlerGaudi3::addDeviceBuffer(const DwordsBoxesArray& deviceB
 
     NicsDwordsArray nicBuffer;
 
-    for (size_t deviceId = 0; deviceId < deviceBuffer.size(); deviceId++)
+    for (size_t deviceId = 0; deviceId < m_serverConnectivity.getNumberOfDevicesPerHost(); deviceId++)
     {
         if (devicesSet.count(deviceId))  // device belongs to our set
         {

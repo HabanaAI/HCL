@@ -115,6 +115,18 @@ struct __attribute__((packed)) RankInfoHeader
     uint64_t         failedScaleOutPortsMask       = 0;
 };
 
+struct __attribute__((packed)) FtSyncCountersInfoHeader
+{
+    HCL_Rank hcclRank           = 0;  // (Client -> Server)
+    uint64_t collectivesCounter = 0;  // collectives counter (Client -> Server, Server -> Client)
+    uint64_t myCountersVersion =
+        0;  // Client -> Server only: Increases every time faultToleranceApiCountersReached is set to true
+    bool myCountersReached =
+        false;  // Client -> Server only: Sends true in FT when this rank API counters reached their target in FT stage
+                // FTwaitMaxCounters. Sends false when coordinator sends a new max counters value
+    uint8_t __padding__[3] = {};
+};
+
 /**
  * @brief holds the data needed for remote ranks
  */
@@ -123,6 +135,15 @@ struct RemoteInfo
     GaudiNicQPs        gaudiNicQPs;  // QPs on active NICs
     HostNicConnectInfo hostNicConns;
     struct  // for migration
+    {
+        uint64_t send = 0;
+        uint64_t recv = 0;
+    } counters;
+};
+
+struct FtSyncCountersRemoteInfo
+{
+    struct
     {
         uint64_t send = 0;
         uint64_t recv = 0;
@@ -169,6 +190,15 @@ struct RankInfoBuffer
 };
 
 /**
+ * @brief buffer for RankInfo serialization over network
+ */
+struct FtRanksInfoBuffer
+{
+    FtSyncCountersInfoHeader localInfo;
+    FtSyncCountersRemoteInfo remoteInfo[];  // placeholder for FtSyncCountersRemoteInfo vector
+};
+
+/**
 
  * @brief hold remote device info, include connection to local rank
  */
@@ -177,6 +207,12 @@ struct RemoteDeviceConnectionInfo
     RankInfoHeader header;
     DeviceInfo     device;
     RemoteInfo     remoteInfo;  // remote connections to current rank
+};
+
+struct RemoteDeviceSyncCountersInfo
+{
+    FtSyncCountersInfoHeader header;
+    FtSyncCountersRemoteInfo remoteInfo;  // remote s/r counters to current rank
 };
 
 struct portMaskConfig
@@ -203,9 +239,11 @@ enum HclConfigType
     HLS3        = 8,
     HL338       = 9,
     HL288       = 10,
+    HL3_RACK    = 11,
 };
 
 using HclRankAndCommSet = std::set<std::pair<HCL_Comm, HCL_Rank>>;
+using CommsSet          = std::set<HCL_Comm>;
 
 std::ostream& operator<<(std::ostream& os, const HCL_CollectiveOp& op);
 HLLOG_DEFINE_OSTREAM_FORMATTER(HCL_CollectiveOp);
@@ -222,6 +260,10 @@ using DevicesSet = std::unordered_set<HCL_HwModuleId>;
 using remote_devices_t       = std::vector<RemoteDeviceConnectionInfo>;
 using remote_devices_array_t = std::vector<remote_devices_t>;
 using ranks_headers_t        = std::vector<RankInfoHeader>;
+using box_devices_t          = std::array<int, MAX_MODULES_IDS_PER_SERVER>;
+using remote_counters_ranks_t =
+    std::vector<RemoteDeviceSyncCountersInfo>;  // Each ranks sends/recvs this data - header + s/r from all ranks
+using remote_devices_counters_cache_t = std::vector<remote_counters_ranks_t>;  // cache for all ranks in the comm
 
 namespace std
 {
@@ -257,3 +299,6 @@ enum class eIbvNicPhysicalState
     Shutdown  = 1,  // NIC shutdown
     LinkUp    = 2   // Link is up
 };
+
+using lock_t   = std::mutex;
+using locker_t = std::unique_lock<lock_t>;

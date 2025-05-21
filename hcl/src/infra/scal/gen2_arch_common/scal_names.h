@@ -8,33 +8,14 @@
 
 namespace hcl
 {
-enum class SchedulersIndex
+enum SchedulersIndex
 {
-    dma = 0,       // "network_garbage_collector_and_reduction"
+    gp = 0,        // "network_garbage_collector_and_reduction"
     sendScaleUp,   // "scaleup_send"
     recvScaleUp,   // "scaleup_receive"
     sendScaleOut,  // "scaleout_send"
     recvScaleOut,  // "scaleout_receive"
     count,
-};
-
-enum class NetworkStreams
-{
-    reduceScatter = 0,
-    allGather     = 1,
-    arbitrator    = 2,
-    max           = 3
-};
-
-enum class DMAStreams
-{
-    garbageCollection = 0,
-    reduction         = 1,
-    arbitrator        = 2,
-    scaleoutReduction = 3,
-    signaling         = 4,
-    gdr               = 5,
-    max               = 6
 };
 
 enum class SyncManagerName
@@ -43,7 +24,7 @@ enum class SyncManagerName
     longMonitor,         // "network_long_monitors_"
     so,                  // "network_gp_sos_"
     cgInternal,          // "network_completion_queue_internal_"
-    cgExternal,          // "network_completion_queue_external_".
+    cgExternal,          // "network_completion_queue_external_"
     hfcMonitor,          // "network_gp_monitors_hfc_"
     count,
 };
@@ -73,18 +54,7 @@ public:
     const std::string getFenceName(unsigned archStreamIdx, unsigned fenceIdx);
 
     std::map<SchedulersIndex, std::string>                                   schedulersNames;
-    std::map<DMAStreams, std::string>                                        dmaStreamNames;
-    std::map<NetworkStreams, std::string>                                    networkStreamNames;
     std::array<std::map<SyncManagerName, std::string>, numberOfArchsStreams> smNames;
-
-    std::vector<unsigned> numberOfMicroArchStreams = {
-        6,  // dma scheduler, streams: 0:cleanup, 1:reduction-scaleup, 2:arb, 3:reduction-scaleout, 4:signaling-stream,
-            // 5:gaudi-direct
-        3,  // scaleup send scheduler, streams: 0:RS, 1:AG, 2:arb
-        3,  // scaleup recv scheduler, streams: 0:RS, 1:AG, 2:arb
-        3,  // scaleout send scheduler, streams: 0:RS, 1:AG, 2:arb
-        3   // scaleout recv scheduler, streams: 0:RS, 1:AG, 2:arb
-    };
 
     const std::string hostFenceNamePrefix = "host_fence_counters_";
 };
@@ -93,26 +63,11 @@ public:
 inline ScalJsonNames::ScalJsonNames()
 {
     map_init(schedulersNames)
-        (SchedulersIndex::dma,          "network_garbage_collector_and_reduction")
+        (SchedulersIndex::gp,          "network_garbage_collector_and_reduction")
         (SchedulersIndex::sendScaleUp,  "scaleup_send")
         (SchedulersIndex::recvScaleUp,  "scaleup_receive")
         (SchedulersIndex::sendScaleOut, "scaleout_send")
         (SchedulersIndex::recvScaleOut, "scaleout_receive")
-    ;
-
-    map_init(dmaStreamNames)
-        (DMAStreams::garbageCollection, "gar")
-        (DMAStreams::reduction,         "red")
-        (DMAStreams::arbitrator,        "arb")
-        (DMAStreams::scaleoutReduction, "sor")
-        (DMAStreams::signaling,         "sig")
-        (DMAStreams::gdr,               "gdr")
-    ;
-
-    map_init(networkStreamNames)
-        (NetworkStreams::reduceScatter,  "rs")
-        (NetworkStreams::allGather,      "ag")
-        (NetworkStreams::arbitrator,     "arb")
     ;
 
     int index = 0;
@@ -137,3 +92,6 @@ inline const std::string ScalJsonNames::getFenceName(unsigned archStreamIdx, uns
 }
 
 }  // namespace hcl
+
+constexpr unsigned SCHED_COUNT          = (unsigned)hcl::SchedulersIndex::count;
+constexpr unsigned MAX_STREAM_PER_SCHED = 6;

@@ -22,8 +22,8 @@ public:
                                   Gen2ArchServerConnectivity& serverConnectivity);
     virtual ~Gaudi3BaseRuntimeConnectivity() = default;
 
-    const uint32_t                    getRemoteDevicePortMask(const uint32_t moduleId);
-    const RemoteDevicePortMasksArray& getRemoteDevicesPortMasks() const { return m_remoteDevicePortMasks; }
+    const uint32_t                     getRemoteDevicePortMask(const uint32_t moduleId);
+    const RemoteDevicePortMasksVector& getRemoteDevicesPortMasks() const { return m_remoteDevicePortMasks; }
 
     uint16_t getNicsMacrosDupMask(const uint32_t remoteDevice) const { return m_nicsMacrosDupMask[remoteDevice]; }
     const NicMacrosPerDevice& getNicMacrosPerDevice(const uint32_t remoteDevice) const
@@ -43,12 +43,13 @@ protected:
     void         initNicMacros();
     void         initDeviceSetsAndDupMasks();
     void         initNicMacrosForAllDevices();
+    void         adjustSizesToNumberOfDevices();
 
-    RemoteDevicePortMasksArray m_remoteDevicePortMasks = {};
-    NicMacroPairs              m_nicMacroPairs         = {};  // All the nic macros pairs of our device
-    DevicesSet                 m_macroDevicesSet0;            // first set of module Ids that can be aggregated together
-    DevicesSet                 m_macroDevicesSet1;  // second set of module Ids that can be aggregated together
-    DeviceNicsMacrosMask       m_nicsMacrosDupMask      = {};
-    NicMacrosDevicesArray      m_nicMacrosDevices       = {};
-    NicMacroIndexType          m_scaleupNicsMacrosCount = 0;  // number of scaleup nic macros using dup mask
+    RemoteDevicePortMasksVector m_remoteDevicePortMasks = {};
+    NicMacroPairs               m_nicMacroPairs         = {};  // All the nic macros pairs of our device
+    DevicesSet                  m_macroDevicesSet0;  // first set of module Ids that can be aggregated together
+    DevicesSet                  m_macroDevicesSet1;  // second set of module Ids that can be aggregated together
+    DeviceNicsMacrosMask        m_nicsMacrosDupMask      = {};
+    NicMacrosDevicesVector      m_nicMacrosDevices       = {};
+    NicMacroIndexType           m_scaleupNicsMacrosCount = 0;  // number of scaleup nic macros using dup mask
 };

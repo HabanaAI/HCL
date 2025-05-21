@@ -1,14 +1,14 @@
 #include "platform/gaudi3/hcl_mem_handler.h"
 #include "platform/gen2_arch_common/hcl_mem_handler.h"
 #include "platform/gen2_arch_common/hcl_device_controller.h"
-#include "platform/gen2_arch_common/intermediate_buffer_container.h"
+#include "platform/gen2_arch_common/simb_pool_container_allocator.h"
 
-HclCollectiveMemHandlerGaudi3::HclCollectiveMemHandlerGaudi3(int                   archStreamId,
-                                                             HclAddressGenerator&  addressGenerator,
-                                                             DeviceBufferManager&  intermediateBufferManager,
-                                                             HclCommandsGen2Arch&  commands,
-                                                             HclGraphSyncGen2Arch& graphSync)
-: HclCollectiveMemHandlerGen2Arch(archStreamId, addressGenerator, intermediateBufferManager, commands, graphSync)
+HclCollectiveMemHandlerGaudi3::HclCollectiveMemHandlerGaudi3(int                        archStreamId,
+                                                             HclAddressGenerator&       addressGenerator,
+                                                             DeviceSimbPoolManagerBase& deviceSimbPoolManager,
+                                                             HclCommandsGen2Arch&       commands,
+                                                             HclGraphSyncGen2Arch&      graphSync)
+: HclCollectiveMemHandlerGen2Arch(archStreamId, addressGenerator, deviceSimbPoolManager, commands, graphSync)
 {
 }
 

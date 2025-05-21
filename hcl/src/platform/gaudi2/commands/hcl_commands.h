@@ -93,22 +93,25 @@ public:
                                         uint32_t             indexOfSubBuffer   = 0,
                                         uint32_t             memsetValue        = 0) override;
 
-    virtual void serializeInitSequenceCommands(hcl::ScalStreamBase&                  recvStream,
-                                               hcl::ScalStreamBase&                  recvSOStream,
-                                               hcl::ScalStreamBase&                  dmaStream,
-                                               unsigned                              indexOfCg,
-                                               uint64_t                              soAddressLSB,
-                                               const std::vector<sibAddressAndSize>& sibAddressesAndSizes,
-                                               ContextManager&                       contextManager,
-                                               uint32_t                              fwStrideSize,
-                                               uint64_t                              fwBaseAddress,
-                                               uint8_t                               apiId);
+    virtual void
+    serializeInitSequenceCommands(hcl::ScalStreamBase&                                 recvStream,
+                                  hcl::ScalStreamBase&                                 recvSOStream,
+                                  hcl::ScalStreamBase&                                 dmaStream,
+                                  unsigned                                             indexOfCg,
+                                  uint64_t                                             soAddressLSB,
+                                  const std::vector<SimbPoolContainerParamsPerStream>& containerParamsPerStreamVec,
+                                  ContextManager&                                      contextManager,
+                                  uint32_t                                             fwStrideSize,
+                                  uint64_t                                             fwBaseAddress,
+                                  uint8_t                                              apiId);
 
-    virtual void serializeGlobalDmaCommand(hcl::ScalStreamBase&                  scalStream,
-                                           uint32_t                              soAddressLSB,
-                                           const std::vector<sibAddressAndSize>& sibAddressesAndSizes,
-                                           uint32_t                              fwStrideSize,
-                                           uint64_t                              fwBaseAddress) override;
+    virtual void
+    serializeGlobalDmaCommand(hcl::ScalStreamBase&                                 scalStream,
+                              unsigned                                             schedIdx,
+                              uint32_t                                             soAddressLSB,
+                              const std::vector<SimbPoolContainerParamsPerStream>& containerParamsPerStreamVec,
+                              uint32_t                                             fwStrideSize,
+                              uint64_t                                             fwBaseAddress) override;
 
     void serializeScaleUpSendRecv(hcl::ScalStreamBase& scalStream,
                                   ContextManager&      contextManager,
@@ -142,12 +145,13 @@ public:
                          bool                       notifyRndvAck,
                          bool                       waitForRndvAcks);
 
-    virtual void serializeAllocBarrierCommand(hcl::ScalStreamBase& scalStream,
-                                              unsigned             schedIdx,
-                                              uint32_t             completionGroupIndex,
-                                              uint32_t             requiredSobs,
-                                              llvm_vecsmall::SmallVector<uint32_t, MAX_STREAM_TO_INC>* fences = nullptr,
-                                              const LBWBurstData_t* destData = nullptr) override;
+    virtual void
+    serializeAllocBarrierCommand(hcl::ScalStreamBase&                                        scalStream,
+                                 unsigned                                                    schedIdx,
+                                 uint32_t                                                    completionGroupIndex,
+                                 uint32_t                                                    requiredSobs,
+                                 llvm_vecsmall::SmallVector<uint32_t, MAX_STREAM_PER_SCHED>* fences = nullptr,
+                                 const LBWBurstData_t* destData                                     = nullptr) override;
 
     virtual void serializeLbwWriteCommand(hcl::ScalStreamBase& scalStream,
                                           unsigned             schedIdx,

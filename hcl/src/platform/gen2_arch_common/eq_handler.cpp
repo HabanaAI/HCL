@@ -42,7 +42,8 @@ void IEventQueueHandler::startThread(IHclDevice* device)
                             }
                             catch (hcl::VerifyException& e)
                             {
-                                g_status = hcclInternalError;
+                                setGlobalDfaStatus(hcclInternalError);
+                                setGlobalAsyncErrorMessage(e.what());
                             }
                         }));
 }

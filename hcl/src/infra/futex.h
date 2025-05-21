@@ -3,44 +3,34 @@
 #include <cstdint>
 
 /**
- * A std::mutex-like class which allows us to use std::scoped_lock for this. Example:
- *
- * class MyClass {
- *     void run() {
- *         {
- *             std::scoped_lock<FutexLock> lock(m_myMutex);
- *             throw std::exception(); // scoped_lock ensures that FutexLock::unlock() is called.
- *         }
- *     }
- *     FutexLock m_myMutex;
- * };
+ * A class that provides a futex-based event mechanism. It allows thread(s) to wait for another thread to signal an
+ * event. The waiting thread(s) will be blocked until the event is signaled.
  */
-class FutexLock
+class futex_event_t
 {
 public:
-    FutexLock();
-    FutexLock(const FutexLock& other)             = delete;
-    FutexLock(const FutexLock&& other)            = delete;
-    FutexLock& operator=(const FutexLock& other)  = delete;
-    FutexLock& operator=(const FutexLock&& other) = delete;
+    futex_event_t(const futex_event_t&)            = delete;
+    futex_event_t& operator=(const futex_event_t&) = delete;
+    futex_event_t(futex_event_t&&)                 = delete;
+    futex_event_t& operator=(futex_event_t&&)      = delete;
 
-    /**
-     * Attempt to acquire the lock pointed to by ptr by changing its value from 0 (not acquired) to 1 (acquired).
-     * If the (atomic) Compare-And-Swap succeeds then we're done. Otherwise, use futex to wait until another thread
-     * releases the futex. If futex() returns with EAGAIN (was concurrently swapped, see futex(2)) we retry, otherwise
-     * an error condition occurred.
-     *
-     * This implementation has the added benefit of having the acquisition done mostly in the user-space, only invoking
-     * a syscall (kernel-space) if the CAS failed, in which case we wait for a release by a different thread in a
-     * non-spin-lock way.
-     */
-    void lock();
+    futex_event_t(bool signaled = false) : futex_(signaled ? SIGNALLED : NON_SIGNALLED) {}
+    virtual ~futex_event_t() = default;
 
-    /**
-     * Release the lock using a CAS, and if successful notify other threads that we're done.
-     */
-    void unlock();
+    // return: true - SIGNALLED, false - timeout occurred  (-1 == indefinitely)
+    bool wait(int64_t msec = -1) const;  // if event is in non-signaled state, wait is blocking
+    void signal();                       // signal the event, unblock all waiting threads
+    void reset();                        // reset the event to non-signaled state
+    bool signaled() const { return futex_ == SIGNALLED; }
 
 private:
-    int32_t m_data;
+    enum event_state_t : uint32_t
+    {
+        NON_SIGNALLED = 0,
+        SIGNALLED     = 1
+    };
+
+    volatile uint32_t futex_;  // when signaled, wait is NOT blocking
 };
+
+using event_t = futex_event_t;

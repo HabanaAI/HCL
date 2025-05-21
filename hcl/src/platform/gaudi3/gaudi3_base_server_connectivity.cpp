@@ -3,7 +3,7 @@
 #include <cstddef>  // for size_t
 #include <cstdint>  // for uint*_t
 
-#include "platform/gen2_arch_common/server_connectivity_types.h"  // for ServerNicsConnectivityArray
+#include "platform/gen2_arch_common/server_connectivity_types.h"  // for ServerNicsConnectivityVector
 #include "platform/gaudi3/gaudi3_base_runtime_connectivity.h"     // for Gaudi3BaseRuntimeConnectivity
 #include "hcl_dynamic_communicator.h"                             // for HclDynamicCommunicator
 #include "hcl_utils.h"                                            // for LOG_HCL_*
@@ -12,12 +12,12 @@
 #include "platform/gaudi3/nic_macro_types.h"
 
 Gaudi3BaseServerConnectivity::Gaudi3BaseServerConnectivity(
-    const int                          fd,
-    const int                          moduleId,
-    const bool                         useDummyConnectivity,
-    const ServerNicsConnectivityArray& serverNicsConnectivityArray,
-    HclDeviceConfig&                   deviceConfig)
-: Gen2ArchServerConnectivity(fd, moduleId, useDummyConnectivity, serverNicsConnectivityArray, deviceConfig)
+    const int                           fd,
+    const int                           moduleId,
+    const bool                          useDummyConnectivity,
+    const ServerNicsConnectivityVector& serverNicsConnectivityVector,
+    HclDeviceConfig&                    deviceConfig)
+: Gen2ArchServerConnectivity(fd, moduleId, useDummyConnectivity, serverNicsConnectivityVector, deviceConfig)
 {
 }
 
@@ -54,7 +54,7 @@ const uint32_t Gaudi3BaseServerConnectivity::getRankToPortMask(const HCL_Rank ra
     return getGaudi3BasedRunTimeConnectivity(hclCommId).getRemoteDevicePortMask(moduleID);
 }
 
-const RemoteDevicePortMasksArray&
+const RemoteDevicePortMasksVector&
 Gaudi3BaseServerConnectivity::getRemoteDevicesPortMasks(const HCL_Comm hclCommId) const
 {
     return getGaudi3BasedRunTimeConnectivityConst(hclCommId).getRemoteDevicesPortMasks();

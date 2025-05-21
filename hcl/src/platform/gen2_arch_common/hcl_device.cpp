@@ -12,7 +12,7 @@
 #include "hlthunk.h"                                                  // for hlthunk_requeste...
 #include "platform/gen2_arch_common/eq_handler.h"                     // for IEventQueueHandler
 #include "hcl_log_manager.h"                                          // for LOG_*
-#include "platform/gen2_arch_common/intermediate_buffer_container.h"  // for IntermediateBufferContainer
+#include "platform/gen2_arch_common/simb_pool_container_allocator.h"  // for SimbPoolContainerAllocator
 #include "platform/gen2_arch_common/scaleout_provider.h"              // for ScaleoutProvider
 #include "platform/gen2_arch_common/commands/hcl_commands.h"
 #include "infra/scal/gen2_arch_common/scal_manager.h"  // for Gen2ArchScalManager
@@ -28,7 +28,7 @@
 extern DfaPhase g_dfaPhase;
 
 class HclCommandsGen2Arch;
-class DeviceBufferManager;
+class DeviceSimbPoolManagerBase;
 
 /* This is a test-only constructor, so the nic array in a few lines is allowed... :-\ */
 HclDeviceGen2Arch::HclDeviceGen2Arch([[maybe_unused]] const bool  testCtor,
@@ -77,20 +77,14 @@ HclDeviceGen2Arch::HclDeviceGen2Arch(HclDeviceControllerGen2Arch& controller,
     m_ethStats.init(m_deviceConfig.getDevicePciBusId());
 }
 
-uint32_t HclDeviceGen2Arch::createQpnInLKD(const uint32_t port, const uint8_t qpId)
+uint32_t HclDeviceGen2Arch::createQpnInLKD(HCL_Comm comm, const uint32_t port, const uint8_t qpId)
 {
-    return g_ibv.create_qp(isSender(qpId), port);
+    return g_ibv.create_qp(comm, isSender(qpId), port);
 }
 
 bool HclDeviceGen2Arch::isNicUp(uint32_t nic)
 {
-    uint32_t nicMask = (1 << nic);
-    if ((m_hclNic.mask & nicMask) == 0)
-    {
-        return false;
-    }
-
-    return g_ibv.is_nic_up(nic);
+    return m_hclNic.mask[nic] ? g_ibv.is_nic_up(nic) : false;
 }
 
 void HclDeviceGen2Arch::updateRankHasQp(const HCL_Comm comm, const HCL_Rank remoteRank)
@@ -116,14 +110,14 @@ hcl::Gen2ArchScalManager& HclDeviceGen2Arch::getScalManager()
     return m_scalManager;
 }
 
-DeviceBufferManager& HclDeviceGen2Arch::getSIB(const uint32_t streamIndex)
+DeviceSimbPoolManagerBase& HclDeviceGen2Arch::getDeviceSimbPoolManager(const uint32_t streamIndex)
 {
-    return m_sibContainer->getSIB(streamIndex);
+    return m_sibContainerManager->getDeviceSimbPoolManager(streamIndex);
 }
 
 uint64_t HclDeviceGen2Arch::getSIBBufferSize() const
 {
-    return m_sibContainer->getBufferSize();
+    return m_sibContainerManager->getBufferSize();
 }
 
 HclDeviceGen2Arch::~HclDeviceGen2Arch() noexcept(false)
@@ -166,7 +160,7 @@ nics_mask_t HclDeviceGen2Arch::getActiveNics(HCL_Rank             fromRank,
                                              HCL_Comm             comm)
 {
     // should not happen
-    VERIFY(fromRank != toRank, "getActiveNics called with same rank({})", fromRank);
+    VERIFY(fromRank != toRank, "Comm {} getActiveNics called with same rank({})", comm, fromRank);
 
     std::pair<HCL_Rank, HCL_Rank> ranksPair {fromRank, toRank};
 
@@ -189,8 +183,10 @@ nics_mask_t HclDeviceGen2Arch::getActiveNics(HCL_Rank             fromRank,
         {
             uint32_t maxNics = getServerConnectivity().getMaxNumScaleOutPorts();
             VERIFY(result.count() <= maxNics,
-                   "invalid number of external active nics({}) (out of {}) from rank({}) to rank({}) (deviceId: {}). "
+                   "Comm {} invalid number of external active nics({}) (out of {}) from rank({}) to rank({}) "
+                   "(deviceId: {}). "
                    "dfa ({})",
+                   comm,
                    result.count(),
                    maxNics,
                    fromRank,
@@ -202,8 +198,10 @@ nics_mask_t HclDeviceGen2Arch::getActiveNics(HCL_Rank             fromRank,
         {
             uint32_t maxNics = getServerConnectivity().getMaxNumScaleUpPortsPerConnection(comm);
             VERIFY(result.count() == maxNics,
-                   "invalid number of internal active nics({}) (out of {}) from rank({}) to rank({}) (deviceId: {}). "
+                   "Comm {}, invalid number of internal active nics({}) (out of {}) from rank({}) to rank({}) "
+                   "(deviceId: {}). "
                    "dfa ({})",
+                   comm,
                    result.count(),
                    maxNics,
                    fromRank,
@@ -278,10 +276,10 @@ void HclDeviceGen2Arch::deleteCommConnections(HCL_Comm comm)
     for (unsigned nic = 0; nic < MAX_NICS_GEN2ARCH; nic++)
     {
         hints.m_nic = nic;
-        m_qpManagers.at(nic)->ReleaseQPsResource(hints);
+        getComm(comm).m_qpManagers.at(nic)->ReleaseQPsResource(hints);
     }
 
-    LOG_INFO(HCL, "Close scale-out connections");
+    LOG_INFO(HCL, "Comm {} Close scale-out connections", comm);
     m_scaleoutProvider->closeConnections(comm);
 }
 
@@ -293,13 +291,8 @@ void HclDeviceGen2Arch::checkSignals()
     bool anyRegNonZero      = false;
     for (size_t archIndex = 0; archIndex < hcl::ScalJsonNames::numberOfArchsStreams; archIndex++)
     {
-        int rc = 0;
-
-        const uint64_t longSoIndex = m_scalManager.getCgInfo(archIndex)[(int)hcl::SchedulerType::internal].longSoIndex;
-        LOG_HCL_DEBUG(HCL, "archIndex={}, longSoIndex=0x{:x}", archIndex, longSoIndex);
-
+        int            rc         = 0;
         const uint64_t longSoAddr = m_scalManager.getCgInfo(archIndex)[(int)hcl::SchedulerType::internal].longSoAddr;
-        LOG_HCL_DEBUG(HCL, "archIndex={}, longSoAddr=0x{:x}", archIndex, longSoAddr);
 
         // read long SO which consists of 4 32 bits regs, 15 bits in each
         constexpr size_t                   LONG_SO_SIZE = 4;
@@ -354,11 +347,6 @@ void HclDeviceGen2Arch::checkSignals()
                 const size_t soOffset = mod(longSoValue, cgSize);
                 for (size_t regIndex = 0; regIndex < cgSize; regIndex++)
                 {
-                    LOG_HCL_DEBUG(HCL,
-                                  "archIndex={}, addr=0x{:x}, content=0x{:x}",
-                                  archIndex,
-                                  cgAddr + regIndex,
-                                  buff[regIndex]);
                     // At end of run, its possible for exactly one CG to have a value of 1,
                     // due to the force order mechanism (last op advanced the next SO by 1)
                     // This CG index is calculated from the longSoValue modulus cgSize.
@@ -389,20 +377,19 @@ void HclDeviceGen2Arch::checkSignals()
     }
 }
 
-hcclResult_t HclDeviceGen2Arch::destroy(bool force)
+void HclDeviceGen2Arch::destroy()
 {
     if (isCommExist(HCL_COMM_WORLD))
     {
-        destroyComm(HCL_COMM_WORLD, force);
+        destroyComm(HCL_COMM_WORLD, false);
     }
     m_eqHandler->stopThread();
 
     checkSignals();
 
-    m_sibContainer->destroy();
+    m_sibContainerManager->destroy();
 
     getScaleOutProvider()->destroy();
-    return hcclSuccess;
 }
 
 hcclResult_t HclDeviceGen2Arch::establishQpConnectionWithPeerQp(const HCL_Comm comm,
@@ -433,13 +420,14 @@ hcclResult_t HclDeviceGen2Arch::establishQpConnectionWithPeerQp(const HCL_Comm c
                   qpSet,
                   qpi);
 
-    g_ibv.set_qp_ctx(qpn,
+    g_ibv.set_qp_ctx(comm,
+                     qpn,
                      port,
                      srcNic.ip,
                      srcNic.mac.u64,
                      remoteNicAddress.ip,
                      remoteNicAddress.mac.u64,
-                     remoteQPs.qp[qpSet][getDestQpi(qpi, port)],
+                     remoteQPs.qp[qpSet][getComm(comm).m_qpManagers.at(port)->getDestQPi(qpi)],
                      lagIdx,
                      lastInLag);
 
@@ -568,9 +556,9 @@ unsigned HclDeviceGen2Arch::getEdmaEngineWorkDistributionSize()
     return edmaEngineGroupSizes[0];
 }
 
-void HclDeviceGen2Arch::destroyQp(uint32_t port, uint32_t qpn)
+void HclDeviceGen2Arch::destroyQp(HCL_Comm comm, uint32_t port, uint32_t qpn)
 {
-    g_ibv.destroy_qp(port, qpn);
+    g_ibv.destroy_qp(comm, port, qpn);
 }
 
 void HclDeviceGen2Arch::dfa(hl_logger::LoggerSPtr logger)
@@ -658,29 +646,16 @@ uint16_t HclDeviceGen2Arch::getMaxNumScaleUpPortsPerConnection(const HCL_Comm hc
     return getServerConnectivity().getMaxNumScaleUpPortsPerConnection(hclCommId);
 }
 
-uint32_t HclDeviceGen2Arch::getDestQpi(const unsigned qpi, const unsigned nic) const
-{
-    return m_qpManagers.at(nic)->getDestQPi(qpi);
-}
-
-void HclDeviceGen2Arch::allocateQPDBStorage(const HCL_Comm comm)
-{
-    // this is used for null-submit mode only, we allocate QP storage without the actual QPs
-    for (unsigned nic = 0; nic < MAX_NICS_GEN2ARCH; nic++)
-    {
-        m_qpManagers.at(nic)->allocateQPDBStorage(comm);
-    }
-}
-
 void HclDeviceGen2Arch::setTraceMarker(const synStreamHandle stream_handle, uint32_t val)
 {
     int archStreamIdx = synStreamGetPhysicalQueueOffset(stream_handle);
     m_deviceController.setTraceMarker(archStreamIdx, val);
 }
 
-void HclDeviceGen2Arch::getAsyncError(const std::vector<HCL_HwModuleId> remoteModuleIDs,
-                                      const HCL_Comm                    comm,
-                                      hcclResult_t*                     asyncError)
+void HclDeviceGen2Arch::getAsyncError(const std::vector<HCL_HwModuleId>& remoteModuleIDs,
+                                      const HCL_Comm                     comm,
+                                      hcclResult_t*                      asyncError,
+                                      std::string&                       errMessage)
 {
     // for each remote module ID, get all the nics that connect it to this rank, and check if any nic is down
     for (auto& remoteModuleID : remoteModuleIDs)
@@ -692,6 +667,7 @@ void HclDeviceGen2Arch::getAsyncError(const std::vector<HCL_HwModuleId> remoteMo
             {
                 LOG_HCL_ERR(HCL, "NIC {} is down", nic);
                 *asyncError = hcclPortDown;
+                errMessage  = fmt::format("NIC {} is down", nic);
                 return;
             }
         }
@@ -705,7 +681,7 @@ void HclDeviceGen2Arch::deleteMigrationQPs([[maybe_unused]] const HCL_Comm comm)
     // do nothing for Gen2
 }
 
-void HclDeviceGen2Arch::updateMigrationQpsToRts([[maybe_unused]] const HCL_Comm comm)
+void HclDeviceGen2Arch::updateMigrationQpsToRts([[maybe_unused]] const CommIds& commIds)
 {
     VERIFY(false, "should not get here for Gaudi2!");
 }

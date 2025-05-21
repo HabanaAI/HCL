@@ -78,5 +78,5 @@ protected:
     std::map<unsigned, std::vector<std::pair<uint8_t, uint8_t>>> m_nics =
         std::map<unsigned, std::vector<std::pair<uint8_t, uint8_t>>>();
 
-    bool m_L3 = false; // gnic scaleout configuration. false: L2(MAC), true: L3(IP)
+    bool m_L3 = false;  // gnic scaleout configuration. false: L2(MAC), true: L3(IP)
 };

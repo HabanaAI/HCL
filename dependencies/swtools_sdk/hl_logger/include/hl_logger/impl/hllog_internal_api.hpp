@@ -6,7 +6,13 @@
 namespace hl_logger::internal{
 inline namespace v1_0{
 
+// remove after promotion
+// most libs are built with fPIC and TLS access causes _tls_get_addr calls
+// so we use getThreadId() instead and build hl_logger to disable _tls_get_addr
 extern thread_local uint64_t s_threadId;
+// now use getThreadId for getting thread id
+HLLOG_API uint64_t getThreadId();
+
 extern uint32_t              s_internalLogLevel;
 
 HLLOG_API void logInternal(int logLevel, std::string_view msg);

@@ -8,7 +8,7 @@
 #include "platform/gaudi2/context_manager_priv.h"            // for RequiredCollect...
 #include "platform/gaudi2/nic_passthrough_handler.h"         // for NicPassthroughHandler
 #include "platform/gaudi2/types.h"                           // for HLS2_BOX_SIZE
-#include "platform/gen2_arch_common/types.h"                 // for MAX_NICS_GEN2ARCH, GEN2ARCH_HLS_BOX_SIZE
+#include "platform/gen2_arch_common/types.h"                 // for MAX_NICS_GEN2ARCH
 #include "platform/gen2_arch_common/send_recv_aggregator.h"  // for SendRecvAggregatorBase
 
 class ContextManager;
@@ -33,8 +33,6 @@ public:
     SendRecvAggregator& operator=(SendRecvAggregator&&)      = delete;
     SendRecvAggregator& operator=(const SendRecvAggregator&) = delete;
 
-    static_assert(GEN2ARCH_HLS_BOX_SIZE == HLS2_BOX_SIZE, "G2 must match Gen2Arch box size");
-
     bool getRequiredContext(RequiredCollectiveContext& requiredContext);
     void addSendRecvArray(const SendRecvArray&              arr,
                           int                               selfModuleId,
@@ -58,6 +56,7 @@ private:
     bool                      m_requiredContextSet = false;
     RequiredCollectiveContext m_requiredContext;
 
-    HclCommandsGaudi2&    m_commands;
-    NicPassthroughHandler m_nicPassthroughHandler;
+    HclCommandsGaudi2&                m_commands;
+    const Gen2ArchServerConnectivity& m_serverConnectivity;
+    NicPassthroughHandler             m_nicPassthroughHandler;
 };

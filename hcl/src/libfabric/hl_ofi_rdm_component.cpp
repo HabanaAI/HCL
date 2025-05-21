@@ -11,6 +11,7 @@
 #include "rdma/fi_endpoint.h"            // for fid_ep
 #include "rdma/fi_eq.h"                  // for fi_cq_tagged_entry, fi_cq_er...
 #include "rdma/fi_errno.h"               // for FI_EAGAIN, FI_EAVAIL
+#include "infra/hcl_debug_stats.h"       // for DEBUG_STATS_...
 
 ofi_rdm_component_t::ofi_rdm_component_t(int ofiDeviceId, int hw_module_id, struct fi_info* prov, int cpuid)
 : ofi_component_t(ofiDeviceId, hw_module_id, prov, cpuid, FI_CQ_FORMAT_TAGGED),
@@ -45,7 +46,7 @@ void* ofi_rdm_component_t::get_cq_buf()
 
 uint64_t ofi_rdm_component_t::next_tag()
 {
-    std::scoped_lock<FutexLock> lock(m_tagLock);
+    locker_t lock(m_tagLock);
     VERIFY(m_tag + 1 < m_max_tag, "Can't open more connections for OFI device ID {}", m_ofiDeviceID);
     // Increment m_tag by 1
     return ++m_tag;
@@ -261,18 +262,18 @@ error:
 
 int ofi_rdm_component_t::process_completions(void* cq_buf, uint64_t num_cqes)
 {
-    int                        ret      = hcclUninitialized;
-    ofi_req_t*                 req      = nullptr;
-    uint64_t                   comp_idx = 0, comp_flags = 0;
-    uint64_t                   control_bit_mask = ~(m_max_tag);
-    struct fi_cq_tagged_entry* cq_entries       = (struct fi_cq_tagged_entry*)cq_buf;
-    bool                       firstRecv        = true;
+    HCL_FUNC_INSTRUMENTATION(DEBUG_STATS_ALL);
+    int                              ret              = hcclUninitialized;
+    const uint64_t                   control_bit_mask = ~(m_max_tag);
+    struct fi_cq_tagged_entry* const cq_entries       = (struct fi_cq_tagged_entry*)cq_buf;
+    bool                             firstRecv        = true;
 
-    for (comp_idx = 0; comp_idx < num_cqes; comp_idx++)
+    for (uint64_t comp_idx = 0; comp_idx < num_cqes; comp_idx++)
     {
-        comp_flags = cq_entries[comp_idx].flags;
+        const auto comp_flags = cq_entries[comp_idx].flags;
+        VERIFY(comp_flags != 0, "Received invalid completion flags");
 
-        req = container_of(cq_entries[comp_idx].op_context, ofi_req_t, ctx);
+        ofi_req_t* const req = container_of(cq_entries[comp_idx].op_context, ofi_req_t, ctx);
         if (OFI_UNLIKELY(req == nullptr))
         {
             LOG_HCL_ERR(HCL_OFI, "Invalid request context provided");

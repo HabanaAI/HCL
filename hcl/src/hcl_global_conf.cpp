@@ -41,7 +41,7 @@ GlobalConfUint64 GCFG_HCL_SCALEOUT_BUFFER_FACTOR(
 GlobalConfSize GCFG_HCL_IMB_SIZE(
         "HCL_IMB_SIZE",
         "Static intermediate buffer size",
-        DfltSize(hl_gcfg::SizeParam("512KB")) << deviceValue(synDeviceGaudi, hl_gcfg::SizeParam("16MB")),
+        DfltSize(hl_gcfg::SizeParam("512KB")),
         MakePrivate);
 
 GlobalConfUint64 GCFG_HCL_SCALEUP_SIMB_COUNT(
@@ -50,10 +50,16 @@ GlobalConfUint64 GCFG_HCL_SCALEUP_SIMB_COUNT(
         DfltUint64(20)  << deviceValue(synDeviceGaudi2, (13)),
         MakePrivate);
 
+GlobalConfBool GCFG_HCL_OPT_SLICE_SIZE(
+        "HCL_OPT_SLICE_SIZE",
+        "Optimize slicing size",
+        true,
+        MakePrivate);
+
 GlobalConfSize GCFG_HCL_SLICE_SIZE(
         "HCL_SLICE_SIZE",
         "Slicing size ",
-        DfltSize(hl_gcfg::SizeParam("512KB")) << deviceValue(synDeviceGaudi, hl_gcfg::SizeParam("16MB")),
+        DfltSize(hl_gcfg::SizeParam("512KB")),
         MakePrivate);
 
 GlobalConfSize GCFG_HCL_GDR_SLICE_SIZE(
@@ -101,7 +107,7 @@ GlobalConfInt64 GCFG_RESPONDER_PRIORITY(
 GlobalConfInt64 GCFG_CONGESTION_WINDOW(
     "CONGESTION_WINDOW",
     "Size of QP context congestion window",
-    DfltInt64(24) << deviceValue(synDeviceGaudi,  0) << deviceValue(synDeviceGaudi3,  32),
+    DfltInt64(24) << deviceValue(synDeviceGaudi3,  32),
     MakePrivate);
 
 GlobalConfUint64 GCFG_CONGESTION_CONTROL_ENABLE(
@@ -144,6 +150,7 @@ static const std::map<std::string, std::string> boxTypeStrToId = {{"BACK_2_BACK"
                                                            {"HL288", std::to_string(HL288)},
                                                            {"HLS3", std::to_string(HLS3)},
                                                            {"HL338", std::to_string(HL338)},
+                                                           {"HL3_RACK", std::to_string(HL3_RACK)},
                                                            {"SWITCH", std::to_string(BACK_2_BACK)},
                                                            {"UNKNOWN", std::to_string(UNKNOWN)}};
 
@@ -153,7 +160,7 @@ std::vector<GlobalConfObserver*> boxObservers = {&boxTypeObserver};
 
 GlobalConfString GCFG_BOX_TYPE(
     "BOX_TYPE",
-    "Select box type: UNKNOWN, BACK_2_BACK, LOOPBACK, RING, HLS1, OCP1, HLS1-H, HLS2, HL288, HLS3, HL338",
+    "Select box type: UNKNOWN, BACK_2_BACK, LOOPBACK, RING, HLS1, OCP1, HLS1-H, HLS2, HL288, HLS3, HL338, HL3_RACK",
     std::string("UNKNOWN"),
     MakePublic,
     boxObservers);
@@ -258,13 +265,13 @@ GlobalConfBool GCFG_HCL_RS_SO_RECV_CONT_REDUCTION(
 GlobalConfSize GCFG_HCL_COMPLEX_BCAST_MIN_SIZE(
         "HCL_COMPLEX_BCAST_MIN_SIZE",
         "Threshold to enable new complex broadcast",
-        DfltSize(hl_gcfg::SizeParam("1M")) << deviceValue(synDeviceGaudi2, hl_gcfg::SizeParam("256K")) << deviceValue(synDeviceGaudi3,  hl_gcfg::SizeParam("256K")),
+        DfltSize(hl_gcfg::SizeParam("256K")),
         MakePrivate);
 
 GlobalConfBool GCFG_HCL_USE_SINGLE_PEER_BROADCAST(
         "HCL_USE_SINGLE_PEER_BROADCAST",
         "Use single peer broadcast implementation. Not supported for Gaudi3",
-        DfltBool("false") << deviceValue(synDeviceGaudi2, true) << deviceValue(synDeviceGaudi3, false),
+        DfltBool(false) << deviceValue(synDeviceGaudi2, true),
         MakePrivate);
 
 GlobalConfBool GCFG_HCL_IS_SINGLE_PEER_BROADCAST_ALLOWED(
@@ -384,7 +391,7 @@ GlobalConfInt64  GCFG_OP_DRIFT_THRESHOLD_MS(
 GlobalConfUint64 GCFG_SCALE_OUT_PORTS_MASK(
         "SCALE_OUT_PORTS_MASK",
         "Port mask to enable / disable scaleout ports (e.g. 0xc00000)",
-        DfltUint64(DEFAULT_G3_SCALEOUT_PORTS_MASK) << deviceValue(synDeviceGaudi,  DEFAULT_SCALEOUT_PORTS_MASK) << deviceValue(synDeviceGaudi2,  DEFAULT_SCALEOUT_PORTS_MASK),
+        DfltUint64(DEFAULT_G3_SCALEOUT_PORTS_MASK) << deviceValue(synDeviceGaudi2,  DEFAULT_SCALEOUT_PORTS_MASK),
         MakePublic);
 
 GlobalConfUint64 GCFG_LOGICAL_SCALE_OUT_PORTS_MASK(
@@ -407,7 +414,7 @@ GlobalConfString GCFG_HCL_PORT_MAPPING_CONFIG(
 GlobalConfUint64 GCFG_HCL_MAX_RANKS(
     "HCL_MAX_RANKS",
     "MAX number of supported ranks in a communicator",
-    DfltUint64(8192) << deviceValue(synDeviceGaudi , 1024),
+    DfltUint64(8192),
     MakePrivate);
 
 GlobalConfUint64 GCFG_HOST_SCHEDULER_OFI_DELAY_MSG_THRESHOLD(
@@ -437,13 +444,13 @@ GlobalConfUint64 GCFG_HCL_SUBMIT_THRESHOLD(
 GlobalConfUint64 GCFG_MAX_QP_PER_EXTERNAL_NIC(
     "MAX_QP_PER_EXTERNAL_NIC",
     "Maximum number of QPs per external NIC",
-    DfltUint64(4096) << deviceValue(synDeviceGaudi3, 20480),
+    DfltUint64(4096) << deviceValue(synDeviceGaudi3, 8192), // driver limitation of 8K QPs per nic
     MakePrivate);
 
 GlobalConfUint64 GCFG_HCL_GNIC_SCALE_OUT_QP_SETS(
     "HCL_GNIC_SCALE_OUT_QP_SETS",
     "Number of GNIC Scale-out QP sets per connection with rank",
-    DfltUint64(4) << deviceValue(synDeviceGaudi, 1),
+    DfltUint64(4),
     MakePrivate);
 
 GlobalConfUint64 GCFG_HCL_HNIC_SCALE_OUT_QP_SETS(
@@ -455,7 +462,7 @@ GlobalConfUint64 GCFG_HCL_HNIC_SCALE_OUT_QP_SETS(
 GlobalConfUint64 GCFG_HCL_GNIC_QP_SETS_COMM_SIZE_THRESHOLD(
     "HCL_GNIC_QP_SETS_COMM_SIZE_THRESHOLD",
     "Size of World Communicator from which, each GNIC connection gets only single QP set",
-    DfltUint64(1601) << deviceValue(synDeviceGaudi, 1),
+    DfltUint64(1601) << deviceValue(synDeviceGaudi3, 2049),
     MakePrivate);
 
 GlobalConfUint64 GCFG_HCL_HNIC_QP_SETS_COMM_SIZE_THRESHOLD(
@@ -548,6 +555,12 @@ GlobalConfString GCFG_HCL_HNIC_TCP_EXCLUDE_IF(
         std::string("^(lo|docker0|tunl0|virbr\\d)$"),
         MakePrivate);
 
+GlobalConfString GCFG_HCL_HNIC_VERBS_EXCLUDE_IF(
+        "HCL_HNIC_VERBS_EXCLUDE_IF",
+        "Comma-separated list of interface names to be filtered out for VERBS providers",
+        std::string(""),
+        MakePublic);
+
 GlobalConfBool GCFG_HCL_DFA_DUMP_WQE(
         "HCL_DFA_DUMP_WQE",
         "When true, dump all WQEs from all requester QPs on DFA. NOTE: Need to run as root.",
@@ -630,4 +643,10 @@ GlobalConfUint64 GCFG_HCL_FAULT_TOLERANCE_FAILBACK_DELAY(
         "HCL_FAULT_TOLERANCE_FAILBACK_DELAY",
         "Time is seconds from the link-up notification until we start the failback process",
         DfltUint64(300),
+        MakePublic);
+
+GlobalConfBool GCFG_HCL_DFA_DUMP_MEMORY(
+        "HCL_DFA_DUMP_MEMORY",
+        "Dump most recently used memory",
+        false,
         MakePublic);

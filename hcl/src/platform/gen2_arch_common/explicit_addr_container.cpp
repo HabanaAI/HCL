@@ -82,11 +82,12 @@ uint64_t ExplicitAddressContainer::tryConsume(CommonState&    commonState,
     }
     else if (explicitPool != NO_POOL)
     {
-        addr         = calcIntermediateAddr ? m_generateIntermediateAddress(
-                                          commonState,
-                                          explicitPool,
-                                          mod(commonState.m_boxIter, DeviceBufferManager::getFactor(explicitPool)))
-                                            : commonState.getIntermediateBuffer(explicitPool);
+        addr         = calcIntermediateAddr
+                           ? m_generateIntermediateAddress(
+                         commonState,
+                         explicitPool,
+                         mod(commonState.m_boxIter, DeviceSimbPoolManagerBase::getFactor(explicitPool)))
+                           : commonState.getIntermediateBuffer(explicitPool);
         explicitPool = NO_POOL;
     }
     return addr;

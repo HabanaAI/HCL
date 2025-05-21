@@ -31,11 +31,16 @@ class IHclDevice;
 
 static constexpr unsigned MAX_SEND_RECV_PEER_COUNTER = 16;
 
-void RankApiCounters::logDebug(const HCL_Comm          commId,
+void RankApiCounters::logDebug(const CommIds&          commIds,
                                const std::string_view& prefix,
                                const std::string_view& varName) const
 {
-    HLFT_DBG("{}:: comm: {}, {}.collectivesCounter=({:#x})", prefix, commId, varName, collectivesCounter);
+    HLFT_DBG("{}:: " COMM_ID_FMT ", {}.collectivesCounter=({:#x})",
+             prefix,
+             commIds.commId,
+             commIds.commIdPort,
+             varName,
+             collectivesCounter);
 
     if (unlikely(LOG_LEVEL_AT_LEAST_DEBUG(HCL)))
     {
@@ -44,9 +49,10 @@ void RankApiCounters::logDebug(const HCL_Comm          commId,
             const SendRecvApiCounters& remoteInfo = ranksSendRecv[rank];
             if ((0 != remoteInfo.sendCounter) || (0 != remoteInfo.recvCounter))
             {
-                HLFT_DBG("{}:: comm: {}, {}[{}].send={}, {}[{}].recv={}",
+                HLFT_DBG("{}:: " COMM_ID_FMT ", {}[{}].send={:#x}, {}[{}].recv={:#x}",
                          prefix,
-                         commId,
+                         commIds.commId,
+                         commIds.commIdPort,
                          varName,
                          rank,
                          remoteInfo.sendCounter,
@@ -58,14 +64,15 @@ void RankApiCounters::logDebug(const HCL_Comm          commId,
     }
 }
 
-void RankApiCounters::logDebugCompare(const HCL_Comm          commId,
+void RankApiCounters::logDebugCompare(const CommIds&          commIds,
                                       const std::string_view& prefix,
                                       const std::string_view& varName,
                                       const RankApiCounters&  myCounters) const
 {
-    HLFT_DBG("{}:: comm: {}, {}.collectivesCounter={:#x} my {:#x} {}",
+    HLFT_DBG("{}::" COMM_ID_FMT ", {}.collectivesCounter={:#x} my {:#x} {}",
              prefix,
-             commId,
+             commIds.commId,
+             commIds.commIdPort,
              varName,
              collectivesCounter,
              myCounters.collectivesCounter,
@@ -78,9 +85,10 @@ void RankApiCounters::logDebugCompare(const HCL_Comm          commId,
             const SendRecvApiCounters& remoteInfo = ranksSendRecv[rank];
             if ((0 != remoteInfo.sendCounter) || (0 != remoteInfo.recvCounter))
             {
-                HLFT_DBG("{}:: comm: {}, {}[{}].send={}, {}[{}].recv={}",
+                HLFT_DBG("{}:: " COMM_ID_FMT ", {}[{}].send={:#x}, {}[{}].recv={:#x}",
                          prefix,
-                         commId,
+                         commIds.commId,
+                         commIds.commIdPort,
                          varName,
                          rank,
                          remoteInfo.sendCounter,
@@ -93,11 +101,15 @@ void RankApiCounters::logDebugCompare(const HCL_Comm          commId,
 }
 
 HclDynamicCommunicator::HclDynamicCommunicator(const HCL_Comm comm, Gen2ArchServerDef& serverDef, hcl::HalPtr hal)
-: m_commId(comm), m_commConnectivity(comm, serverDef.getServerConnectivity()), m_serverDef(serverDef), m_hal(hal)
+: m_migrationQpManager(hal->getMaxQPsPerNic()),
+  m_commId(comm),
+  m_commConnectivity(comm, serverDef.getServerConnectivity()),
+  m_serverDef(serverDef),
+  m_hal(hal)
 {
-    m_streamLatestLongSo.resize(m_hal->getMaxStreams());
-    m_streamLatestLongSo.assign(m_hal->getMaxStreams(), 0);
-    m_faultToleranceTargetCounters.streamLongSo.resize(m_hal->getMaxStreams(), 0);
+    m_streamLatestLongSo.resize(m_hal->getMaxArchStreams());
+    m_streamLatestLongSo.assign(m_hal->getMaxArchStreams(), 0);
+    m_faultToleranceTargetCounters.streamLongSo.resize(m_hal->getMaxArchStreams(), 0);
 }
 
 void HclDynamicCommunicator::setUniqueID(const internal_unique_id_t* internal_unique_id)
@@ -107,6 +119,23 @@ void HclDynamicCommunicator::setUniqueID(const internal_unique_id_t* internal_un
         m_commUniqueId = *internal_unique_id;
     }
     m_commUniqueIdStr = sockaddr_str_t(m_commUniqueId.address);
+
+    std::size_t colonPos = m_commUniqueIdStr.find(':');
+    if (colonPos != std::string::npos)
+    {
+        // Get a pointer to the first digit after the colon
+        m_commIdPort = &m_commUniqueIdStr[colonPos + 1];
+    }
+    else
+    {
+        LOG_HCL_ERR(HCL, "Failed to find colon in unique ID string: {}", m_commUniqueIdStr);
+    }
+}
+
+void HclDynamicCommunicator::setHcclCommHandle(hcclComm_t commHandle)
+{
+    LOG_HCL_DEBUG(HCL, "Setting communicator({}) commHandle={:p})", m_commId, commHandle);
+    m_commHandle = commHandle;
 }
 
 /**
@@ -767,7 +796,7 @@ void CommConnectivity::setNumScaleOutPorts(const Gen2ArchServerConnectivity& ser
     }
 }
 
-void HclDynamicCommunicator::getAsyncError(hcclResult_t* asyncError)
+void HclDynamicCommunicator::getAsyncError(hcclResult_t* asyncError, std::string& errMessage)
 {
     // we need to pass to HclDevice all the module IDs in this comm
     // we get all the inner ranks' module IDs, and check if we have outer ranks.
@@ -786,7 +815,7 @@ void HclDynamicCommunicator::getAsyncError(hcclResult_t* asyncError)
         remoteModuleIDs.push_back(SCALEOUT_DEVICE_ID);
     }
 
-    hccl_device()->getAsyncError(remoteModuleIDs, m_commId, asyncError);
+    hccl_device()->getAsyncError(remoteModuleIDs, m_commId, asyncError, errMessage);
 }
 
 void HclDynamicCommunicator::updateFaultToleranceCollectivesCounters(const HCL_StreamId streamId,
@@ -825,42 +854,44 @@ void HclDynamicCommunicator::updateFaultToleranceSendRecvCounters(const HCL_Stre
                                                                   const uint64_t     streamLongSo)
 {
     // in case of debug print both to FO and HCL logs
-    if (unlikely(LOG_LEVEL_AT_LEAST_DEBUG(HCL)))
-    {
-        HLFT_DBG("comm {}: streamId={}, streamLongSo={}", m_commId, streamId, streamLongSo);
-    }
+    LOG_HCL_DEBUG(HCL, "comm {}: streamId={}, streamLongSo={}", m_commId, streamId, streamLongSo);
 
-    // Copy counters from API send/recv sparse map to vector
+    // Copy counters from API send/recv counters to fault tolerance target counters under lock
     {
         std::unique_lock<std::mutex> lock(m_faultToleranceTargetCountersMutex);
         VERIFY(streamId < m_faultToleranceTargetCounters.streamLongSo.size());
+        m_faultToleranceTargetCounters.rankApiCountersData.ranksSendRecv = m_apiCounters.ranksSendRecv;
+        m_faultToleranceTargetCounters.streamLongSo[streamId]            = streamLongSo;
+    }
 
-        // Copy the entire vector of send/recv API counters if not zero
+    // debug print loop on non-zero counters
+    if (unlikely(LOG_LEVEL_AT_LEAST_TRACE(HCL)))
+    {
         for (HCL_Rank rank = 0; rank < m_commSize; rank++)
         {
             const auto& rankSr = m_apiCounters.ranksSendRecv[rank];
             if (rankSr.sendCounter != 0 || rankSr.recvCounter != 0)
             {
-                m_faultToleranceTargetCounters.rankApiCountersData.ranksSendRecv[rank] = rankSr;
-                if (unlikely(LOG_LEVEL_AT_LEAST_TRACE(HCL)))
-                {
-                    HLFT_TRC("comm {}: sendCounters[{}]={}, recvCounter[{}]={}",
-                             m_commId,
-                             rank,
-                             rankSr.sendCounter,
-                             rank,
-                             rankSr.recvCounter);
-                }
+                LOG_HCL_TRACE(HCL,
+                              "comm {}: sendCounters[{}]=0x{:x}, recvCounter[{}]=0x{:x}",
+                              m_commId,
+                              rank,
+                              rankSr.sendCounter,
+                              rank,
+                              rankSr.recvCounter);
             }
         }
-        m_faultToleranceTargetCounters.streamLongSo[streamId] = streamLongSo;
     }
 
     if (unlikely(LOG_LEVEL_AT_LEAST_DEBUG(HCL)))
     {
         for (size_t i = 0; i < m_faultToleranceTargetCounters.streamLongSo.size(); i++)
         {
-            HLFT_DBG("comm {}:, streamLongSo[{}]={}", m_commId, i, m_faultToleranceTargetCounters.streamLongSo[i]);
+            LOG_HCL_DEBUG(HCL,
+                          "comm {}:, streamLongSo[{}]={}",
+                          m_commId,
+                          i,
+                          m_faultToleranceTargetCounters.streamLongSo[i]);
         }
     }
 }
@@ -881,7 +912,7 @@ void HclDynamicCommunicator::updateApiSendRecvCounters()
             if (rankSr.sendCounter != 0 || rankSr.recvCounter != 0)
             {
                 LOG_HCL_TRACE(HCL,
-                              "comm {}: sendCounters[{}]={}, recvCounter[{}]={}",
+                              "comm {}: sendCounters[{}]=0x{:x}, recvCounter[{}]=0x{:x}",
                               m_commId,
                               rank,
                               rankSr.sendCounter,

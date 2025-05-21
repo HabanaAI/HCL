@@ -20,7 +20,11 @@ hcclResult_t hcclCommAbort_Wrapper(hcclComm_t comm);
 
 const char* hcclGetErrorString_Wrapper(hcclResult_t result);
 
+const char* hcclGetLastErrorMessage_Wrapper();
+
 hcclResult_t hcclCommGetAsyncError_Wrapper(hcclComm_t comm, hcclResult_t* asyncError);
+
+const char* hcclCommGetAsyncErrorMessage_Wrapper(hcclComm_t comm);
 
 hcclResult_t hcclCommCount_Wrapper(hcclComm_t comm, int* count);
 

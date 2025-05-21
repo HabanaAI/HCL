@@ -7,7 +7,6 @@
 #include <utility>           // for forward
 #include <memory>            // for shared_ptr
 #include "infra/fd.h"        // for FileDescriptor
-#include "infra/futex.h"     // for FutexLock
 #include "rdma/fabric.h"     // for fi_addr_t, fi_context
 #include <rdma/fi_domain.h>  // for fi_hmem_iface
 #include "platform/gen2_arch_common/host_scheduler.h"
@@ -32,7 +31,14 @@
         do                                                                                                             \
         {                                                                                                              \
             __result = (expr);                                                                                         \
-            if (__result != -EAGAIN) break;                                                                            \
+            if (__result != -EAGAIN)                                                                                   \
+            {                                                                                                          \
+                LOG_HCL_DEBUG(HCL_OFI,                                                                                 \
+                              "retry took {}",                                                                         \
+                              std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - \
+                                                                                    __start_time));                    \
+                break;                                                                                                 \
+            }                                                                                                          \
             retry_expr;                                                                                                \
         } while ((std::chrono::steady_clock::now() - __start_time) < (max_duration));                                  \
         __result;                                                                                                      \

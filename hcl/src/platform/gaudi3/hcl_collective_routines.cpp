@@ -20,11 +20,13 @@
 #include "platform/gaudi3/gaudi3_base_server_connectivity.h"  // for Gaudi3BaseServerConnectivity
 #include "platform/gen2_arch_common/server_def.h"             // for Gen2ArchServerDef
 
-class DeviceBufferManager;
+class DeviceSimbPoolManagerBase;
 class ScaleoutProvider;
 
-HclCollectiveRoutinesGaudi3::HclCollectiveRoutinesGaudi3(HclDeviceGaudi3* device, int streamId, WqeTracker* wqeTracker)
-: HclCollectiveRoutinesGen2Arch(device, streamId, wqeTracker),
+HclCollectiveRoutinesGaudi3::HclCollectiveRoutinesGaudi3(HclDeviceGaudi3* device,
+                                                         int              archStreamIdx,
+                                                         WqeTracker*      wqeTracker)
+: HclCollectiveRoutinesGen2Arch(device, archStreamIdx, wqeTracker),
   m_gaudi3Commands((HclCommandsGaudi3&)m_commands),
   m_serverConnectivity(device->getServerConnectivityGaudi3()),
   m_sendAggr(true,
@@ -41,7 +43,7 @@ HclCollectiveRoutinesGaudi3::HclCollectiveRoutinesGaudi3(HclDeviceGaudi3* device
     m_addressGenerator    = std::make_unique<HclAddressGeneratorGaudi3>();
     m_memHandler          = std::make_unique<HclCollectiveMemHandlerGaudi3>(m_streamId,
                                                                    *m_addressGenerator,
-                                                                   m_intermediateBufferManager,
+                                                                   m_deviceSimbPoolManager,
                                                                    m_commands,
                                                                    m_graphSync);
     m_utils               = new hcl::Gaudi3HclScalUtils();
@@ -92,8 +94,8 @@ void HclCollectiveRoutinesGaudi3::createScaleUpSendRecvOp(hcl::ScalStreamBase&  
         }
     }
 
-    const RemoteDevicePortMasksArray& remoteDevicesPortMasks = m_serverConnectivity.getRemoteDevicesPortMasks(comm);
-    size_t                            index                  = 0;
+    const RemoteDevicePortMasksVector& remoteDevicesPortMasks = m_serverConnectivity.getRemoteDevicesPortMasks(comm);
+    size_t                             index                  = 0;
     for (auto& remoteDevicePortMask : remoteDevicesPortMasks)
     {
         LOG_HCL_TRACE(HCL,
@@ -165,8 +167,7 @@ void HclCollectiveRoutinesGaudi3::createScaleUpCollectiveOp(hcl::ScalStreamBase&
                                        : m_serverConnectivity.getInnerRanksPortMask(scaleUpOp.m_dynamicComm);
     scaleUpOp.m_strideCount =
         (scaleUpOp.m_isReduction && !scaleUpOp.m_isSend)
-            ? sizeToCount(m_intermediateBufferManager.getSingleBufferSize(SCALEUP_AND_ALL2ALL_POOL),
-                          scaleUpOp.m_dataType)
+            ? sizeToCount(m_deviceSimbPoolManager.getSingleBufferSize(SCALEUP_AND_ALL2ALL_POOL), scaleUpOp.m_dataType)
             : scaleUpOp.m_strideCount;
 
     m_gaudi3Commands.serializeScaleUpCollectiveOp(

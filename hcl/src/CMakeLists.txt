@@ -28,7 +28,7 @@ include_directories(
     /usr/include/libdrm
     $ENV{HCL_SRC_PKG_DIR}/dependencies/3rd-parties/
     $ENV{HCL_SRC_PKG_DIR}/dependencies/3rd-parties/hwloc-2.10.0/include/
-    $ENV{HCL_SRC_PKG_DIR}/dependencies/3rd-parties/json/single_include/
+    $ENV{HCL_SRC_PKG_DIR}/dependencies/3rd-parties/json-3.11.3/single_include/
     $ENV{HCL_SRC_PKG_DIR}/dependencies/habanalabs/include/uapi/
     $ENV{HCL_SRC_PKG_DIR}/dependencies/hl-thunk/include/uapi/
     $ENV{HCL_SRC_PKG_DIR}/dependencies/qman_fw/engines-arc/include/
@@ -108,7 +108,6 @@ target_link_libraries(
     ${TARGET_NAME_SO}
     $ENV{HCL_LIB_DIR}/libhl_logger.so
     $ENV{HCL_LIB_DIR}/libhl_gcfg.so
-    $ENV{HCL_LIB_DIR}/libemon.a
     $ENV{HCL_LIB_DIR}/libhwloc_embedded.a
     $ENV{HCL_LIB_DIR}/libglpk.a
 )

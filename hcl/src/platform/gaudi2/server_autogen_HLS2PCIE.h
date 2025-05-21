@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-constexpr uint32_t HLS2PCIE_NUM_DEVICES = 4;
+constexpr uint32_t HLS2PCIE_NUM_DEVICES = 8;
 
 constexpr uint32_t HLS2PCIE_SCALEUP_GROUP_SIZE = 4;
 

@@ -16,7 +16,7 @@ public:
     Gen2ArchHal(const Gen2ArchHal&)            = delete;
     Gen2ArchHal& operator=(const Gen2ArchHal&) = delete;
 
-    virtual uint64_t getMaxStreams() const override;
+    virtual uint64_t getMaxArchStreams() const override;
     virtual uint64_t getMaxQPsPerNic() const override;
     virtual uint64_t getMaxNics() const override;
     virtual uint32_t getMaxEDMAs() const override;

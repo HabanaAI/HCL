@@ -87,8 +87,16 @@ hcclResult_t hcclCommAbort(hcclComm_t comm);
 /* Returns a human-readable error message. */
 const char* hcclGetErrorString(hcclResult_t result);
 
+/* returns details about the last synchronous error occurred in HCCL. nullptr if no details available */
+const char* hcclGetLastErrorMessage();
+
 /* Checks whether the comm has encountered any asynchronous errors */
 hcclResult_t hcclCommGetAsyncError(hcclComm_t comm, hcclResult_t* asyncError);
+
+/* returns details about the async comm error. returns nullptr if no details available
+ * if comm is nullptr, returns details about the last async error from any comm
+ */
+const char* hcclCommGetAsyncErrorMessage(hcclComm_t comm);
 
 /* Gets the number of ranks in the communicator clique. */
 hcclResult_t hcclCommCount(hcclComm_t comm, int* count);

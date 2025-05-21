@@ -16,6 +16,8 @@ HclDynamicCommsManager::HclDynamicCommsManager()
 
 HclDynamicCommsManager::~HclDynamicCommsManager()
 {
+    locker_t locker(m_lock);
+
     if (m_size == 0) return;
 
     LOG_WARN(HCL,
@@ -29,6 +31,8 @@ HclDynamicCommsManager::~HclDynamicCommsManager()
 
 HCL_Comm HclDynamicCommsManager::createNextComm(hcl::HalPtr hal, Gen2ArchServerDef& serverDef)
 {
+    locker_t locker(m_lock);
+
     HCL_Comm comm = m_nextCommId++;
     if (unlikely(comm >= m_communicators.size()))
     {
@@ -45,19 +49,31 @@ HCL_Comm HclDynamicCommsManager::createNextComm(hcl::HalPtr hal, Gen2ArchServerD
     return comm;
 }
 
-HclDynamicCommunicator& HclDynamicCommsManager::getComm(HCL_Comm commId)
+HclDynamicCommunicator& HclDynamicCommsManager::getComm(const HCL_Comm commId)
 {
     VERIFY(isCommExist(commId), "comm({}) does not exist", commId);
+
+    locker_t locker(m_lock);
+    return *m_communicators[commId];
+}
+
+const HclDynamicCommunicator& HclDynamicCommsManager::getComm(const HCL_Comm commId) const
+{
+    VERIFY(isCommExist(commId), "comm({}) does not exist", commId);
+
+    locker_t locker(m_lock);
     return *m_communicators[commId];
 }
 
 bool HclDynamicCommsManager::isCommExist(const HCL_Comm comm) const
 {
+    locker_t locker(m_lock);
     return comm < m_nextCommId && m_communicators[comm] != nullptr;
 }
 
 size_t HclDynamicCommsManager::getMaxCommNum() const
 {
+    locker_t locker(m_lock);
     return m_nextCommId;
 }
 
@@ -65,6 +81,8 @@ void HclDynamicCommsManager::destroyComm(HCL_Comm comm)
 {
     if (isCommExist(comm))
     {
+        locker_t locker(m_lock);
+
         delete m_communicators[comm];
         m_communicators[comm] = nullptr;
         m_size--;
@@ -73,5 +91,7 @@ void HclDynamicCommsManager::destroyComm(HCL_Comm comm)
 
 int HclDynamicCommsManager::getNumOfActiveComms() const
 {
+    locker_t locker(m_lock);
+
     return m_size;
 }

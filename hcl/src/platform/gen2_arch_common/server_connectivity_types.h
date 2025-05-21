@@ -5,7 +5,7 @@
 #include <tuple>    // for tuple
 
 #include "hcl_api_types.h"                    // for HCL_Comm
-#include "platform/gen2_arch_common/types.h"  // for MAX_NICS_GEN2ARCH, GEN2ARCH_HLS_BOX_SIZE
+#include "platform/gen2_arch_common/types.h"  // for MAX_NICS_GEN2ARCH
 
 // <remote card location, remote nic, sub nic index>
 using Gen2ArchNicDescriptor =
@@ -14,7 +14,7 @@ using Gen2ArchNicDescriptor =
 
 typedef std::array<Gen2ArchNicDescriptor, MAX_NICS_GEN2ARCH>
     Gen2ArchNicsDeviceSingleConfig;  // array of remote nics per current device nics
-typedef std::array<Gen2ArchNicsDeviceSingleConfig, GEN2ARCH_HLS_BOX_SIZE> ServerNicsConnectivityArray;
+typedef std::vector<Gen2ArchNicsDeviceSingleConfig> ServerNicsConnectivityVector;
 
 constexpr unsigned SCALEOUT_DEVICE_ID      = -1;
 constexpr unsigned NOT_CONNECTED_DEVICE_ID = -2;

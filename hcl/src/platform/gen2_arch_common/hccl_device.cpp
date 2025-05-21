@@ -79,7 +79,7 @@ void hccl_device_t::aggregators_t::init()
 {
     if (hccl_device().initialized && (size() == 0))
     {
-        FOR_I(hccl_device()->getHal().getMaxStreams())
+        FOR_I(hccl_device()->getHal().getMaxArchStreams())
         {
             push_back(new ApiAggregatorGen2Arch(hccl_device().collectives[i]));
         }
@@ -137,17 +137,29 @@ hcclResult_t hccl_device_t::init(uint8_t apiId)
 hcclResult_t hccl_device_t::group(bool start)
 {
     hcclResult_t rc = hcclSuccess;
+
+    bool firstAgg = true;
+
     for (auto& agg : aggregators_)
     {
         if (start)
         {
             agg->addGroupStart();
+            if (firstAgg)
+            {
+                hccl_device()
+                    ->clearScaleoutCommsCurrentGroup();  // Clear the list on first aggregator. This may be called
+                                                         // multiple times in case of recursive group start
+            }
         }
         else
         {
-            if ((rc = agg->addGroupEnd()) != hcclSuccess) break;
+            LOG_HCL_TRACE(HCL, "Calling addGroupEnd1");
+            if ((rc = agg->addGroupEnd(firstAgg)) != hcclSuccess) break;
         }
+        firstAgg = false;
     }
+    LOG_HCL_TRACE(HCL, "After calling addGroupEnd1 in loop,");
 
     return rc;
 }
@@ -220,6 +232,9 @@ static hcclResult_t selfRankMemcpy(const HclCollectiveParams& params)
             return res;
         }
 
+        const HCL_Comm commId = params.m_dynamicComm;
+        LOG_HCL_TRACE(HCL, "Calling group end, params.commId={}", commId);
+
         // group end
         res = hccl_device().group(false);
         if (res != hcclSuccess)
@@ -232,6 +247,9 @@ static hcclResult_t selfRankMemcpy(const HclCollectiveParams& params)
 
 hcclResult_t hccl_device_t::collective_call(HclCollectiveParams& params)
 {
+    uint32_t streamId = stream_id(params.m_streamHandle);
+    device_->m_deviceController.waitIfNeededForPreviousEventOnStream(streamId, params.m_streamHandle);
+
     if (params.m_collectiveOp == eHCLReduce || params.m_collectiveOp == eHCLAllReduce ||
         params.m_collectiveOp == eHCLBroadcast || params.m_collectiveOp == eHCLReduceScatter ||
         params.m_collectiveOp == eHCLAllGather || params.m_collectiveOp == eHCLAll2All)
@@ -244,7 +262,7 @@ hcclResult_t hccl_device_t::collective_call(HclCollectiveParams& params)
         }
     }
 
-    return aggregators_[stream_id(params.m_streamHandle)]->addCollectiveApiCall(params);
+    return aggregators_[streamId]->addCollectiveApiCall(params);
 }
 
 void hccl_device_t::invalidateGraphCacheForComm(const HCL_Comm comm)

@@ -44,6 +44,11 @@ NicQPs& GaudiNicQPs::operator[](uint8_t nic)
         }
     }
 
+    // log existing QPs to help debug
+    for (size_t i = 0; i < MAX_COMPACT_RANK_INFO_NICS; i++)
+    {
+        LOG_HCL_ERR(HCL, "access invalid nic({}). Valid {}/{}", nic, i, this->qp[i].nic);
+    }
     // called with invalid nic, assuming allocateQp is called only for connected nics
     VERIFY(false, "access invalid nic({})", nic);
 
@@ -77,6 +82,11 @@ NicQPs& BackupGaudiNicQPs::operator[](int8_t nic)
         }
     }
     // all entries are full and nic not found - error
+    // log existing QPs to help debug
+    for (size_t i = 0; i < MAX_COMPACT_RANK_INFO_NICS; i++)
+    {
+        LOG_HCL_ERR(HCL, "access invalid nic({}). Valid {}/{}", nic, i, this->qp[i].nic);
+    }
     VERIFY(false, "access invalid nic({})", nic);
 }
 

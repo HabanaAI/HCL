@@ -31,7 +31,8 @@ struct DmaCmdParams
                           uint32_t         poolId,
                           bool             isBFloat,
                           bool             isFirstWrite,
-                          bool             isContReduction)
+                          bool             isContReduction,
+                          bool             isWideAccumulation = false)
     : m_schedIdx(schedIdx),
       m_soAddressLSB(soAddressLSB),
       m_soAddressLSB2(soAddressLSB2),
@@ -54,7 +55,8 @@ struct DmaCmdParams
       m_poolId(poolId),
       m_isBFloat(isBFloat),
       m_isFirstWrite(isFirstWrite),
-      m_isContReduction(isContReduction)
+      m_isContReduction(isContReduction),
+      m_isWideAccumulation(isWideAccumulation)
     {
     }
 
@@ -82,6 +84,7 @@ struct DmaCmdParams
     bool             m_isBFloat;
     bool             m_isFirstWrite;
     bool             m_isContReduction;
+    bool             m_isWideAccumulation;
 };
 
 struct ScaleUpCollectiveOp
@@ -187,7 +190,8 @@ struct ScaleOutCollectiveOp
                                   bool             notifyRndvAck,
                                   bool             waitForRndvAcks,
                                   bool             doReduction,
-                                  uint8_t          qpSet)
+                                  uint8_t          qpSet,
+                                  bool             isRSContReduc = false)
     : m_myScaleupGroup(myScaleupGroup),
       m_remoteRankToRsi(remoteRankToRsi),
       m_comm(comm),
@@ -208,7 +212,8 @@ struct ScaleOutCollectiveOp
       m_notifyRndvAck(notifyRndvAck),
       m_waitForRndvAcks(waitForRndvAcks),
       m_doReduction(doReduction),
-      m_qpSet(qpSet)
+      m_qpSet(qpSet),
+      m_isRSContReduc(isRSContReduc)
     {
     }
 
@@ -235,4 +240,5 @@ struct ScaleOutCollectiveOp
     bool             m_waitForRndvAcks;
     bool             m_doReduction;
     uint8_t          m_qpSet;
+    bool             m_isRSContReduc;
 };

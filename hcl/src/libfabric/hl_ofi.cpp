@@ -278,6 +278,21 @@ static bool is_tcp_interface_excluded(const char* const interface)
     }
 }
 
+static bool is_verbs_interface_excluded(const char* const interface)
+{
+    std::string        exclude_ifs = GCFG_HCL_HNIC_VERBS_EXCLUDE_IF.value();
+    std::istringstream ss(exclude_ifs);
+    std::string        token;
+    while (std::getline(ss, token, ','))
+    {
+        if (token == interface)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool ofi_t::exclude_tcp_provider(const fi_info* const provider, const uint64_t expected_mem_tag_format)
 {
     const char* const name           = provider->domain_attr->name;
@@ -327,6 +342,11 @@ bool ofi_t::exclude_verbs_provider(const fi_info* const provider, const uint64_t
     const char* const name           = provider->domain_attr->name;
     const uint32_t    addr_format    = provider->addr_format;
     const uint64_t    mem_tag_format = provider->ep_attr->mem_tag_format;
+    if (is_verbs_interface_excluded(name))
+    {
+        LOG_HCL_DEBUG(HCL_OFI, "Filtering out provider {} due to explicit exclusion request", std::string(name));
+        return true;
+    }
     if (GCFG_HCL_HNIC_IPV6.value() && addr_format != FI_SOCKADDR_IN6)
     {
         LOG_HCL_DEBUG(
@@ -495,14 +515,16 @@ int ofi_t::init()
             LOG_HCL_ERR(HCL_OFI, "Unable to set RDMAV_FORK_SAFE, continuing without");
         }
     }
+    const uint32_t fabric_version = ofi_plugin->w_fi_version();
+    VERIFY(fabric_version != UNSUPPORTED_LIBFABRIC_VERSION,
+           "libfabric version is {}.{}, which is unsupported.",
+           FI_MAJOR(fabric_version),
+           FI_MINOR(fabric_version));
 
     if (GCFG_HCCL_GAUDI_DIRECT.value())
     {
         // Check libfabric version
-        uint32_t fabric_version = ofi_plugin->w_fi_version();
-        if (FI_MAJOR(fabric_version) > REQUIRED_LIBFABRIC_MAJOR ||
-            (FI_MAJOR(fabric_version) == REQUIRED_LIBFABRIC_MAJOR &&
-             FI_MINOR(fabric_version) >= REQUIRED_LIBFABRIC_MINOR))
+        if (FI_VERSION_GE(fabric_version, MINIMAL_LIBFABRIC_VERSION))
         {
             LOG_HCL_DEBUG(HCL_OFI,
                           "libfabric version is {}.{}, attempting to use gaudi-direct.",
@@ -555,8 +577,8 @@ int ofi_t::init()
             failure_str =
                 "Gaudi-direct not supported due to libfabric version: " + std::to_string(FI_MAJOR(fabric_version)) +
                 "." + std::to_string(FI_MINOR(fabric_version)) +
-                " while the required version is: " + std::to_string(REQUIRED_LIBFABRIC_MAJOR) + "." +
-                std::to_string(REQUIRED_LIBFABRIC_MINOR);
+                " while the minimal version is: " + std::to_string(FI_MAJOR(MINIMAL_LIBFABRIC_VERSION)) + "." +
+                std::to_string(FI_MINOR(MINIMAL_LIBFABRIC_VERSION));
         }
 
         // If gaudi-direct was explicitly requested by user, but one of the following conditions was met:
@@ -878,7 +900,7 @@ int ofi_t::initOfiComponent(int ofiDevice)
 
 int ofi_t::acquireOfiComponent(int ofiDevice)
 {
-    std::scoped_lock<FutexLock> lock(m_ofi_lock);
+    locker_t lock(m_ofi_lock);
     if (m_components[ofiDevice] == NULL)
     {
         VERIFY(initOfiComponent(ofiDevice) == hcclSuccess, "initializing OFI component failed.");
@@ -893,7 +915,7 @@ int ofi_t::acquireOfiComponent(int ofiDevice)
 
 void ofi_t::releaseOfiComponent(int ofiDevice)
 {
-    std::scoped_lock<FutexLock> lock(m_ofi_lock);
+    locker_t lock(m_ofi_lock);
     if (m_components[ofiDevice] == NULL)
     {
         LOG_HCL_ERR(HCL_OFI, "OFI component already deleted (or never created) for component {}", ofiDevice);

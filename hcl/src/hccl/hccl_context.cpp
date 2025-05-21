@@ -94,6 +94,8 @@ hcclResult_t hccl_context::comm_init_rank(hcclComm_t* comm_handle, unsigned int 
         return hcclInvalidArgument;
     }
 
+    locker_t locker(comm_init_lock_);  // serialize with updateNicState() from driver
+
     const internal_unique_id_t*        internal_id = get_internal_id(comm_id);
     std::shared_ptr<hccl_communicator> spHcclComm(new hccl_communicator(rank, nranks));
     if (nullptr == spHcclComm)
@@ -110,6 +112,8 @@ hcclResult_t hccl_context::comm_init_rank(hcclComm_t* comm_handle, unsigned int 
 
     // for re-init case, use previous key
     *comm_handle = spHcclComm.get();
+    spHcclComm->getDynamicComm()->setHcclCommHandle(
+        *comm_handle);  // Store back ptr to hccl_communicator in the dynamic comm, needed for fault tolerance
 
     // create a map entry as a pair of hcclComm key and hclComm key
     hccl_communicators_[*comm_handle] = spHcclComm;
@@ -138,6 +142,18 @@ hcclResult_t hccl_context::comm_init_rank(hcclComm_t* comm_handle, unsigned int 
 hccl_communicator* hccl_context::communicator(hcclComm_t comm_handle)
 {
     auto it = hccl_communicators_.find(comm_handle);
+    if (hccl_communicators_.end() == it)
+    {
+        LOG_HCL_ERR(HCL, "did not find matching HCL_Comm handle for hccl_communicator key {}", comm_handle);
+        return nullptr;
+    }
+    return it->second.get();
+}
+
+const hccl_communicator* hccl_context::communicator(const hcclComm_t comm_handle) const
+{
+    hcclComm_t comm_handle_key = const_cast<hcclComm_t>(comm_handle);
+    const auto it              = hccl_communicators_.find(comm_handle_key);
     if (hccl_communicators_.end() == it)
     {
         LOG_HCL_ERR(HCL, "did not find matching HCL_Comm handle for hccl_communicator key {}", comm_handle);
@@ -188,6 +204,8 @@ const internal_unique_id_t* hccl_context::get_internal_id(const hcclUniqueId& un
 
 hcclResult_t hccl_context::comm_destroy(hcclComm_t comm_handle)
 {
+    locker_t locker(comm_init_lock_);  // serialize with comm_init_rank
+
     auto* hcclComm = communicator(comm_handle);
     if (hcclComm == nullptr)
     {
@@ -308,7 +326,7 @@ void hccl_context::dfaLog(hl_logger::LoggerSPtr logger)
 
         HLLOG_UNTYPED(logger,
                       HLLOG_LEVEL_INFO,
-                      "hcclComm {:x} comm {:4} rank {:4} commSize {:4} uniqId {:20} collective#=0x{}",
+                      "hcclComm {:x} comm {:4} rank {:4} commSize {:4} uniqId {:20} collective#=0x{:x}",
                       TO64(hcclCommunicator),
                       commId,
                       rank,

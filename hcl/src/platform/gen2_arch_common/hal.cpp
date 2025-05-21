@@ -2,7 +2,7 @@
 
 using namespace hcl;
 
-uint64_t Gen2ArchHal::getMaxStreams() const
+uint64_t Gen2ArchHal::getMaxArchStreams() const
 {
     return m_maxStreams;
 }

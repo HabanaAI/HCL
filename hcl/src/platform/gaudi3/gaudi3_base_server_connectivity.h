@@ -20,11 +20,11 @@ class HclDynamicCommunicator;
 class Gaudi3BaseServerConnectivity : public Gen2ArchServerConnectivity
 {
 public:
-    Gaudi3BaseServerConnectivity(const int                          fd,
-                                 const int                          moduleId,
-                                 const bool                         useDummyConnectivity,
-                                 const ServerNicsConnectivityArray& serverNicsConnectivityArray,
-                                 HclDeviceConfig&                   deviceConfig);
+    Gaudi3BaseServerConnectivity(const int                           fd,
+                                 const int                           moduleId,
+                                 const bool                          useDummyConnectivity,
+                                 const ServerNicsConnectivityVector& serverNicsConnectivityVector,
+                                 HclDeviceConfig&                    deviceConfig);
     virtual ~Gaudi3BaseServerConnectivity() = default;
 
     virtual void onCommInit(HclDynamicCommunicator& dynamicComm) override;
@@ -34,7 +34,7 @@ public:
     // Get specific rank scaleup ports mask
     const uint32_t getRankToPortMask(const HCL_Rank rank, HclDynamicCommunicator& dynamicComm);
     // Get all remote devices ports mask
-    const RemoteDevicePortMasksArray& getRemoteDevicesPortMasks(const HCL_Comm hclCommId = DEFAULT_COMM_ID) const;
+    const RemoteDevicePortMasksVector& getRemoteDevicesPortMasks(const HCL_Comm hclCommId = DEFAULT_COMM_ID) const;
     // Get nic macros mask for remote device
     uint16_t getNicsMacrosDupMask(const uint32_t remoteDevice, const HCL_Comm hclCommId = DEFAULT_COMM_ID) const;
     // Get nic macros vector for remote device

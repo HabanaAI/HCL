@@ -3,10 +3,9 @@
 #include <cstdint>
 #include "llvm/small_vector.h"  // for SmallVector
 
-#define MAX_NICS_GEN2ARCH     (24)
-#define GEN2ARCH_HLS_BOX_SIZE (8)
-#define HCL_INVALID_PORT      (uint16_t)(-1)  // 0xFFFF
-#define HCL_INVALID_FENCE_ID  (uint32_t)(-1)  // 0xFFFFFFFF
+#define MAX_NICS_GEN2ARCH    (24)
+#define HCL_INVALID_PORT     (uint16_t)(-1)  // 0xFFFF
+#define HCL_INVALID_FENCE_ID (uint32_t)(-1)  // 0xFFFFFFFF
 
 enum nic_edma_datatypes_t
 {
@@ -77,9 +76,6 @@ enum reduceOpMemsetValues
 
 #include <vector>
 using QpsVector = std::vector<uint32_t>;
-
-#include <array>
-using box_devices_t = std::array<int, GEN2ARCH_HLS_BOX_SIZE>;
 
 constexpr int                                                        maxAddressDataBurstSize = 32;
 typedef llvm_vecsmall::SmallVector<LbwData, maxAddressDataBurstSize> LBWBurstData_t;

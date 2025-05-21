@@ -111,7 +111,8 @@ void HostScheduler::runHostScheduler()
     }
     catch (hcl::VerifyException& e)
     {
-        g_status = hcclInternalError;
+        setGlobalDfaStatus(hcclInternalError);
+        setGlobalAsyncErrorMessage(e.what());
     }
 }
 

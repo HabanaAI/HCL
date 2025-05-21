@@ -48,7 +48,9 @@ void HclCommandsGaudi3::serializeDmaCommand(hcl::ScalStreamBase& scalStream, Dma
                                                 cmd.m_soAddressLSB2,
                                                 cmd.m_isBFloat,
                                                 useReductionInd,
-                                                cmd.m_isFirstWrite);
+                                                cmd.m_isFirstWrite,
+                                                0,  // default value for memsetValue (don't care)
+                                                cmd.m_isWideAccumulation);
 }
 
 void HclCommandsGaudi3::serializeMemsetCommand(hcl::ScalStreamBase&      scalStream,
@@ -173,21 +175,23 @@ void HclCommandsGaudi3::serializeScaleOutCollectiveOp(hcl::ScalStreamBase&    sc
                                                        effectiveReductionOp,
                                                        scaleoutCollectiveOp.m_dataType,
                                                        scaleoutCollectiveOp.m_ScaleupGroupSize,
-                                                       scaleoutCollectiveOp.m_lagSize);
+                                                       scaleoutCollectiveOp.m_lagSize,
+                                                       1,  // default strideCount
+                                                       scaleoutCollectiveOp.m_isRSContReduc);
 }
 
-void HclCommandsGaudi3::serializeScaleUpSendRecv(hcl::ScalStreamBase&              scalStream,
-                                                 const int                         selfModuleId,
-                                                 const bool                        isSend,
-                                                 const uint8_t                     dcore,
-                                                 const uint8_t                     ssm,
-                                                 const uint16_t                    sobId,
-                                                 const uint32_t                    qpn,
-                                                 const SendRecvArray&              sendRecvArray,
-                                                 const RemoteDevicePortMasksArray& remoteDevicesPortMasks,
-                                                 const HCL_Comm                    comm,
-                                                 SendRecvAggregatorGaudi3&         sendRecvAggr,
-                                                 const unsigned                    maxNumScaleUpNicsPerConnection)
+void HclCommandsGaudi3::serializeScaleUpSendRecv(hcl::ScalStreamBase&               scalStream,
+                                                 const int                          selfModuleId,
+                                                 const bool                         isSend,
+                                                 const uint8_t                      dcore,
+                                                 const uint8_t                      ssm,
+                                                 const uint16_t                     sobId,
+                                                 const uint32_t                     qpn,
+                                                 const SendRecvArray&               sendRecvArray,
+                                                 const RemoteDevicePortMasksVector& remoteDevicesPortMasks,
+                                                 const HCL_Comm                     comm,
+                                                 SendRecvAggregatorGaudi3&          sendRecvAggr,
+                                                 const unsigned                     maxNumScaleUpNicsPerConnection)
 {
     LOG_HCL_TRACE(HCL, "selfModuleId={}, isSend={}, qpn={}, ", selfModuleId, isSend, qpn);
     VERIFY(selfModuleId >= 0, "received invalid device {}", selfModuleId);
@@ -344,7 +348,7 @@ void HclCommandsGaudi3::serializeAllocBarrierCommand(hcl::ScalStreamBase& scalSt
                                                      unsigned             schedIdx,
                                                      uint32_t             completionGroupIndex,
                                                      uint32_t             requiredSobs,
-                                                     llvm_vecsmall::SmallVector<uint32_t, MAX_STREAM_TO_INC>* fences,
+                                                     llvm_vecsmall::SmallVector<uint32_t, MAX_STREAM_PER_SCHED>* fences,
                                                      const LBWBurstData_t* destBurstData)
 {
     SchedArcCommandsGaudi3::serializeAllocBarrierCommand(scalStream,
@@ -405,16 +409,19 @@ void HclCommandsGaudi3::serializeNopCommand(hcl::ScalStreamBase& scalStream, uns
     SchedArcCommandsGaudi3::serializeNopCommand(scalStream, schedIdx, padding);
 }
 
-void HclCommandsGaudi3::serializeGlobalDmaCommand(hcl::ScalStreamBase&                  scalStream,
-                                                  uint32_t                              soAddressLSB,
-                                                  const std::vector<sibAddressAndSize>& sibAddressesAndSizes,
-                                                  uint32_t                              fwStrideSize,
-                                                  uint64_t                              fwBaseAddress)
+void HclCommandsGaudi3::serializeGlobalDmaCommand(
+    hcl::ScalStreamBase&                                 scalStream,
+    unsigned                                             schedIdx,
+    uint32_t                                             soAddressLSB,
+    const std::vector<SimbPoolContainerParamsPerStream>& containerParamsPerStreamVec,
+    uint32_t                                             fwStrideSize,
+    uint64_t                                             fwBaseAddress)
 {
     SchedArcCommandsGaudi3::serializeGlobalDmaCommand(
         scalStream,
+        schedIdx,
         soAddressLSB,
-        sibAddressesAndSizes,
+        containerParamsPerStreamVec,
         fwStrideSize,
         fwBaseAddress,
         ScalNetworkGarbageCollectorAndReductionGroups::SCAL_EDMA_NETWORK_GC_REDUCTION_GROUP0);

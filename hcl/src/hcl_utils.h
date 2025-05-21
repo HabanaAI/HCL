@@ -51,7 +51,10 @@
  */
 #define _ALIGN_DOWN(base, size) ((base) & (~((size) - 1)))
 
-extern volatile hcclResult_t g_status;
+hcclResult_t getGlobalDfaStatus();
+void         setGlobalDfaStatus(hcclResult_t dfaStatus);
+std::string  getGlobalAsyncErrorStatusMessage();
+void         setGlobalAsyncErrorMessage(const std::string& errMessage);
 
 /**
  * LOG_HCL_INFO(HCL, "msg") will produce a log line such as:
@@ -63,7 +66,7 @@ extern volatile hcclResult_t g_status;
                "",                                                                                                     \
                g_logContext[(unsigned)HLLOG_ENUM_TYPE_NAME::log_type],                                                 \
                CLASS_NAME,                                                                                             \
-               __func__,                                                                                               \
+               HLLOG_FUNC,                                                                                             \
                ##__VA_ARGS__);
 
 #define LOG_HCL_TRACE(log_type, msg, ...)    _HCL_LOG_(TRACE, log_type, msg, ##__VA_ARGS__)
@@ -138,7 +141,7 @@ private:
     LOG_TRACE(log_type,                                                                                                \
               "{}::{}(->{}) eventID({}) queueOffset({}) " msg,                                                         \
               event->name(),                                                                                           \
-              __func__,                                                                                                \
+              HLLOG_FUNC,                                                                                              \
               event->m_remoteRank,                                                                                     \
               event->eventId(),                                                                                        \
               event->m_physicalQueueOffset,                                                                            \
@@ -148,7 +151,7 @@ private:
     LOG_DEBUG(log_type,                                                                                                \
               "{}::{}(->{}) eventID({}) queueOffset({}) " msg,                                                         \
               event->name(),                                                                                           \
-              __func__,                                                                                                \
+              HLLOG_FUNC,                                                                                              \
               event->m_remoteRank,                                                                                     \
               event->eventId(),                                                                                        \
               event->m_physicalQueueOffset,                                                                            \
@@ -158,7 +161,7 @@ private:
     LOG_INFO(log_type,                                                                                                 \
              "{}::{}(->{}) eventID({}) queueOffset({}) " msg,                                                          \
              event->name(),                                                                                            \
-             __func__,                                                                                                 \
+             HLLOG_FUNC,                                                                                               \
              event->m_remoteRank,                                                                                      \
              event->eventId(),                                                                                         \
              event->m_physicalQueueOffset,                                                                             \
@@ -168,7 +171,7 @@ private:
     LOG_WARN(log_type,                                                                                                 \
              "{}::{}(->{}) eventID({}) queueOffset({}) " msg,                                                          \
              event->name(),                                                                                            \
-             __func__,                                                                                                 \
+             HLLOG_FUNC,                                                                                               \
              event->m_remoteRank,                                                                                      \
              event->eventId(),                                                                                         \
              event->m_physicalQueueOffset,                                                                             \
@@ -178,7 +181,7 @@ private:
     LOG_ERR(log_type,                                                                                                  \
             "{}::{}(->{}) eventID({}) queueOffset({}) " msg,                                                           \
             event->name(),                                                                                             \
-            __func__,                                                                                                  \
+            HLLOG_FUNC,                                                                                                \
             event->m_remoteRank,                                                                                       \
             event->eventId(),                                                                                          \
             event->m_physicalQueueOffset,                                                                              \
@@ -311,7 +314,7 @@ private:
                 << " ] failed. " << msg << " ";                                                                        \
             std::string error = _ss.str();                                                                             \
             std::cerr << error << std::endl;                                                                           \
-            LOG_CRITICAL(HCL, "{}: The condition [ {} ] failed. {}", __func__, #condition, msg);                       \
+            LOG_CRITICAL(HCL, "{}", error);                                                                            \
             if (GCFG_HCL_ALIVE_ON_FAILURE.value())                                                                     \
             {                                                                                                          \
                 while (1)                                                                                              \
@@ -323,7 +326,8 @@ private:
             {                                                                                                          \
                 if (!dfa)                                                                                              \
                 {                                                                                                      \
-                    g_status = hcclInternalError;                                                                      \
+                    setGlobalDfaStatus(hcclInternalError);                                                             \
+                    setGlobalAsyncErrorMessage(error);                                                                 \
                     throw hcl::VerifyException(error);                                                                 \
                     std::terminate();                                                                                  \
                 }                                                                                                      \

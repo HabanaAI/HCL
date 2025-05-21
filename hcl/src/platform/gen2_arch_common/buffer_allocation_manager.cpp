@@ -7,7 +7,7 @@ BufferAllocationManager::BufferAllocationManager()
     m_nextBufferToAllocateIndex = 0;
 }
 
-unsigned BufferAllocationManager::alloc(DeviceBufferManager&                deviceBufferManager,
+unsigned BufferAllocationManager::alloc(DeviceSimbPoolManagerBase&          deviceSimbPoolManager,
                                         hcl::syncInfo&                      longSo,
                                         int64_t                             cgSize,
                                         unsigned                            requiredExtraCredits,
@@ -20,13 +20,13 @@ unsigned BufferAllocationManager::alloc(DeviceBufferManager&                devi
     int64_t  signalsDiff;
     for (bufferAllocationIndex = 0; bufferAllocationIndex < m_nextBufferToAllocateIndex; bufferAllocationIndex++)
     {
-        lastTargetVal =
-            deviceBufferManager.allocNextBuffer(longSo.targetValue + m_allocations[bufferAllocationIndex].m_iterations,
-                                                m_allocations[bufferAllocationIndex].m_poolId);
+        lastTargetVal = deviceSimbPoolManager.allocNextBuffer(longSo.targetValue +
+                                                                  m_allocations[bufferAllocationIndex].m_iterations,
+                                                              m_allocations[bufferAllocationIndex].m_poolId);
         if (m_allocations[bufferAllocationIndex].m_poolId == SCALEUP_AND_ALL2ALL_POOL)
         {
             unsigned currentBufferIdx =
-                deviceBufferManager.getCurrentBufferIdx(m_allocations[bufferAllocationIndex].m_poolId);
+                deviceSimbPoolManager.getCurrentBufferIdx(m_allocations[bufferAllocationIndex].m_poolId);
             if (m_allocations[bufferAllocationIndex].dontWaitOnCg)
             {
                 ltuValid[currentBufferIdx].first  = ltuValid[currentBufferIdx].second;

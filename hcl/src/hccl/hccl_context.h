@@ -45,7 +45,8 @@ public:
 
     hcclResult_t comm_destroy(hcclComm_t unique_id);
 
-    hccl_communicator* communicator(hcclComm_t comm_handle);
+    hccl_communicator*       communicator(hcclComm_t comm_handle);
+    const hccl_communicator* communicator(const hcclComm_t comm_handle) const;
 
     uint8_t generateApiId();
 
@@ -58,6 +59,8 @@ public:
     bool first_comm_init_ = false;
 
     const comms_map_t& comms() const { return hccl_communicators_; };
+
+    lock_t& comm_init_lock() { return comm_init_lock_; }
 
 private:
     bool first_coordinator_launched_ = false;
@@ -73,6 +76,8 @@ private:
 
     // communicators list mapped by comm handle
     comms_map_t hccl_communicators_;
+
+    lock_t comm_init_lock_;
 
     // The following is an indication if this device was acquired by synapse successfully and it is then sets to true.
     // When the device is destroyed it is set to false

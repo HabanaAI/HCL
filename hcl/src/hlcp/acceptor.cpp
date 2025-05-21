@@ -2,9 +2,13 @@
 
 #define SERVER_SOCKET_MAX_CONNECTIONS 1000  // backlog
 
+#define ACCEPTOR_LOG(FMT, ...) COORD_LOG("{} " FMT, str(), ##__VA_ARGS__)
+#define ACCEPTOR_WRN(FMT, ...) COORD_WRN("{} " FMT, str(), ##__VA_ARGS__)
+#define ACCEPTOR_ERR(FMT, ...) COORD_ERR("{} " FMT, str(), ##__VA_ARGS__)
+
 int acceptor_t::io_event(uint32_t io_events)
 {
-    HLCP_LOG("socket({}) events {}", socket_, io_events);
+    ACCEPTOR_LOG("events 0x{:x}", io_events);
 
     if (io_events & EPOLLERR)
     {
@@ -24,7 +28,7 @@ int acceptor_t::io_event(uint32_t io_events)
         }
     }
 
-    HLCP_LOG("UNHANDLED !!! RE-ARM {} events: {}", socket_, io_events);
+    ACCEPTOR_WRN("unhandled events: 0x{:x}", io_events);
 
     return IO_REARM;
 }
@@ -43,6 +47,7 @@ bool acceptor_t::accept()
         }
         else if (peer != -1)
         {
+            ACCEPTOR_LOG("peer: 0x{:x}", peer);
             arm_monitor();
             op_notify_->on_accept(*this, peer);
         }
@@ -70,7 +75,7 @@ bool acceptor_t::listen(const sockaddr_t& address)
 
     if ((address.port() != 0) && (address.port() != local_.port()))
     {
-        HLCP_ERR("{} bound to {} instead of {}", socket_, local_.str(), address.str());
+        ACCEPTOR_ERR("bound to {} instead of {}", local_.str(), address.str());
         return false;
     }
 
@@ -78,7 +83,15 @@ bool acceptor_t::listen(const sockaddr_t& address)
 
     RET_ON_FALSE(set_non_blocking());
 
-    HLCP_LOG("socket({}): {}", socket_, local_.str());
+    ACCEPTOR_LOG("");
 
     return true;
+}
+
+std::string acceptor_t::str() const
+{
+    std::stringstream out;
+    out << "srv socket(0x" << std::hex << socket_ << std::dec << ")[" << local_addr.str() << "]";
+
+    return out.str();
 }

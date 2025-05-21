@@ -12,7 +12,7 @@ SoIdxBaseIdx getSoIdxBaseIdx(uint32_t soAddress)
     SoIdxBaseIdx ret = SoIdxBaseIdx();
     if (0 == soAddress || !hccl_device().initialized) return ret;
 
-    FOR_I(hccl_device()->getHal().getMaxStreams() * 2 + 1)
+    FOR_I(hccl_device()->getHal().getMaxArchStreams() * 2 + 1)
     {
         auto comp_cfg = getCompCfg();
         if (comp_cfg[i].m_base <= soAddress && soAddress < comp_cfg[i].m_base + comp_cfg[i].m_size * 4)
