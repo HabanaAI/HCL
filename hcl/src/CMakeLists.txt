@@ -20,6 +20,9 @@ function (separate_debug_symbols target)
         COMMENT "Separating debug symbols of ${target}")
 endfunction()
 
+set(LINKER_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/hcl.version")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wl,--version-script=${LINKER_SCRIPT}")
+
 include_directories(
     $ENV{HCL_SRC_PKG_DIR}
     $ENV{HCL_SRC_PKG_DIR}/dependencies
